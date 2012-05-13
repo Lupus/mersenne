@@ -1,23 +1,23 @@
 /********************************************************************
 
-Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
+  Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
 
-This file is part of Mersenne.
+  This file is part of Mersenne.
 
-Mersenne is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-any later version.
+  Mersenne is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  any later version.
 
-Mersenne is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+  Mersenne is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
 
-You should have received a copy of the GNU General Public License
-along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
+  You should have received a copy of the GNU General Public License
+  along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
-********************************************************************/
+ ********************************************************************/
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -41,11 +41,12 @@ along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 #define MERSENNE_GEOUP		"225.0.0.37"
 #define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
-#define TIMER_FREQUENCY		2
+#define TIME_DELTA		5
 
-#define MSG_HEARTBEAT		0x01
+#define MSG_OK			0x01
+#define MSG_START		0x02
 
-struct mers_peer {
+struct peer {
 	uuid_t id;
 	int index;
 	struct sockaddr_in addr;
@@ -54,58 +55,92 @@ struct mers_peer {
 	UT_hash_handle hh;
 };
 
-struct mers_message {
-	int type;
-	int count;
-	uuid_t id;
+struct msg_ok_data {
+	int k;
 };
 
-struct omega {
+struct msg_start_data {
+	int k;
+};
+
+struct message_header {
+	int type;
+	int count;
+	uuid_t sender;
+	uuid_t recipient;
+};
+
+static struct omega {
 	int r;
+	int leader;
+	int delta_count;
 } omega;
 
+static struct ev_loop *loop;
 static int counter;
 static ev_io socket_watcher;
-static ev_timer timeout_watcher;
+static ev_timer delta_timer;
 static struct sockaddr_in mcast_addr;
 static int fd;
-static struct mers_peer *peers = NULL;
-static struct mers_peer *me = NULL;
+static struct peer *peers = NULL;
+static struct peer *me = NULL;
 
-void add_peer(struct mers_peer *p)
+void message_header_init(struct message_header *header)
+{
+	header->count = counter++;
+	uuid_copy(header->sender, me->id);
+	uuid_clear(header->recipient);
+}
+
+void add_peer(struct peer *p)
 {
 	HASH_ADD(hh, peers, id, sizeof(uuid_t), p);
 }
 
-struct mers_peer *find_peer(uuid_t id)
+struct peer *find_peer(uuid_t id)
 {
-	struct mers_peer *p;
+	struct peer *p;
 	HASH_FIND(hh, peers, id, sizeof(uuid_t), p);
 	return p;
 }
 
-int is_alive(struct mers_peer *p)
+struct peer *find_peer_by_index(int index)
 {
-	return time(NULL) - p->last_heartbeat < 2 * TIMER_FREQUENCY;
-}
+	struct peer *p;
 
+	for(p=peers; p != NULL; p=p->hh.next) {
+		if(p->index == index)
+			return p;
+	}
+	return NULL;
+}
 
 bool_t xdr_uuid(XDR *xdrs, unsigned char uuid[16])
 {
 	return xdr_vector(xdrs, (void*)uuid, 16, sizeof(unsigned char), (xdrproc_t)xdr_u_char);
 }
 
-bool_t xdr_mers_message(XDR *xdrs, struct mers_message *pp)
+bool_t xdr_message_header(XDR *xdrs, struct message_header *pp)
 {
 	return (
 			xdr_int32_t(xdrs, &pp->type) &&
 			xdr_int32_t(xdrs, &pp->count) &&
-			xdr_uuid(xdrs, pp->id)
-		   );
+			xdr_uuid(xdrs, pp->sender) &&
+			xdr_uuid(xdrs, pp->recipient)
+	       );
 }
 
+bool_t xdr_msg_ok_data(XDR *xdrs, struct msg_ok_data *pp)
+{
+	return xdr_int32_t(xdrs, &pp->k);
+}
 
-void delete_peer(struct mers_peer *peer)
+bool_t xdr_msg_start_data(XDR *xdrs, struct msg_start_data *pp)
+{
+	return xdr_int32_t(xdrs, &pp->k);
+}
+
+void delete_peer(struct peer *peer)
 {
 	HASH_DEL(peers, peer);
 }
@@ -130,60 +165,145 @@ static int make_socket_non_blocking(int fd)
 	return 0;
 }
 
-void do_message(char* buf, int buf_size, const struct sockaddr *addr,
-		socklen_t addrlen)
+void restart_timer()
 {
-	char uuid_buf[37];
-	struct mers_peer *p;
-	struct mers_message msg;
-	XDR xdrs;
-
-	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
-	if(!xdr_mers_message(&xdrs, &msg))
-		err(2, "xdr_mers_message");
-
-	if (uuid_compare(msg.id, me->id) == 0)
-		return;
-
-	uuid_unparse(msg.id, uuid_buf);
-
-	switch (msg.type) {
-		case MSG_HEARTBEAT:
-			printf("Got a heartbeat message #%d from %s\n", msg.count,
-					uuid_buf);
-			p = find_peer(msg.id);
-			if(!p) {
-				puts("Unknown peer heartbeat --- ignoring");
-				break;
-			}
-			p->last_heartbeat = time(NULL);
-			break;
-		default:
-			printf("Got unknown message from %s\n", uuid_buf);
-			break;
-	}
+	ev_timer_again(loop, &delta_timer);
+	omega.delta_count = 0;
 }
 
-void do_heartbeat()
+void send_start(int s, int peer_index)
 {
 	char buf[MSGBUFSIZE];
 	int size = 0;
-	struct mers_message msg;
+	struct message_header header;
+	struct msg_start_data data;
+	struct peer *p;
 	XDR xdrs;
 
-	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
-	msg.type = MSG_HEARTBEAT;
-	msg.count = counter++;
-	uuid_copy(msg.id, me->id);
+	p = find_peer_by_index(peer_index);
 
-	if(!xdr_mers_message(&xdrs, &msg))
-		err(2, "xdr_mers_message");
+	if(!p) {
+		warnx("could not find peer with index %d", peer_index);
+		return;
+	}
+
+	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
+
+	message_header_init(&header);
+	header.type = MSG_START;
+	uuid_copy(header.recipient, p->id);
+
+	if(!xdr_message_header(&xdrs, &header))
+		err(EXIT_FAILURE, "failed to encode message_header");
+
+	data.k = s;
+	if(!xdr_msg_start_data(&xdrs, &data))
+		err(EXIT_FAILURE, "failed to encode msg_start_data");
 
 	size = xdr_getpos(&xdrs);
 
-	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0) {
-		perror("sendto");
-		abort();
+	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
+		err(EXIT_FAILURE, "failed to send message");
+
+}
+
+void send_ok(int s)
+{
+	char buf[MSGBUFSIZE];
+	int size = 0;
+	struct message_header header;
+	struct msg_ok_data data;
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
+
+	message_header_init(&header);
+	header.type = MSG_OK;
+
+	if(!xdr_message_header(&xdrs, &header))
+		err(EXIT_FAILURE, "failed to encode message_header");
+
+	data.k = s;
+	if(!xdr_msg_ok_data(&xdrs, &data))
+		err(EXIT_FAILURE, "failed to encode msg_ok_data");
+
+	size = xdr_getpos(&xdrs);
+
+	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
+		err(EXIT_FAILURE, "failed to send message");
+
+}
+
+void start_round(int s)
+{
+	int n = HASH_COUNT(peers);
+
+	if(me->index != s % n)
+		send_start(s, s % n);
+	omega.r = s;
+	omega.leader = s % n;
+	restart_timer();
+}
+
+void do_msg_start(XDR *xdrs, struct peer *from)
+{
+	struct msg_start_data data;
+
+	if(!xdr_msg_start_data(xdrs, &data))
+		err(EXIT_FAILURE, "failed to decode msg_start_data");
+
+	printf("R%2d: Got START(%d) from peer #%d\n", omega.r, data.k, from->index);
+
+	if(data.k > omega.r)
+		start_round(data.k);
+}
+
+void do_msg_ok(XDR *xdrs, struct peer *from)
+{
+	struct msg_ok_data data;
+
+	if(!xdr_msg_ok_data(xdrs, &data))
+		err(EXIT_FAILURE, "failed to decode msg_ok_data");
+
+	printf("R%2d: Got OK(%d) from peer #%d\n", omega.r, data.k, from->index);
+
+	if(data.k > omega.r)
+		start_round(data.k);
+	else if(data.k == omega.r)
+		restart_timer();
+}
+
+void do_message(char* buf, int buf_size, const struct sockaddr *addr,
+		socklen_t addrlen)
+{
+	struct peer *p;
+	struct message_header header;
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
+	if(!xdr_message_header(&xdrs, &header))
+		err(2, "xdr_message");
+
+	if(!uuid_is_null(header.recipient) &&
+			uuid_compare(header.recipient, me->id) != 0)
+		return;
+
+	p = find_peer(header.sender);
+	if(!p) {
+		warnx("unknown peer heartbeat --- ignoring");
+		return;
+	}
+
+	switch (header.type) {
+		case MSG_START:
+			do_msg_start(&xdrs, p);
+			break;
+		case MSG_OK:
+			do_msg_ok(&xdrs,p);
+			break;
+		default:
+			warnx("got unknown message from peer #%d\n", p->index);
+			break;
 	}
 }
 
@@ -212,14 +332,21 @@ static void socket_read_cb (EV_P_ ev_io *w, int revents)
 // another callback, this time for a time-out
 static void timeout_cb (EV_P_ ev_timer *w, int revents)
 {
-	do_heartbeat();
+	if(me->index == omega.r % HASH_COUNT(peers))
+		send_ok(omega.r);
+
+	printf("R%2d: Leader=%d\n", omega.r, omega.leader);
+
+	omega.delta_count++;
+	if(omega.delta_count > 2)
+		start_round(omega.r + 1);
 }
 
 void load_peer_list(int my_index) {
 	int i;
 	char uuid_buf[255];
 	FILE* peers_file;
-	struct mers_peer *p;
+	struct peer *p;
 
 	peers_file = fopen("peers", "r");
 	if(!peers_file)
@@ -230,8 +357,8 @@ void load_peer_list(int my_index) {
 		if(feof(peers_file))
 			break;
 		uuid_buf[36] = '\0';
-		p = malloc(sizeof(struct mers_peer));
-		memset(p, 0, sizeof(struct mers_peer));
+		p = malloc(sizeof(struct peer));
+		memset(p, 0, sizeof(struct peer));
 		p->index = i;
 		if(-1 == uuid_parse(uuid_buf, p->id))
 			err(1,"uuid_parse: cannot parse %s", uuid_buf);
@@ -295,7 +422,7 @@ int main(int argc, char *argv[])
 	}
 
 	// use the default event loop unless you have special needs
-	struct ev_loop *loop = EV_DEFAULT;
+	loop = EV_DEFAULT;
 
 	// initialise an io watcher, then start it
 	// this one will watch for stdin to become readable
@@ -304,8 +431,8 @@ int main(int argc, char *argv[])
 
 	// initialise a timer watcher, then start it
 	// simple non-repeating 0.5 second timeout
-	ev_timer_init(&timeout_watcher, timeout_cb, TIMER_FREQUENCY, TIMER_FREQUENCY);
-	ev_timer_start(loop, &timeout_watcher);
+	ev_timer_init(&delta_timer, timeout_cb, TIME_DELTA, TIME_DELTA);
+	ev_timer_start(loop, &delta_timer);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");
