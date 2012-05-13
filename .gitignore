@@ -3,6 +3,9 @@
 *.lo
 *.o
 
+# Dependency files
+*.d
+
 # Compiled Dynamic libraries
 *.so
 
@@ -10,3 +13,9 @@
 *.lai
 *.la
 *.a
+
+# Mersenne binary
+mersenne
+
+# Vim swap files
+.*.swp
