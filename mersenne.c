@@ -55,14 +55,6 @@ struct peer {
 	UT_hash_handle hh;
 };
 
-struct msg_ok_data {
-	int k;
-};
-
-struct msg_start_data {
-	int k;
-};
-
 struct message_header {
 	int type;
 	int count;
@@ -130,16 +122,6 @@ bool_t xdr_message_header(XDR *xdrs, struct message_header *pp)
 	       );
 }
 
-bool_t xdr_msg_ok_data(XDR *xdrs, struct msg_ok_data *pp)
-{
-	return xdr_int32_t(xdrs, &pp->k);
-}
-
-bool_t xdr_msg_start_data(XDR *xdrs, struct msg_start_data *pp)
-{
-	return xdr_int32_t(xdrs, &pp->k);
-}
-
 void delete_peer(struct peer *peer)
 {
 	HASH_DEL(peers, peer);
@@ -176,7 +158,6 @@ void send_start(int s, int peer_index)
 	char buf[MSGBUFSIZE];
 	int size = 0;
 	struct message_header header;
-	struct msg_start_data data;
 	struct peer *p;
 	XDR xdrs;
 
@@ -196,9 +177,8 @@ void send_start(int s, int peer_index)
 	if(!xdr_message_header(&xdrs, &header))
 		err(EXIT_FAILURE, "failed to encode message_header");
 
-	data.k = s;
-	if(!xdr_msg_start_data(&xdrs, &data))
-		err(EXIT_FAILURE, "failed to encode msg_start_data");
+	if(!xdr_int32_t(&xdrs, &s))
+		err(EXIT_FAILURE, "failed to encode int32");
 
 	size = xdr_getpos(&xdrs);
 
@@ -212,7 +192,6 @@ void send_ok(int s)
 	char buf[MSGBUFSIZE];
 	int size = 0;
 	struct message_header header;
-	struct msg_ok_data data;
 	XDR xdrs;
 
 	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
@@ -223,9 +202,8 @@ void send_ok(int s)
 	if(!xdr_message_header(&xdrs, &header))
 		err(EXIT_FAILURE, "failed to encode message_header");
 
-	data.k = s;
-	if(!xdr_msg_ok_data(&xdrs, &data))
-		err(EXIT_FAILURE, "failed to encode msg_ok_data");
+	if(!xdr_int32_t(&xdrs, &s))
+		err(EXIT_FAILURE, "failed to encode int32");
 
 	size = xdr_getpos(&xdrs);
 
@@ -247,29 +225,29 @@ void start_round(int s)
 
 void do_msg_start(XDR *xdrs, struct peer *from)
 {
-	struct msg_start_data data;
+	int k;
 
-	if(!xdr_msg_start_data(xdrs, &data))
-		err(EXIT_FAILURE, "failed to decode msg_start_data");
+	if(!xdr_int32_t(xdrs, &k))
+		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("R%2d: Got START(%d) from peer #%d\n", omega.r, data.k, from->index);
+	printf("R%2d: Got START(%d) from peer #%d\n", omega.r, k, from->index);
 
-	if(data.k > omega.r)
-		start_round(data.k);
+	if(k > omega.r)
+		start_round(k);
 }
 
 void do_msg_ok(XDR *xdrs, struct peer *from)
 {
-	struct msg_ok_data data;
+	int k;
 
-	if(!xdr_msg_ok_data(xdrs, &data))
-		err(EXIT_FAILURE, "failed to decode msg_ok_data");
+	if(!xdr_int32_t(xdrs, &k))
+		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("R%2d: Got OK(%d) from peer #%d\n", omega.r, data.k, from->index);
+	printf("R%2d: Got OK(%d) from peer #%d\n", omega.r, k, from->index);
 
-	if(data.k > omega.r)
-		start_round(data.k);
-	else if(data.k == omega.r)
+	if(k > omega.r)
+		start_round(k);
+	else if(k == omega.r)
 		restart_timer();
 }
 
