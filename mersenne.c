@@ -45,6 +45,7 @@
 
 #define MSG_OK			0x01
 #define MSG_START		0x02
+#define MSG_STOP		0x03
 
 struct peer {
 	uuid_t id;
@@ -212,6 +213,40 @@ void send_ok(int s)
 
 }
 
+void send_stop(int s, int peer_index)
+{
+	char buf[MSGBUFSIZE];
+	int size = 0;
+	struct message_header header;
+	struct peer *p;
+	XDR xdrs;
+
+	p = find_peer_by_index(peer_index);
+
+	if(!p) {
+		warnx("could not find peer with index %d", peer_index);
+		return;
+	}
+
+	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
+
+	message_header_init(&header);
+	header.type = MSG_STOP;
+	uuid_copy(header.recipient, p->id);
+
+	if(!xdr_message_header(&xdrs, &header))
+		err(EXIT_FAILURE, "failed to encode message_header");
+
+	if(!xdr_int32_t(&xdrs, &s))
+		err(EXIT_FAILURE, "failed to encode int32");
+
+	size = xdr_getpos(&xdrs);
+
+	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
+		err(EXIT_FAILURE, "failed to send message");
+
+}
+
 void start_round(int s)
 {
 	int n = HASH_COUNT(peers);
@@ -219,7 +254,7 @@ void start_round(int s)
 	if(me->index != s % n)
 		send_start(s, s % n);
 	omega.r = s;
-	omega.leader = s % n;
+	omega.leader = -1;
 	restart_timer();
 }
 
@@ -247,8 +282,27 @@ void do_msg_ok(XDR *xdrs, struct peer *from)
 
 	if(k > omega.r)
 		start_round(k);
-	else if(k == omega.r)
+	else if(k == omega.r) {
+		if(omega.leader < 0) {
+			omega.leader--;
+			if(omega.leader <= -3)
+				omega.leader = omega.r % HASH_COUNT(peers);
+		}
 		restart_timer();
+	}
+}
+
+void do_msg_stop(XDR *xdrs, struct peer *from)
+{
+	int k;
+
+	if(!xdr_int32_t(xdrs, &k))
+		err(EXIT_FAILURE, "failed to decode int32");
+
+	printf("R%2d: Got STOP(%d) from peer #%d\n", omega.r, k, from->index);
+
+	if(k >= omega.r)
+		start_round(k + 1);
 }
 
 void do_message(char* buf, int buf_size, const struct sockaddr *addr,
@@ -278,6 +332,9 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 			break;
 		case MSG_OK:
 			do_msg_ok(&xdrs,p);
+			break;
+		case MSG_STOP:
+			do_msg_stop(&xdrs,p);
 			break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
@@ -310,14 +367,18 @@ static void socket_read_cb (EV_P_ ev_io *w, int revents)
 // another callback, this time for a time-out
 static void timeout_cb (EV_P_ ev_timer *w, int revents)
 {
-	if(me->index == omega.r % HASH_COUNT(peers))
+	int n = HASH_COUNT(peers);
+
+	if(me->index == omega.r % n)
 		send_ok(omega.r);
 
 	printf("R%2d: Leader=%d\n", omega.r, omega.leader);
 
 	omega.delta_count++;
-	if(omega.delta_count > 2)
+	if(omega.delta_count > 2) {
+		send_stop(omega.r, omega.r % n);
 		start_round(omega.r + 1);
+	}
 }
 
 void load_peer_list(int my_index) {
@@ -411,6 +472,8 @@ int main(int argc, char *argv[])
 	// simple non-repeating 0.5 second timeout
 	ev_timer_init(&delta_timer, timeout_cb, TIME_DELTA, TIME_DELTA);
 	ev_timer_start(loop, &delta_timer);
+
+	start_round(0);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");
