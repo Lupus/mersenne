@@ -41,7 +41,8 @@
 #define MERSENNE_GEOUP		"225.0.0.37"
 #define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
-#define TIME_DELTA		5
+#define TIME_DELTA		5000
+#define TIME_EPSILON		100
 
 #define MSG_OK			0x01
 #define MSG_START		0x02
@@ -61,6 +62,7 @@ struct message_header {
 	int count;
 	uuid_t sender;
 	uuid_t recipient;
+	struct timeval sent;
 };
 
 static struct omega {
@@ -83,6 +85,7 @@ void message_header_init(struct message_header *header)
 	header->count = counter++;
 	uuid_copy(header->sender, me->id);
 	uuid_clear(header->recipient);
+	gettimeofday(&header->sent, NULL);
 }
 
 void add_peer(struct peer *p)
@@ -108,18 +111,27 @@ struct peer *find_peer_by_index(int index)
 	return NULL;
 }
 
-bool_t xdr_uuid(XDR *xdrs, unsigned char uuid[16])
+bool_t xdr_uuid(XDR *xdrs, const unsigned char uuid[16])
 {
 	return xdr_vector(xdrs, (void*)uuid, 16, sizeof(unsigned char), (xdrproc_t)xdr_u_char);
 }
 
-bool_t xdr_message_header(XDR *xdrs, struct message_header *pp)
+bool_t xdr_timeval(XDR *xdrs, const struct timeval *tv)
 {
 	return (
-			xdr_int32_t(xdrs, &pp->type) &&
-			xdr_int32_t(xdrs, &pp->count) &&
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
+	       );
+}
+
+bool_t xdr_message_header(XDR *xdrs, const struct message_header *pp)
+{
+	return (
+			xdr_uint32_t(xdrs, (uint32_t *)&pp->type) &&
+			xdr_uint32_t(xdrs, (uint32_t *)&pp->count) &&
 			xdr_uuid(xdrs, pp->sender) &&
-			xdr_uuid(xdrs, pp->recipient)
+			xdr_uuid(xdrs, pp->recipient) &&
+			xdr_timeval(xdrs, &pp->sent)
 	       );
 }
 
@@ -146,6 +158,20 @@ static int make_socket_non_blocking(int fd)
 	}
 
 	return 0;
+}
+
+int is_expired(struct message_header *header)
+{
+	struct timeval now;
+	int delta;
+
+	gettimeofday(&now, NULL);
+	delta = (now.tv_sec - header->sent.tv_sec) * 1000;
+	delta += now.tv_usec - header->sent.tv_usec;
+	if(delta > TIME_DELTA + 2 * TIME_EPSILON)
+		return 1;
+	else
+		return 0;
 }
 
 void restart_timer()
@@ -316,6 +342,9 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 	if(!xdr_message_header(&xdrs, &header))
 		err(2, "xdr_message");
 
+	if(is_expired(&header))
+		return;
+
 	if(!uuid_is_null(header.recipient) &&
 			uuid_compare(header.recipient, me->id) != 0)
 		return;
@@ -421,6 +450,9 @@ int main(int argc, char *argv[])
 		abort();
 	}
 
+
+	setenv("TZ", "UTC", 1); // We're operating in UTC
+
 	load_peer_list(atoi(argv[1]));
 
 
@@ -470,7 +502,7 @@ int main(int argc, char *argv[])
 
 	// initialise a timer watcher, then start it
 	// simple non-repeating 0.5 second timeout
-	ev_timer_init(&delta_timer, timeout_cb, TIME_DELTA, TIME_DELTA);
+	ev_timer_init(&delta_timer, timeout_cb, TIME_DELTA / 1000., TIME_DELTA / 1000.);
 	ev_timer_start(loop, &delta_timer);
 
 	start_round(0);
