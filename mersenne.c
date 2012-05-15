@@ -46,7 +46,7 @@
 
 #define MSG_OK			0x01
 #define MSG_START		0x02
-#define MSG_STOP		0x03
+#define MSG_ALERT		0x03
 
 struct peer {
 	uuid_t id;
@@ -68,6 +68,8 @@ struct message_header {
 static struct omega {
 	int r;
 	int leader;
+	int ok_count;
+	int alert_count;
 	int delta_count;
 } omega;
 
@@ -160,6 +162,11 @@ static int make_socket_non_blocking(int fd)
 	return 0;
 }
 
+void check_leader() {
+	if(omega.alert_count == 0 && omega.ok_count >= 2)
+		omega.leader = omega.r % HASH_COUNT(peers);
+}
+
 int is_expired(struct message_header *header)
 {
 	struct timeval now;
@@ -230,14 +237,42 @@ void send_ok(int s)
 
 }
 
+void send_alert(int s)
+{
+	char buf[MSGBUFSIZE];
+	int size = 0;
+	struct message_header header;
+	XDR xdrs;
+
+	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
+
+	message_header_init(&header);
+	header.type = MSG_ALERT;
+
+	if(!xdr_message_header(&xdrs, &header))
+		err(EXIT_FAILURE, "failed to encode message_header");
+
+	if(!xdr_int32_t(&xdrs, &s))
+		err(EXIT_FAILURE, "failed to encode int32");
+
+	size = xdr_getpos(&xdrs);
+
+	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
+		err(EXIT_FAILURE, "failed to send message");
+
+}
+
+
 void start_round(int s)
 {
 	int n = HASH_COUNT(peers);
 
+	send_alert(s);
 	if(me->index != s % n)
 		send_start(s);
 	omega.r = s;
 	omega.leader = -1;
+	omega.ok_count = 0;
 	restart_timer();
 }
 
@@ -269,14 +304,28 @@ void do_msg_ok(XDR *xdrs, struct peer *from)
 	if(k > omega.r)
 		start_round(k);
 	else if(k == omega.r) {
-		if(omega.leader < 0) {
-			omega.leader--;
-			if(omega.leader <= -3)
-				omega.leader = omega.r % HASH_COUNT(peers);
+		if(omega.ok_count < 2) {
+			omega.ok_count++;
+			check_leader();
 		}
 		restart_timer();
 	} else if(k < omega.r)
 		start_round(omega.r);
+}
+
+void do_msg_alert(XDR *xdrs, struct peer *from)
+{
+	int k;
+
+	if(!xdr_int32_t(xdrs, &k))
+		err(EXIT_FAILURE, "failed to decode int32");
+
+	printf("R%2d: Got ALERT(%d) from peer #%d\n", omega.r, k, from->index);
+
+	if(k > omega.r) {
+		omega.leader = -1;
+		omega.alert_count = 6;
+	}
 }
 
 void do_message(char* buf, int buf_size, const struct sockaddr *addr,
@@ -309,6 +358,9 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 			break;
 		case MSG_OK:
 			do_msg_ok(&xdrs,p);
+			break;
+		case MSG_ALERT:
+			do_msg_alert(&xdrs,p);
 			break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
@@ -351,6 +403,11 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	omega.delta_count++;
 	if(omega.delta_count > 2)
 		start_round(omega.r + 1);
+	
+	if(omega.alert_count > 0) {
+		omega.alert_count--;
+		check_leader();
+	}
 }
 
 void load_peer_list(int my_index) {
