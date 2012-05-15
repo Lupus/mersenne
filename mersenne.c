@@ -337,7 +337,7 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
 	if(!xdr_message_header(&xdrs, &header))
-		err(2, "xdr_message");
+		err(2, "unable to decode xdr_message_header");
 
 	if(is_expired(&header))
 		return;
