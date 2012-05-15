@@ -180,26 +180,17 @@ void restart_timer()
 	omega.delta_count = 0;
 }
 
-void send_start(int s, int peer_index)
+void send_start(int s)
 {
 	char buf[MSGBUFSIZE];
 	int size = 0;
 	struct message_header header;
-	struct peer *p;
 	XDR xdrs;
-
-	p = find_peer_by_index(peer_index);
-
-	if(!p) {
-		warnx("could not find peer with index %d", peer_index);
-		return;
-	}
 
 	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
 
 	message_header_init(&header);
 	header.type = MSG_START;
-	uuid_copy(header.recipient, p->id);
 
 	if(!xdr_message_header(&xdrs, &header))
 		err(EXIT_FAILURE, "failed to encode message_header");
@@ -239,46 +230,12 @@ void send_ok(int s)
 
 }
 
-void send_stop(int s, int peer_index)
-{
-	char buf[MSGBUFSIZE];
-	int size = 0;
-	struct message_header header;
-	struct peer *p;
-	XDR xdrs;
-
-	p = find_peer_by_index(peer_index);
-
-	if(!p) {
-		warnx("could not find peer with index %d", peer_index);
-		return;
-	}
-
-	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
-
-	message_header_init(&header);
-	header.type = MSG_STOP;
-	uuid_copy(header.recipient, p->id);
-
-	if(!xdr_message_header(&xdrs, &header))
-		err(EXIT_FAILURE, "failed to encode message_header");
-
-	if(!xdr_int32_t(&xdrs, &s))
-		err(EXIT_FAILURE, "failed to encode int32");
-
-	size = xdr_getpos(&xdrs);
-
-	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
-		err(EXIT_FAILURE, "failed to send message");
-
-}
-
 void start_round(int s)
 {
 	int n = HASH_COUNT(peers);
 
 	if(me->index != s % n)
-		send_start(s, s % n);
+		send_start(s);
 	omega.r = s;
 	omega.leader = -1;
 	restart_timer();
@@ -295,6 +252,9 @@ void do_msg_start(XDR *xdrs, struct peer *from)
 
 	if(k > omega.r)
 		start_round(k);
+	else if(k < omega.r)
+		start_round(omega.r);
+
 }
 
 void do_msg_ok(XDR *xdrs, struct peer *from)
@@ -315,20 +275,8 @@ void do_msg_ok(XDR *xdrs, struct peer *from)
 				omega.leader = omega.r % HASH_COUNT(peers);
 		}
 		restart_timer();
-	}
-}
-
-void do_msg_stop(XDR *xdrs, struct peer *from)
-{
-	int k;
-
-	if(!xdr_int32_t(xdrs, &k))
-		err(EXIT_FAILURE, "failed to decode int32");
-
-	printf("R%2d: Got STOP(%d) from peer #%d\n", omega.r, k, from->index);
-
-	if(k >= omega.r)
-		start_round(k + 1);
+	} else if(k < omega.r)
+		start_round(omega.r);
 }
 
 void do_message(char* buf, int buf_size, const struct sockaddr *addr,
@@ -361,9 +309,6 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 			break;
 		case MSG_OK:
 			do_msg_ok(&xdrs,p);
-			break;
-		case MSG_STOP:
-			do_msg_stop(&xdrs,p);
 			break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
@@ -404,10 +349,8 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	printf("R%2d: Leader=%d\n", omega.r, omega.leader);
 
 	omega.delta_count++;
-	if(omega.delta_count > 2) {
-		send_stop(omega.r, omega.r % n);
+	if(omega.delta_count > 2)
 		start_round(omega.r + 1);
-	}
 }
 
 void load_peer_list(int my_index) {
