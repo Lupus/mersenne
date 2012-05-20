@@ -37,12 +37,11 @@
 #include <ev.h>
 #include <rpc/xdr.h>
 
-#define MERSENNE_PORT		12345
-#define MERSENNE_GEOUP		"225.0.0.37"
+#define MERSENNE_PORT		6377
 #define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
-#define TIME_DELTA		5000
-#define TIME_EPSILON		100
+#define TIME_DELTA		100
+#define TIME_EPSILON		50
 
 #define MSG_OK			0x01
 #define MSG_START		0x02
@@ -57,11 +56,15 @@ struct peer {
 	UT_hash_handle hh;
 };
 
+struct message {
+	char buf[MSGBUFSIZE];
+	XDR xdrs;
+};
+
 struct message_header {
 	int type;
 	int count;
 	uuid_t sender;
-	uuid_t recipient;
 	struct timeval sent;
 };
 
@@ -77,17 +80,31 @@ static struct ev_loop *loop;
 static int counter;
 static ev_io socket_watcher;
 static ev_timer delta_timer;
-static struct sockaddr_in mcast_addr;
 static int fd;
 static struct peer *peers = NULL;
 static struct peer *me = NULL;
 
-void message_header_init(struct message_header *header)
+bool_t xdr_uuid(XDR *xdrs, const unsigned char uuid[16])
 {
-	header->count = counter++;
-	uuid_copy(header->sender, me->id);
-	uuid_clear(header->recipient);
-	gettimeofday(&header->sent, NULL);
+	return xdr_vector(xdrs, (void*)uuid, 16, sizeof(unsigned char), (xdrproc_t)xdr_u_char);
+}
+
+bool_t xdr_timeval(XDR *xdrs, const struct timeval *tv)
+{
+	return (
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
+	       );
+}
+
+bool_t xdr_message_header(XDR *xdrs, const struct message_header *pp)
+{
+	return (
+			xdr_uint32_t(xdrs, (uint32_t *)&pp->type) &&
+			xdr_uint32_t(xdrs, (uint32_t *)&pp->count) &&
+			xdr_uuid(xdrs, pp->sender) &&
+			xdr_timeval(xdrs, &pp->sent)
+	       );
 }
 
 void add_peer(struct peer *p)
@@ -113,33 +130,60 @@ struct peer *find_peer_by_index(int index)
 	return NULL;
 }
 
-bool_t xdr_uuid(XDR *xdrs, const unsigned char uuid[16])
-{
-	return xdr_vector(xdrs, (void*)uuid, 16, sizeof(unsigned char), (xdrproc_t)xdr_u_char);
-}
-
-bool_t xdr_timeval(XDR *xdrs, const struct timeval *tv)
-{
-	return (
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
-	       );
-}
-
-bool_t xdr_message_header(XDR *xdrs, const struct message_header *pp)
-{
-	return (
-			xdr_uint32_t(xdrs, (uint32_t *)&pp->type) &&
-			xdr_uint32_t(xdrs, (uint32_t *)&pp->count) &&
-			xdr_uuid(xdrs, pp->sender) &&
-			xdr_uuid(xdrs, pp->recipient) &&
-			xdr_timeval(xdrs, &pp->sent)
-	       );
-}
-
 void delete_peer(struct peer *peer)
 {
 	HASH_DEL(peers, peer);
+}
+
+void message_header_init(struct message_header *header)
+{
+	header->count = counter++;
+	uuid_copy(header->sender, me->id);
+	gettimeofday(&header->sent, NULL);
+}
+
+void message_start(struct message *msg, const int type)
+{
+	struct message_header header;
+
+	xdrmem_create(&msg->xdrs, msg->buf, MSGBUFSIZE, XDR_ENCODE);
+
+	message_header_init(&header);
+	header.type = type;
+
+	if(!xdr_message_header(&msg->xdrs, &header))
+		err(EXIT_FAILURE, "failed to encode message_header");
+}
+
+void message_send_to(const struct message *msg, const int peer_num)
+{
+	struct peer *p;
+	int size = xdr_getpos(&msg->xdrs);
+
+	p = find_peer_by_index(peer_num);
+	if(!p) {
+		warn("unable to find peer #%d", peer_num);
+		return;
+	}
+
+	if (sendto(fd, msg->buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
+		err(EXIT_FAILURE, "failed to send message");
+}
+
+void message_send_all(const struct message *msg)
+{
+	struct peer *p;
+	int size = xdr_getpos(&msg->xdrs);
+
+	for(p=peers; p != NULL; p=p->hh.next) {
+		if (sendto(fd, msg->buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
+			err(EXIT_FAILURE, "failed to send message");
+	}
+}
+
+void message_finish(struct message *msg)
+{
+	xdr_destroy(&msg->xdrs);
 }
 
 static int make_socket_non_blocking(int fd)
@@ -187,96 +231,60 @@ void restart_timer()
 	omega.delta_count = 0;
 }
 
-void send_start(int s)
+void send_start(int s, int to)
 {
-	char buf[MSGBUFSIZE];
-	int size = 0;
-	struct message_header header;
-	XDR xdrs;
+	struct message msg;
+	message_start(&msg, MSG_START);
 
-	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
-
-	message_header_init(&header);
-	header.type = MSG_START;
-
-	if(!xdr_message_header(&xdrs, &header))
-		err(EXIT_FAILURE, "failed to encode message_header");
-
-	if(!xdr_int32_t(&xdrs, &s))
+	if(!xdr_int32_t(&msg.xdrs, &s))
 		err(EXIT_FAILURE, "failed to encode int32");
-
-	size = xdr_getpos(&xdrs);
-
-	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
-		err(EXIT_FAILURE, "failed to send message");
-
+	
+	if(to >= 0)
+		message_send_to(&msg, to);
+	else
+		message_send_all(&msg);
+	message_finish(&msg);
 }
 
 void send_ok(int s)
 {
-	char buf[MSGBUFSIZE];
-	int size = 0;
-	struct message_header header;
-	XDR xdrs;
+	struct message msg;
+	message_start(&msg, MSG_OK);
 
-	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
-
-	message_header_init(&header);
-	header.type = MSG_OK;
-
-	if(!xdr_message_header(&xdrs, &header))
-		err(EXIT_FAILURE, "failed to encode message_header");
-
-	if(!xdr_int32_t(&xdrs, &s))
+	if(!xdr_int32_t(&msg.xdrs, &s))
 		err(EXIT_FAILURE, "failed to encode int32");
 
-	size = xdr_getpos(&xdrs);
-
-	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
-		err(EXIT_FAILURE, "failed to send message");
+	message_send_all(&msg);
+	message_finish(&msg);
 
 }
 
 void send_alert(int s)
 {
-	char buf[MSGBUFSIZE];
-	int size = 0;
-	struct message_header header;
-	XDR xdrs;
+	struct message msg;
+	message_start(&msg, MSG_OK);
 
-	xdrmem_create(&xdrs, buf, MSGBUFSIZE, XDR_ENCODE);
-
-	message_header_init(&header);
-	header.type = MSG_ALERT;
-
-	if(!xdr_message_header(&xdrs, &header))
-		err(EXIT_FAILURE, "failed to encode message_header");
-
-	if(!xdr_int32_t(&xdrs, &s))
+	if(!xdr_int32_t(&msg.xdrs, &s))
 		err(EXIT_FAILURE, "failed to encode int32");
 
-	size = xdr_getpos(&xdrs);
-
-	if (sendto(fd, buf, size, 0, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0)
-		err(EXIT_FAILURE, "failed to send message");
-
+	message_send_all(&msg);
+	message_finish(&msg);
 }
 
-
-void start_round(int s)
+void start_round(const int s)
 {
 	int n = HASH_COUNT(peers);
 
 	send_alert(s);
 	if(me->index != s % n)
-		send_start(s);
+		send_start(s, -1);
 	omega.r = s;
 	omega.leader = -1;
 	omega.ok_count = 0;
 	restart_timer();
 }
 
-void do_msg_start(XDR *xdrs, struct peer *from)
+void do_msg_start(XDR *xdrs, const struct peer *from)
 {
 	int k;
 
@@ -292,7 +300,7 @@ void do_msg_start(XDR *xdrs, struct peer *from)
 
 }
 
-void do_msg_ok(XDR *xdrs, struct peer *from)
+void do_msg_ok(XDR *xdrs, const struct peer *from)
 {
 	int k;
 
@@ -310,10 +318,10 @@ void do_msg_ok(XDR *xdrs, struct peer *from)
 		}
 		restart_timer();
 	} else if(k < omega.r)
-		start_round(omega.r);
+		send_start(omega.r, from->index);
 }
 
-void do_msg_alert(XDR *xdrs, struct peer *from)
+void do_msg_alert(XDR *xdrs, const struct peer *from)
 {
 	int k;
 
@@ -340,10 +348,6 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		err(2, "unable to decode xdr_message_header");
 
 	if(is_expired(&header))
-		return;
-
-	if(!uuid_is_null(header.recipient) &&
-			uuid_compare(header.recipient, me->id) != 0)
 		return;
 
 	p = find_peer(header.sender);
@@ -413,6 +417,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 void load_peer_list(int my_index) {
 	int i;
 	char uuid_buf[255];
+	char *peer_addr;
 	FILE* peers_file;
 	struct peer *p;
 
@@ -425,11 +430,16 @@ void load_peer_list(int my_index) {
 		if(feof(peers_file))
 			break;
 		uuid_buf[36] = '\0';
+		peer_addr = uuid_buf + 37;
 		p = malloc(sizeof(struct peer));
 		memset(p, 0, sizeof(struct peer));
 		p->index = i;
+		if(0 == inet_aton(peer_addr, &p->addr.sin_addr))
+			errx(EXIT_FAILURE, "invalid address: %s", peer_addr);
+		p->addr.sin_port = htons(MERSENNE_PORT);
 		if(-1 == uuid_parse(uuid_buf, p->id))
-			err(1,"uuid_parse: cannot parse %s", uuid_buf);
+			err(EXIT_FAILURE, "uuid_parse: cannot parse %s",
+					uuid_buf);
 		if(i == my_index) {
 			me = p;
 			printf("My id is %s\n", uuid_buf);
@@ -442,7 +452,6 @@ void load_peer_list(int my_index) {
 
 int main(int argc, char *argv[])
 {
-	struct ip_mreqn mreq;
 	int yes = 1;
 
 	if(argc != 2) {
@@ -457,40 +466,19 @@ int main(int argc, char *argv[])
 
 
 	/* create what looks like an ordinary UDP socket */
-	if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-		perror("socket");
-		abort();
-	}
+	if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		err(EXIT_FAILURE, "failed to create a socket");
 
 	if (-1 == make_socket_non_blocking(fd))
 		abort();
 
 	/* allow multiple sockets to use the same PORT number */
-	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0) {
-		perror("Reusing ADDR failed");
-		abort();
-	}
-
-	/* set up destination address */
-	memset(&mcast_addr, 0, sizeof(mcast_addr));
-	mcast_addr.sin_family = AF_INET;
-	mcast_addr.sin_addr.s_addr = inet_addr(MERSENNE_GEOUP);
-	mcast_addr.sin_port = htons(MERSENNE_PORT);
+	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+		err(EXIT_FAILURE, "reusing of address failed");
 
 	/* bind to receive address */
-	if (bind(fd, (struct sockaddr *) &mcast_addr, sizeof(mcast_addr)) < 0) {
-		perror("bind");
-		exit(1);
-	}
-
-	/* use setsockopt() to request that the kernel join a multicast group */
-	mreq.imr_multiaddr.s_addr = inet_addr(MERSENNE_GEOUP);
-	mreq.imr_address.s_addr = htonl(INADDR_ANY);
-	mreq.imr_ifindex = 0;
-	if (setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
-		perror("setsockopt");
-		exit(1);
-	}
+	if (bind(fd, (struct sockaddr *) &me->addr, sizeof(me->addr)) < 0)
+		err(EXIT_FAILURE, "bind failed");
 
 	// use the default event loop unless you have special needs
 	loop = EV_DEFAULT;
