@@ -218,7 +218,7 @@ int is_expired(struct message_header *header)
 
 	gettimeofday(&now, NULL);
 	delta = (now.tv_sec - header->sent.tv_sec) * 1000;
-	delta += now.tv_usec - header->sent.tv_usec;
+	delta += (now.tv_usec - header->sent.tv_usec) / 1000;
 	if(delta > TIME_DELTA + 2 * TIME_EPSILON)
 		return 1;
 	else
@@ -347,8 +347,10 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 	if(!xdr_message_header(&xdrs, &header))
 		err(2, "unable to decode xdr_message_header");
 
-	if(is_expired(&header))
+	if(is_expired(&header)) {
+		warnx("got expired message");
 		return;
+	}
 
 	p = find_peer(header.sender);
 	if(!p) {
