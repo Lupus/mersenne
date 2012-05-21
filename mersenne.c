@@ -30,7 +30,6 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
-#include <uuid/uuid.h>
 #include <uthash.h>
 #include <err.h>
 #include <errno.h>
@@ -48,7 +47,6 @@
 #define MSG_ALERT		0x03
 
 struct peer {
-	uuid_t id;
 	int index;
 	struct sockaddr_in addr;
 	time_t last_heartbeat;
@@ -64,7 +62,6 @@ struct message {
 struct message_header {
 	int type;
 	int count;
-	uuid_t sender;
 	struct timeval sent;
 };
 
@@ -84,11 +81,6 @@ static int fd;
 static struct peer *peers = NULL;
 static struct peer *me = NULL;
 
-bool_t xdr_uuid(XDR *xdrs, const unsigned char uuid[16])
-{
-	return xdr_vector(xdrs, (void*)uuid, 16, sizeof(unsigned char), (xdrproc_t)xdr_u_char);
-}
-
 bool_t xdr_timeval(XDR *xdrs, const struct timeval *tv)
 {
 	return (
@@ -102,20 +94,19 @@ bool_t xdr_message_header(XDR *xdrs, const struct message_header *pp)
 	return (
 			xdr_uint32_t(xdrs, (uint32_t *)&pp->type) &&
 			xdr_uint32_t(xdrs, (uint32_t *)&pp->count) &&
-			xdr_uuid(xdrs, pp->sender) &&
 			xdr_timeval(xdrs, &pp->sent)
 	       );
 }
 
 void add_peer(struct peer *p)
 {
-	HASH_ADD(hh, peers, id, sizeof(uuid_t), p);
+	HASH_ADD(hh, peers, addr.sin_addr, sizeof(struct in_addr), p);
 }
 
-struct peer *find_peer(uuid_t id)
+struct peer *find_peer(struct sockaddr_in *addr)
 {
 	struct peer *p;
-	HASH_FIND(hh, peers, id, sizeof(uuid_t), p);
+	HASH_FIND(hh, peers, &addr->sin_addr, sizeof(struct in_addr), p);
 	return p;
 }
 
@@ -138,7 +129,6 @@ void delete_peer(struct peer *peer)
 void message_header_init(struct message_header *header)
 {
 	header->count = counter++;
-	uuid_copy(header->sender, me->id);
 	gettimeofday(&header->sent, NULL);
 }
 
@@ -351,8 +341,11 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		warnx("got expired message");
 		return;
 	}
-
-	p = find_peer(header.sender);
+	if (addr->sa_family != AF_INET) {
+		warnx("unsupported address family: %d", (addr->sa_family));
+		return;
+	}
+	p = find_peer((struct sockaddr_in *)addr);
 	if(!p) {
 		warnx("unknown peer heartbeat --- ignoring");
 		return;
@@ -418,8 +411,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 
 void load_peer_list(int my_index) {
 	int i;
-	char uuid_buf[255];
-	char *peer_addr;
+	char line_buf[255];
 	FILE* peers_file;
 	struct peer *p;
 
@@ -428,23 +420,18 @@ void load_peer_list(int my_index) {
 		err(1, "fopen");
 	i = 0;
 	while(1) {
-		fgets(uuid_buf, 255, peers_file);
+		fgets(line_buf, 255, peers_file);
 		if(feof(peers_file))
 			break;
-		uuid_buf[36] = '\0';
-		peer_addr = uuid_buf + 37;
 		p = malloc(sizeof(struct peer));
 		memset(p, 0, sizeof(struct peer));
 		p->index = i;
-		if(0 == inet_aton(peer_addr, &p->addr.sin_addr))
-			errx(EXIT_FAILURE, "invalid address: %s", peer_addr);
+		if(0 == inet_aton(line_buf, &p->addr.sin_addr))
+			errx(EXIT_FAILURE, "invalid address: %s", line_buf);
 		p->addr.sin_port = htons(MERSENNE_PORT);
-		if(-1 == uuid_parse(uuid_buf, p->id))
-			err(EXIT_FAILURE, "uuid_parse: cannot parse %s",
-					uuid_buf);
 		if(i == my_index) {
 			me = p;
-			printf("My id is %s\n", uuid_buf);
+			printf("My ip is %s\n", line_buf);
 		}
 		add_peer(p);
 		i++;
