@@ -281,7 +281,7 @@ void do_msg_start(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("R%2d: Got START(%d) from peer #%d\n", omega.r, k, from->index);
+	printf("P %d R %d: Got START(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r)
 		start_round(k);
@@ -297,7 +297,7 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("R%2d: Got OK(%d) from peer #%d\n", omega.r, k, from->index);
+	printf("P %d R %d: Got OK(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r)
 		start_round(k);
@@ -318,7 +318,7 @@ void do_msg_alert(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("R%2d: Got ALERT(%d) from peer #%d\n", omega.r, k, from->index);
+	printf("P %d R %d: Got ALERT(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r) {
 		omega.leader = -1;
@@ -397,7 +397,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	if(me->index == omega.r % n)
 		send_ok(omega.r);
 
-	printf("R%2d: Leader=%d\n", omega.r, omega.leader);
+	printf("P %d R %d: Leader=%d\n", me->index, omega.r, omega.leader);
 
 	omega.delta_count++;
 	if(omega.delta_count > 2)
