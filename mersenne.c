@@ -40,7 +40,7 @@
 #define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
 #define TIME_DELTA		100
-#define TIME_EPSILON		50
+#define TIME_EPSILON		0
 
 #define MSG_OK			0x01
 #define MSG_START		0x02
@@ -271,6 +271,9 @@ void start_round(const int s)
 	omega.r = s;
 	omega.leader = -1;
 	omega.ok_count = 0;
+
+	printf("P %d R %d: new round started\n", me->index, omega.r);
+
 	restart_timer();
 }
 
@@ -280,8 +283,6 @@ void do_msg_start(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
-
-	printf("P %d R %d: Got START(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r)
 		start_round(k);
@@ -296,8 +297,6 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
-
-	printf("P %d R %d: Got OK(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r)
 		start_round(k);
@@ -317,8 +316,6 @@ void do_msg_alert(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
-
-	printf("P %d R %d: Got ALERT(%d) from peer #%d\n", me->index, omega.r, k, from->index);
 
 	if(k > omega.r) {
 		omega.leader = -1;

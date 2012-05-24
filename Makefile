@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -g -O0 -Wall -Werror -MMD
-LDLIBS = -luuid -lev
+LDLIBS = -lev
 
 all: mersenne
 
