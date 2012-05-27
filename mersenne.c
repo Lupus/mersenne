@@ -39,7 +39,7 @@
 #define MERSENNE_PORT		6377
 #define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
-#define TIME_DELTA		100
+#define TIME_DELTA		20
 #define TIME_EPSILON		0
 
 #define MSG_OK			0x01
@@ -197,8 +197,21 @@ static int make_socket_non_blocking(int fd)
 }
 
 void check_leader() {
-	if(omega.alert_count == 0 && omega.ok_count >= 2)
+	if(omega.alert_count == 0 && omega.ok_count >= 2) {
 		omega.leader = omega.r % HASH_COUNT(peers);
+		printf("P %d R %d: Leader check has passed, alerts = %d, ok = %d\n",
+			me->index,
+			omega.r,
+			omega.alert_count,
+			omega.ok_count
+		);
+	} else
+		printf("P %d R %d: Leader check has FAILED, alerts = %d, ok = %d\n",
+			me->index,
+			omega.r,
+			omega.alert_count,
+			omega.ok_count
+		);
 }
 
 int is_expired(struct message_header *header)
@@ -283,6 +296,13 @@ void do_msg_start(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
+	
+	printf("P %d R %d: Got START(%d) from peer #%d\n",
+		me->index,
+		omega.r,
+		k,
+		from->index
+	);
 
 	if(k > omega.r)
 		start_round(k);
@@ -297,6 +317,13 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
+
+	printf("P %d R %d: Got OK(%d) from peer #%d\n",
+		me->index,
+		omega.r,
+		k,
+		from->index
+	);
 
 	if(k > omega.r)
 		start_round(k);
@@ -316,6 +343,13 @@ void do_msg_alert(XDR *xdrs, const struct peer *from)
 
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
+
+	printf("P %d R %d: Got ALERT(%d) from peer #%d\n",
+		me->index,
+		omega.r,
+		k,
+		from->index
+	);
 
 	if(k > omega.r) {
 		omega.leader = -1;

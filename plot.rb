@@ -37,8 +37,10 @@ election_time=0
 leaders = []
 measures = []
 start_time = nil
+current_round = 0
 #data = File.open('data','w+')
 $stdin.each do |line|
+	#puts line
 	if line =~ /^(\d+-\d+-\d+ \d+:\d+:\d+\.\d+)/
 		ts = Time.parse($1)
 #		if last_time.nil? or ts - last_time > delta_ms
@@ -47,17 +49,30 @@ $stdin.each do |line|
 #			last_time = ts
 #		end
 	end
-	first_ts = ts if first_ts.nil?
-	if line =~ /P (\d+) R \d+: new round started/
+	if first_ts.nil?
 		start_time = ts
-		leaders = []
+		first_ts = ts
 	end
-	if line =~ /P (\d+) R \d+: Leader=(-?\d+)/
+	if line =~ /P \d+ R (\d+): new round started/
+		if start_time.nil?
+			start_time = ts
+			leaders = []
+			#puts "*** registered new round start"
+		end
+	end
+	if line =~ /P (\d+) R (\d+): Leader=(-?\d+)/
 		peer = $1.to_i
-		leader = $2.to_i
+		round = $2.to_i
+		leader = $3.to_i
+		if round > current_round
+			leaders = []
+			current_round = round
+		end
 		leaders[peer] = leader
-		leaders.map!{|l| l.nil? ? -1 : l}
+		leaders.map!{|l| l.nil? ? -5 : l}
 		if start_time and leaders.size >= pnum and leaders.sort.uniq.size == 1 and leaders[0]  > -1
+			#puts "*** registered leader elected, leader = #{leaders[0]}, time = #{ts - start_time}"
+			#p leaders
 			measures << ts - start_time
 			start_time = nil
 		end
