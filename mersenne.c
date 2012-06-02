@@ -199,15 +199,13 @@ static int make_socket_non_blocking(int fd)
 void check_leader() {
 	if(omega.alert_count == 0 && omega.ok_count >= 2) {
 		omega.leader = omega.r % HASH_COUNT(peers);
-		printf("P %d R %d: Leader check has passed, alerts = %d, ok = %d\n",
-			me->index,
+		printf("R %d: Leader check has passed, alerts = %d, ok = %d\n",
 			omega.r,
 			omega.alert_count,
 			omega.ok_count
 		);
 	} else
-		printf("P %d R %d: Leader check has FAILED, alerts = %d, ok = %d\n",
-			me->index,
+		printf("R %d: Leader check has FAILED, alerts = %d, ok = %d\n",
 			omega.r,
 			omega.alert_count,
 			omega.ok_count
@@ -285,7 +283,7 @@ void start_round(const int s)
 	omega.leader = -1;
 	omega.ok_count = 0;
 
-	printf("P %d R %d: new round started\n", me->index, omega.r);
+	printf("R %d: new round started\n", omega.r);
 
 	restart_timer();
 }
@@ -297,8 +295,7 @@ void do_msg_start(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 	
-	printf("P %d R %d: Got START(%d) from peer #%d\n",
-		me->index,
+	printf("R %d: Got START(%d) from peer #%d\n",
 		omega.r,
 		k,
 		from->index
@@ -318,8 +315,7 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("P %d R %d: Got OK(%d) from peer #%d\n",
-		me->index,
+	printf("R %d: Got OK(%d) from peer #%d\n",
 		omega.r,
 		k,
 		from->index
@@ -344,8 +340,7 @@ void do_msg_alert(XDR *xdrs, const struct peer *from)
 	if(!xdr_int32_t(xdrs, &k))
 		err(EXIT_FAILURE, "failed to decode int32");
 
-	printf("P %d R %d: Got ALERT(%d) from peer #%d\n",
-		me->index,
+	printf("R %d: Got ALERT(%d) from peer #%d\n",
 		omega.r,
 		k,
 		from->index
@@ -428,7 +423,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	if(me->index == omega.r % n)
 		send_ok(omega.r);
 
-	printf("P %d R %d: Leader=%d\n", me->index, omega.r, omega.leader);
+	printf("R %d: Leader=%d\n", omega.r, omega.leader);
 
 	omega.delta_count++;
 	if(omega.delta_count > 2)

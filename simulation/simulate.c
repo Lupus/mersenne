@@ -38,9 +38,12 @@
 #include <uthash.h>
 #include <sys/time.h>
 #include <assert.h>
+#include <regex.h>
 
 #define BUF_SIZE 256
 #define LINE_BUF_SIZE 10 * 1024
+#define PROC_NUM 4
+
 
 struct child_proc_item {
 	int cpi_fd;
@@ -57,6 +60,16 @@ static struct child_proc_item *children;
 //static ev_timer kill_timer;
 static struct ev_loop *loop;
 static struct timeval start_tv;
+
+static regex_t rx_new_round;
+static regex_t rx_leader;
+
+//static float ts;
+//static float first_ts;
+//static float election_time;
+static int *leaders = NULL;
+static float start_time = -1;
+int current_round = 0;
 
 static void make_fd_blocking(int fd)
 {
@@ -76,7 +89,64 @@ static float timeval_msec_delta(struct timeval *from, struct timeval *to)
 {
 	long long u_to = to->tv_sec * 1e6 + to->tv_usec;
 	long long u_from = from->tv_sec * 1e6 + from->tv_usec;
-	return (u_to - u_from) / 1000;
+	return (u_to - u_from) / 1000.0;
+}
+
+static int check_leader_election()
+{
+	int i;
+	int leader;
+
+	assert(PROC_NUM > 1);
+	leader = leaders[0];
+	for(i = 1; i < PROC_NUM; i++) {
+		if(leaders[i] != leader)
+			return 0;
+	}
+	if(leader < 0)
+		return 0;
+	return 1;
+}
+
+static void process_line(char *line, int idx, float ts)
+{
+	regmatch_t match[2];
+	int round, leader;
+	int retval;
+	retval = regexec(&rx_new_round, line, 0, NULL, 0);
+	if(retval) {
+		if(REG_NOMATCH != retval)
+			errx(EXIT_FAILURE, "%s", "regexec failed");
+	} else {
+		fprintf(stderr, "*** new round line\n");
+		if(start_time < 0) {
+			start_time = ts;
+			memset(leaders, -1, sizeof(int) * PROC_NUM);
+			fprintf(stderr, "*** Registered new round\n");
+		}
+		return;
+	}
+
+	retval = regexec(&rx_leader, line, 2, match, 0);
+	if(retval) {
+		if(REG_NOMATCH != retval)
+			errx(EXIT_FAILURE, "%s", "regexec failed");
+	} else {
+		line[match[0].rm_eo + 1] = '\0';
+		line[match[1].rm_eo + 1] = '\0';
+		round = atoi(line + match[0].rm_so);
+		leader = atoi(line + match[1].rm_so);
+		fprintf(stderr, "*** Round %d, Leader %d\n", round, leader);
+		if(round > current_round) {
+			memset(leaders, -1, sizeof(int) * PROC_NUM);
+			current_round = round;
+		}
+		leaders[idx] = leader;
+		if(check_leader_election()) {
+			fprintf(stderr, "*** Leader elected, time %f ms\n", ts - start_time);
+		}
+	}
+
 }
 
 static void pipe_read_cb(EV_P_ ev_io *w, int revents)
@@ -115,12 +185,13 @@ static void pipe_read_cb(EV_P_ ev_io *w, int revents)
 			*child->cpi_buf_ptr++ = '\0';
 		}
 		if(bytes_left == 1 || buf == '\n') {
-			printf("%f P%.2d %s\n",
+			fprintf(stderr, "%f P%.2d %s\n",
 				timeval_msec_delta(&start_tv, &child->cpi_tv),
 				child->cpi_index,
 				child->cpi_buf
 			);
-			child->cpi_buf_ptr = child->cpi_buf;
+			process_line(child->cpi_buf, child->cpi_index, timeval_msec_delta(&start_tv, &child->cpi_tv));
+			child->cpi_buf_ptr = child->cpi_buf; 
 		}
 	}
 }
@@ -137,7 +208,7 @@ void init_child_proc_item(struct child_proc_item *item)
 
 int main()
 {
-	int proc_num = 2;
+	int proc_num = PROC_NUM;
 	char *mersenne_exe = "./mersenne";
 	char buf[BUF_SIZE];
 	char *argv[3] = {mersenne_exe, buf, NULL};
@@ -146,7 +217,11 @@ int main()
 
 	// use the default event loop unless you have special needs
 	loop = EV_DEFAULT;
-
+	leaders = (int *)calloc(proc_num, sizeof(int));
+	if(regcomp (&rx_new_round, "^R [[:digit:]]: new round started", 0))
+		err(EXIT_FAILURE, "%s", "regcomp failed");
+	if(regcomp (&rx_leader, "^R \\([[:digit:]]\\+\\): Leader=\\([[:digit:]]\\+\\)", 0))
+		err(EXIT_FAILURE, "%s", "regcomp failed");
 	gettimeofday(&start_tv, NULL);
 
 	for(i = 0; i < proc_num; i++) {
