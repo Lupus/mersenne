@@ -35,7 +35,7 @@
 #include <errno.h>
 #include <ev.h>
 #include <pty.h>
-#include <uthash.h>
+#include <utarray.h>
 #include <sys/time.h>
 #include <assert.h>
 #include <regex.h>
@@ -64,9 +64,12 @@ static struct timeval start_tv;
 static regex_t rx_new_round;
 static regex_t rx_leader;
 
+static UT_icd double_icd = {sizeof(double), NULL, NULL, NULL };
+
 //static float ts;
 //static float first_ts;
 //static float election_time;
+static UT_array *measurements;
 static int *leaders = NULL;
 static float start_time = -1;
 int current_round = 0;
@@ -113,6 +116,7 @@ static void process_line(char *line, int idx, float ts)
 	regmatch_t match[2];
 	int round, leader;
 	int retval;
+	double d;
 	retval = regexec(&rx_new_round, line, 0, NULL, 0);
 	if(retval) {
 		if(REG_NOMATCH != retval)
@@ -142,8 +146,11 @@ static void process_line(char *line, int idx, float ts)
 			current_round = round;
 		}
 		leaders[idx] = leader;
-		if(check_leader_election()) {
-			fprintf(stderr, "*** Leader elected, time %f ms\n", ts - start_time);
+		if(start_time >= 0 && check_leader_election()) {
+			d = ts - start_time;
+			utarray_push_back(measurements, &d);
+			start_time = -1;
+			fprintf(stderr, "*** Leader elected, time %f ms\n", d);
 		}
 	}
 
@@ -223,6 +230,7 @@ int main()
 	if(regcomp (&rx_leader, "^R \\([[:digit:]]\\+\\): Leader=\\([[:digit:]]\\+\\)", 0))
 		err(EXIT_FAILURE, "%s", "regcomp failed");
 	gettimeofday(&start_tv, NULL);
+	utarray_new(measurements, &double_icd);
 
 	for(i = 0; i < proc_num; i++) {
 		snprintf(buf, BUF_SIZE, "%d", i);
