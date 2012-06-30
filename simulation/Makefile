@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -g -O0 -Wall -Werror -MMD -D_GNU_SOURCE
-LDLIBS = -lev -lutil
+LDLIBS = -lev -lutil $(shell pkg-config --libs gsl)
 
 all: simulate
 

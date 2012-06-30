@@ -39,12 +39,13 @@
 #include <sys/time.h>
 #include <assert.h>
 #include <regex.h>
+#include <gsl/gsl_statistics_double.h>
 
 #define BUF_SIZE 256
 #define LINE_BUF_SIZE 10 * 1024
 #define PROC_NUM 2
-#define DEBUG
-#define PROXY_OUTPUT
+//#define DEBUG
+//#define PROXY_OUTPUT
 
 #define PROC_LEADER_NOT_SURE	-1
 #define PROC_LEADER_UNDEFINED	-2
@@ -324,11 +325,17 @@ static void init_child_proc_item(struct child_proc_item *item)
 static void process_statistic()
 {
 	double *d;
+	double tmp;
 	for(d=(double*)utarray_front(measurements);
 			d!=NULL;
 			d=(double*)utarray_next(measurements,d)) {
 		printf("%f\n", *d);
 	}
+	printf("\n");
+	tmp = gsl_stats_mean((double*)utarray_front(measurements), 1, utarray_len(measurements));
+	printf("Average: %f\n", tmp);
+	tmp = gsl_stats_sd_m((double*)utarray_front(measurements), 1, utarray_len(measurements), tmp);
+	printf("Stdev: %f\n", tmp);
 }
 
 static void init_peers_file()
