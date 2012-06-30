@@ -42,7 +42,9 @@
 
 #define BUF_SIZE 256
 #define LINE_BUF_SIZE 10 * 1024
-#define PROC_NUM 4
+#define PROC_NUM 2
+#define DEBUG
+#define PROXY_OUTPUT
 
 #define PROC_LEADER_NOT_SURE	-1
 #define PROC_LEADER_UNDEFINED	-2
@@ -110,6 +112,8 @@ static void clear_leaders()
 	}
 }
 
+#ifdef DEBUG
+
 static void dump_leaders()
 {
 	int i;
@@ -122,6 +126,8 @@ static void dump_leaders()
 	}
 	fprintf(stderr, "]\n");
 }
+
+#endif
 
 static int check_leader_election()
 {
@@ -138,7 +144,6 @@ static int check_leader_election()
 			return 0;
 		votes++;
 	}
-	fprintf(stderr, "*** %d\n", leader);
 	if(leader < 0)
 		return 0;
 	if(votes < PROC_NUM - killed_children)
@@ -161,7 +166,9 @@ static void process_line(char *line, int idx, float ts)
 		if(start_time < 0) {
 			start_time = ts;
 			clear_leaders();
+#ifdef DEBUG
 			fprintf(stderr, "*** Registered new round\n");
+#endif
 		}
 		return;
 	}
@@ -184,10 +191,14 @@ static void process_line(char *line, int idx, float ts)
 			d = ts - start_time;
 			utarray_push_back(measurements, &d);
 			start_time = -1;
+#ifdef DEBUG
 			fprintf(stderr, "*** Leader elected, time %f ms, round %d, leader %d\n", d, round, leader);
+#endif
 		}
 	}
+#ifdef DEBUG
 	dump_leaders();
+#endif
 }
 
 static void pipe_read_cb(EV_P_ ev_io *w, int revents)
@@ -226,11 +237,13 @@ static void pipe_read_cb(EV_P_ ev_io *w, int revents)
 			*child->cpi_buf_ptr++ = '\0';
 		}
 		if(bytes_left == 1 || buf == '\n') {
+#ifdef PROXY_OUTPUT
 			fprintf(stderr, "%f P%.2d %s\n",
 				timeval_msec_delta(&start_tv, &child->cpi_tv),
 				child->cpi_index,
 				child->cpi_buf
 			);
+#endif
 			process_line(child->cpi_buf, child->cpi_index, timeval_msec_delta(&start_tv, &child->cpi_tv));
 			child->cpi_buf_ptr = child->cpi_buf; 
 		}
@@ -250,13 +263,13 @@ static void spawn_child(struct child_proc_item *child)
 
 	snprintf(buf, BUF_SIZE, "%d", child->cpi_index);
 	child->cpi_pid = forkpty(&child->cpi_fd, NULL, NULL, NULL);
-	make_fd_blocking(child->cpi_fd);
 	if(-1 == child->cpi_pid)
 		err(EXIT_FAILURE, "%s", "forkpty");
 	if(child->cpi_pid == 0) {
 		if(-1 == execv(mersenne_exe, argv))
 			err(EXIT_FAILURE, "%s", "exec failed");
 	}
+	make_fd_blocking(child->cpi_fd);
 	ev_io_init(&child->cpi_io, pipe_read_cb, child->cpi_fd, EV_READ);
 	ev_io_start(loop, &child->cpi_io);
 
@@ -268,8 +281,10 @@ static void kill_child(struct child_proc_item *child)
 	if(0 == child->cpi_pid)
 		return;
 	ev_io_stop(loop, &child->cpi_io);
-	kill(child->cpi_pid, SIGTERM);
+	if(-1 == kill(child->cpi_pid, SIGTERM))
+		err(EXIT_FAILURE, "failed to kill mersenne");
 	child->cpi_pid = 0;
+	close(child->cpi_fd);
 }
 
 static void sim_timeout_cb (EV_P_ ev_timer *w, int revents)
@@ -316,12 +331,24 @@ static void process_statistic()
 	}
 }
 
+static void init_peers_file()
+{
+	FILE *peers;
+	int i;
+
+	peers = fopen("peers", "w+");
+	for(i = 0; i < PROC_NUM; i++)
+		fprintf(peers, "127.0.0.%d\n", i + 1);
+	fclose(peers);
+}
 
 int main()
 {
 	int proc_num = PROC_NUM;
 	struct child_proc_item *child;
 	int i;
+
+	init_peers_file();
 
 	utarray_new(measurements,&double_icd);
 	// use the default event loop unless you have special needs
