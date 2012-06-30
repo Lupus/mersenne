@@ -325,7 +325,7 @@ static void init_child_proc_item(struct child_proc_item *item)
 static void process_statistic()
 {
 	double *d;
-	double tmp;
+	double tmp, tmp2;
 	for(d=(double*)utarray_front(measurements);
 			d!=NULL;
 			d=(double*)utarray_next(measurements,d)) {
@@ -336,6 +336,9 @@ static void process_statistic()
 	printf("Average: %f\n", tmp);
 	tmp = gsl_stats_sd_m((double*)utarray_front(measurements), 1, utarray_len(measurements), tmp);
 	printf("Stdev: %f\n", tmp);
+	gsl_stats_minmax (&tmp, &tmp2,(double*)utarray_front(measurements), 1, utarray_len(measurements));
+	printf("Min: %f, Max: %f\n", tmp, tmp2);
+
 }
 
 static void init_peers_file()
