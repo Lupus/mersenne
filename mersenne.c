@@ -69,6 +69,7 @@ static struct omega {
 	int r;
 	int leader;
 	int ok_count;
+	int last_ok_from;
 	int alert_count;
 	int delta_count;
 } omega;
@@ -282,6 +283,7 @@ void start_round(const int s)
 	omega.r = s;
 	omega.leader = -1;
 	omega.ok_count = 0;
+	omega.last_ok_from = -1;
 
 	printf("R %d: new round started\n", omega.r);
 
@@ -325,6 +327,14 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 		start_round(k);
 	else if(k == omega.r) {
 		if(omega.ok_count < 2) {
+			if(omega.last_ok_from < 0)
+				omega.last_ok_from = from->index;
+			if(omega.last_ok_from != from->index)
+				// My interpretation of the protocol: two OKs
+				// shold go from one source to be counted as
+				// two OKs from the leader.
+				omega.ok_count = 0;
+			omega.last_ok_from = from->index;
 			omega.ok_count++;
 			check_leader();
 		}
@@ -479,7 +489,6 @@ int main(int argc, char *argv[])
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
 	load_peer_list(atoi(argv[1]));
-
 
 	/* create what looks like an ordinary UDP socket */
 	if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
