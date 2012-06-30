@@ -452,6 +452,7 @@ void load_peer_list(int my_index) {
 		p = malloc(sizeof(struct peer));
 		memset(p, 0, sizeof(struct peer));
 		p->index = i;
+		p->addr.sin_family = AF_INET;
 		if(0 == inet_aton(line_buf, &p->addr.sin_addr))
 			errx(EXIT_FAILURE, "invalid address: %s", line_buf);
 		p->addr.sin_port = htons(MERSENNE_PORT);
