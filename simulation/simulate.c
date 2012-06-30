@@ -324,19 +324,22 @@ static void init_child_proc_item(struct child_proc_item *item)
 
 static void process_statistic()
 {
-	double *d;
+	double *arr;
 	double tmp, tmp2;
-	for(d=(double*)utarray_front(measurements);
-			d!=NULL;
-			d=(double*)utarray_next(measurements,d)) {
-		printf("%f\n", *d);
+	int size, i;
+	
+	arr = (double*)utarray_front(measurements);
+	size = utarray_len(measurements);
+
+	for(i = 0; i < size; i++) {
+		printf("%f\n", arr[i]);
 	}
 	printf("\n");
-	tmp = gsl_stats_mean((double*)utarray_front(measurements), 1, utarray_len(measurements));
+	tmp = gsl_stats_mean(arr, 1, size);
 	printf("Average: %f\n", tmp);
-	tmp = gsl_stats_sd_m((double*)utarray_front(measurements), 1, utarray_len(measurements), tmp);
+	tmp = gsl_stats_sd_m(arr, 1, size, tmp);
 	printf("Stdev: %f\n", tmp);
-	gsl_stats_minmax (&tmp, &tmp2,(double*)utarray_front(measurements), 1, utarray_len(measurements));
+	gsl_stats_minmax (&tmp, &tmp2, arr, 1, size);
 	printf("Min: %f, Max: %f\n", tmp, tmp2);
 
 }
