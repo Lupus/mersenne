@@ -264,7 +264,7 @@ void send_ok(int s)
 void send_alert(int s)
 {
 	struct message msg;
-	message_start(&msg, MSG_OK);
+	message_start(&msg, MSG_ALERT);
 
 	if(!xdr_int32_t(&msg.xdrs, &s))
 		err(EXIT_FAILURE, "failed to encode int32");
