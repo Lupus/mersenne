@@ -35,7 +35,7 @@
 #include <errno.h>
 #include <ev.h>
 
-#include "me_protocol.h"
+#include <me_protocol.h>
 
 #define MERSENNE_PORT		6377
 #define MSGBUFSIZE		256

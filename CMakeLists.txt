@@ -1,4 +1,4 @@
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "./cmake")
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 cmake_minimum_required(VERSION 2.6)
 project(mersenne C)
@@ -9,6 +9,8 @@ include(FindPkgConfig)
 
 find_package(LibEV REQUIRED)
 find_package(RpcGen REQUIRED)
+
+include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 set(CMAKE_C_FLAGS "-g -O0 -Wall -Werror")
 
