@@ -34,7 +34,8 @@
 #include <err.h>
 #include <errno.h>
 #include <ev.h>
-#include <rpc/xdr.h>
+
+#include "me_protocol.h"
 
 #define MERSENNE_PORT		6377
 #define MSGBUFSIZE		256
@@ -54,17 +55,6 @@ struct peer {
 	UT_hash_handle hh;
 };
 
-struct message {
-	char buf[MSGBUFSIZE];
-	XDR xdrs;
-};
-
-struct message_header {
-	int type;
-	int count;
-	struct timeval sent;
-};
-
 static struct omega {
 	int r;
 	int leader;
@@ -81,23 +71,6 @@ static ev_timer delta_timer;
 static int fd;
 static struct peer *peers = NULL;
 static struct peer *me = NULL;
-
-bool_t xdr_timeval(XDR *xdrs, const struct timeval *tv)
-{
-	return (
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
-	       );
-}
-
-bool_t xdr_message_header(XDR *xdrs, const struct message_header *pp)
-{
-	return (
-			xdr_uint32_t(xdrs, (uint32_t *)&pp->type) &&
-			xdr_uint32_t(xdrs, (uint32_t *)&pp->count) &&
-			xdr_timeval(xdrs, &pp->sent)
-	       );
-}
 
 void add_peer(struct peer *p)
 {
@@ -127,29 +100,30 @@ void delete_peer(struct peer *peer)
 	HASH_DEL(peers, peer);
 }
 
-void message_header_init(struct message_header *header)
+void message_init(struct me_message *msg)
 {
-	header->count = counter++;
-	gettimeofday(&header->sent, NULL);
+	struct timeval tv;
+	struct me_omega_msg_header *hdr;
+
+	msg->stype = ME_OMEGA;
+	hdr = &msg->me_message_u.mm_omega_msg.mom_header;
+	hdr->momh_count = counter++;
+	gettimeofday(&tv, NULL);
+	hdr->momh_sent.tv_sec = tv.tv_sec;
+	hdr->momh_sent.tv_usec = tv.tv_usec;
 }
 
-void message_start(struct message *msg, const int type)
-{
-	struct message_header header;
-
-	xdrmem_create(&msg->xdrs, msg->buf, MSGBUFSIZE, XDR_ENCODE);
-
-	message_header_init(&header);
-	header.type = type;
-
-	if(!xdr_message_header(&msg->xdrs, &header))
-		err(EXIT_FAILURE, "failed to encode message_header");
-}
-
-void message_send_to(const struct message *msg, const int peer_num)
+void message_send_to(struct me_message *msg, const int peer_num)
 {
 	struct peer *p;
-	int size = xdr_getpos(&msg->xdrs);
+	int size;
+	XDR xdrs;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
+
+	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
+	if(!xdr_me_message(&xdrs, msg))
+		err(EXIT_FAILURE, "failed to encode a message");
+	size = xdr_getpos(&xdrs);
 
 	p = find_peer_by_index(peer_num);
 	if(!p) {
@@ -157,24 +131,29 @@ void message_send_to(const struct message *msg, const int peer_num)
 		return;
 	}
 
-	if (sendto(fd, msg->buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
+	if (sendto(fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
 		err(EXIT_FAILURE, "failed to send message");
+
+	xdr_destroy(&xdrs);
 }
 
-void message_send_all(const struct message *msg)
+void message_send_all(struct me_message *msg)
 {
 	struct peer *p;
-	int size = xdr_getpos(&msg->xdrs);
+	int size;
+	XDR xdrs;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
+
+	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
+	if(!xdr_me_message(&xdrs, msg))
+		err(EXIT_FAILURE, "failed to encode a message");
+	size = xdr_getpos(&xdrs);
 
 	for(p=peers; p != NULL; p=p->hh.next) {
-		if (sendto(fd, msg->buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
+		if (sendto(fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
 			err(EXIT_FAILURE, "failed to send message");
 	}
-}
-
-void message_finish(struct message *msg)
-{
-	xdr_destroy(&msg->xdrs);
+	xdr_destroy(&xdrs);
 }
 
 static int make_socket_non_blocking(int fd)
@@ -213,14 +192,16 @@ void check_leader() {
 		);
 }
 
-int is_expired(struct message_header *header)
+int is_expired(struct me_message *msg)
 {
 	struct timeval now;
+	struct me_omega_msg_header *hdr;
 	int delta;
 
+	hdr = &msg->me_message_u.mm_omega_msg.mom_header;
 	gettimeofday(&now, NULL);
-	delta = (now.tv_sec - header->sent.tv_sec) * 1000;
-	delta += (now.tv_usec - header->sent.tv_usec) / 1000;
+	delta = (now.tv_sec - hdr->momh_sent.tv_sec) * 1000;
+	delta += (now.tv_usec - hdr->momh_sent.tv_usec) / 1000;
 	if(delta > TIME_DELTA + 2 * TIME_EPSILON)
 		return 1;
 	else
@@ -235,42 +216,48 @@ void restart_timer()
 
 void send_start(int s, int to)
 {
-	struct message msg;
-	message_start(&msg, MSG_START);
+	struct me_message msg;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(&msg.xdrs, &s))
-		err(EXIT_FAILURE, "failed to encode int32");
-	
+	message_init(&msg);
+
+	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data->type = ME_OMEGA_START;
+	data->me_omega_msg_data_u.mmd_k = s;
+
 	if(to >= 0)
 		message_send_to(&msg, to);
 	else
 		message_send_all(&msg);
-	message_finish(&msg);
 }
 
 void send_ok(int s)
 {
-	struct message msg;
-	message_start(&msg, MSG_OK);
+	struct me_message msg;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(&msg.xdrs, &s))
-		err(EXIT_FAILURE, "failed to encode int32");
+	message_init(&msg);
+
+	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data->type = ME_OMEGA_OK;
+	data->me_omega_msg_data_u.mmd_k = s;
 
 	message_send_all(&msg);
-	message_finish(&msg);
 
 }
 
 void send_alert(int s)
 {
-	struct message msg;
-	message_start(&msg, MSG_ALERT);
+	struct me_message msg;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(&msg.xdrs, &s))
-		err(EXIT_FAILURE, "failed to encode int32");
+	message_init(&msg);
+
+	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data->type = ME_OMEGA_ALERT;
+	data->me_omega_msg_data_u.mmd_k = s;
 
 	message_send_all(&msg);
-	message_finish(&msg);
 }
 
 void start_round(const int s)
@@ -290,13 +277,14 @@ void start_round(const int s)
 	restart_timer();
 }
 
-void do_msg_start(XDR *xdrs, const struct peer *from)
+void do_msg_start(struct me_message *msg, const struct peer *from)
 {
 	int k;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(xdrs, &k))
-		err(EXIT_FAILURE, "failed to decode int32");
-	
+	data = &msg->me_message_u.mm_omega_msg.mom_data;
+	k = data->me_omega_msg_data_u.mmd_k;
+
 	printf("R %d: Got START(%d) from peer #%d\n",
 		omega.r,
 		k,
@@ -310,12 +298,13 @@ void do_msg_start(XDR *xdrs, const struct peer *from)
 
 }
 
-void do_msg_ok(XDR *xdrs, const struct peer *from)
+void do_msg_ok(struct me_message *msg, const struct peer *from)
 {
 	int k;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(xdrs, &k))
-		err(EXIT_FAILURE, "failed to decode int32");
+	data = &msg->me_message_u.mm_omega_msg.mom_data;
+	k = data->me_omega_msg_data_u.mmd_k;
 
 	printf("R %d: Got OK(%d) from peer #%d\n",
 		omega.r,
@@ -343,13 +332,14 @@ void do_msg_ok(XDR *xdrs, const struct peer *from)
 		send_start(omega.r, from->index);
 }
 
-void do_msg_alert(XDR *xdrs, const struct peer *from)
+void do_msg_alert(struct me_message *msg, const struct peer *from)
 {
 	int k;
+	struct me_omega_msg_data *data;
 
-	if(!xdr_int32_t(xdrs, &k))
-		err(EXIT_FAILURE, "failed to decode int32");
-
+	data = &msg->me_message_u.mm_omega_msg.mom_data;
+	k = data->me_omega_msg_data_u.mmd_k;
+	
 	printf("R %d: Got ALERT(%d) from peer #%d\n",
 		omega.r,
 		k,
@@ -366,14 +356,15 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
 {
 	struct peer *p;
-	struct message_header header;
+	struct me_message msg;
+	struct me_omega_msg_data *data;
 	XDR xdrs;
 
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
-	if(!xdr_message_header(&xdrs, &header))
-		err(2, "unable to decode xdr_message_header");
+	if(!xdr_me_message(&xdrs, &msg))
+		err(EXIT_FAILURE, "unable to decode a message");
 
-	if(is_expired(&header)) {
+	if(is_expired(&msg)) {
 		warnx("got expired message");
 		return;
 	}
@@ -387,15 +378,17 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		return;
 	}
 
-	switch (header.type) {
-		case MSG_START:
-			do_msg_start(&xdrs, p);
+	data = &msg.me_message_u.mm_omega_msg.mom_data;
+
+	switch (data->type) {
+		case ME_OMEGA_START:
+			do_msg_start(&msg, p);
 			break;
-		case MSG_OK:
-			do_msg_ok(&xdrs,p);
+		case ME_OMEGA_OK:
+			do_msg_ok(&msg, p);
 			break;
-		case MSG_ALERT:
-			do_msg_alert(&xdrs,p);
+		case ME_OMEGA_ALERT:
+			do_msg_alert(&msg, p);
 			break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
