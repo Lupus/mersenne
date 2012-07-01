@@ -43,13 +43,13 @@
 
 #define BUF_SIZE 256
 #define LINE_BUF_SIZE 10 * 1024
-#define PROC_NUM 2
 //#define DEBUG
 //#define PROXY_OUTPUT
 
 #define PROC_LEADER_NOT_SURE	-1
 #define PROC_LEADER_UNDEFINED	-2
 
+static int proc_num;
 
 struct child_proc_item {
 	int cpi_fd;
@@ -107,7 +107,7 @@ static float timeval_msec_delta(struct timeval *from, struct timeval *to)
 static void clear_leaders()
 {
 	int i;
-	for(i = 0; i < PROC_NUM; i++) {
+	for(i = 0; i < proc_num; i++) {
 		leaders[i] = PROC_LEADER_UNDEFINED;
 
 	}
@@ -119,9 +119,9 @@ static void dump_leaders()
 {
 	int i;
 	fprintf(stderr, "[");
-	for(i = 0; i < PROC_NUM; i++) {
+	for(i = 0; i < proc_num; i++) {
 		fprintf(stderr, "%d", leaders[i]);
-		if(i < PROC_NUM - 1)
+		if(i < proc_num - 1)
 			fprintf(stderr, ", ");
 
 	}
@@ -136,7 +136,7 @@ static int check_leader_election()
 	int leader = PROC_LEADER_UNDEFINED;
 	int votes = 0;
 
-	for(i = 0; i < PROC_NUM; i++) {
+	for(i = 0; i < proc_num; i++) {
 		if(leaders[i] == PROC_LEADER_UNDEFINED)
 			continue;
 		if(leader == PROC_LEADER_UNDEFINED)
@@ -147,7 +147,7 @@ static int check_leader_election()
 	}
 	if(leader < 0)
 		return 0;
-	if(votes < PROC_NUM - killed_children)
+	if(votes < proc_num - killed_children)
 		return 0;
 	current_leader = leader;
 	return 1;
@@ -302,15 +302,21 @@ static void sim_timeout_cb (EV_P_ ev_timer *w, int revents)
 static void kill_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
 	struct child_proc_item *c;
-
-	if(current_leader < 0)
-		return;
+	int spawned = 0;
 
 	for(c=children; c != NULL; c=c->hh.next) {
 		if(0 == c->cpi_pid) {
 			spawn_child(c);
 			killed_children--;
-		} else if(current_leader == c->cpi_index) {
+			spawned++;
+		} 
+	}
+
+	if(current_leader < 0 || spawned > 0)
+		return;
+
+	for(c=children; c != NULL; c=c->hh.next) {
+		if(current_leader == c->cpi_index) {
 			kill_child(c);
 			killed_children++;
 		}
@@ -350,16 +356,22 @@ static void init_peers_file()
 	int i;
 
 	peers = fopen("peers", "w+");
-	for(i = 0; i < PROC_NUM; i++)
+	for(i = 0; i < proc_num; i++)
 		fprintf(peers, "127.0.0.%d\n", i + 1);
 	fclose(peers);
 }
 
-int main()
+int main(int argc, char *argv[])
 {
-	int proc_num = PROC_NUM;
 	struct child_proc_item *child;
 	int i;
+
+	if(2 != argc)
+		errx(EXIT_FAILURE, "expecting a number of processes as the first argument");
+	
+	proc_num = atoi(argv[1]);
+	if(proc_num < 1 || proc_num > 254)
+		errx(EXIT_FAILURE, "invalid number of processes");
 
 	init_peers_file();
 
