@@ -34,6 +34,8 @@
 #include <err.h>
 #include <errno.h>
 #include <ev.h>
+#include <openssl/evp.h>
+#include <bitmask.h>
 
 #include <me_protocol.h>
 
@@ -50,7 +52,7 @@
 struct peer {
 	int index;
 	struct sockaddr_in addr;
-	time_t last_heartbeat;
+	int ack_ttl;
 
 	UT_hash_handle hh;
 };
@@ -100,17 +102,48 @@ void delete_peer(struct peer *peer)
 	HASH_DEL(peers, peer);
 }
 
+void trust_init(struct me_omega_trust *trust)
+{
+	EVP_MD_CTX mdctx;
+	const EVP_MD *md = EVP_md4();
+	int count = HASH_COUNT(peers);
+	struct peer *p;
+	
+	EVP_MD_CTX_init(&mdctx);
+        EVP_DigestInit_ex(&mdctx, md, NULL);
+
+	trust->mask = bitmask_alloc(count);
+	bitmask_clearall(trust->mask);
+
+	for(p=peers; p != NULL; p=p->hh.next) {
+        	EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
+		EVP_DigestUpdate(&mdctx, &p->addr.sin_addr.s_addr,
+				sizeof(in_addr_t));
+		if(p->ack_ttl > 0)
+			bitmask_setbit(trust->mask, p->index);
+	}
+
+	trust->config_checksum.config_checksum_val = 
+		malloc(EVP_MAX_MD_SIZE);
+	EVP_DigestFinal_ex(&mdctx, trust->config_checksum.config_checksum_val,
+			&trust->config_checksum.config_checksum_len);
+        EVP_MD_CTX_cleanup(&mdctx);
+}
+
+void trust_free(struct me_omega_trust *trust)
+{
+	free(trust->config_checksum.config_checksum_val);
+	bitmask_free(trust->mask);
+}
+
 void message_init(struct me_message *msg)
 {
-	struct timeval tv;
 	struct me_omega_msg_header *hdr;
 
-	msg->stype = ME_OMEGA;
-	hdr = &msg->me_message_u.mm_omega_msg.mom_header;
-	hdr->momh_count = counter++;
-	gettimeofday(&tv, NULL);
-	hdr->momh_sent.tv_sec = tv.tv_sec;
-	hdr->momh_sent.tv_usec = tv.tv_usec;
+	msg->mm_stype = ME_OMEGA;
+	hdr = &msg->me_message_u.omega_message.header;
+	hdr->count = counter++;
+	gettimeofday(&hdr->sent, NULL);
 }
 
 void message_send_to(struct me_message *msg, const int peer_num)
@@ -198,10 +231,10 @@ int is_expired(struct me_message *msg)
 	struct me_omega_msg_header *hdr;
 	int delta;
 
-	hdr = &msg->me_message_u.mm_omega_msg.mom_header;
+	hdr = &msg->me_message_u.omega_message.header;
 	gettimeofday(&now, NULL);
-	delta = (now.tv_sec - hdr->momh_sent.tv_sec) * 1000;
-	delta += (now.tv_usec - hdr->momh_sent.tv_usec) / 1000;
+	delta = (now.tv_sec - hdr->sent.tv_sec) * 1000;
+	delta += (now.tv_usec - hdr->sent.tv_usec) / 1000;
 	if(delta > TIME_DELTA + 2 * TIME_EPSILON)
 		return 1;
 	else
@@ -221,9 +254,9 @@ void send_start(int s, int to)
 
 	message_init(&msg);
 
-	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data = &msg.me_message_u.omega_message.data;
 	data->type = ME_OMEGA_START;
-	data->me_omega_msg_data_u.mmd_k = s;
+	data->me_omega_msg_data_u.round.k = s;
 
 	if(to >= 0)
 		message_send_to(&msg, to);
@@ -237,13 +270,12 @@ void send_ok(int s)
 	struct me_omega_msg_data *data;
 
 	message_init(&msg);
-
-	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data = &msg.me_message_u.omega_message.data;
 	data->type = ME_OMEGA_OK;
-	data->me_omega_msg_data_u.mmd_k = s;
-
+	trust_init(&data->me_omega_msg_data_u.ok.trust);
+	data->me_omega_msg_data_u.ok.k = s;
 	message_send_all(&msg);
-
+	trust_free(&data->me_omega_msg_data_u.ok.trust);
 }
 
 void send_alert(int s)
@@ -253,11 +285,11 @@ void send_alert(int s)
 
 	message_init(&msg);
 
-	data = &msg.me_message_u.mm_omega_msg.mom_data;
-	data->type = ME_OMEGA_ALERT;
-	data->me_omega_msg_data_u.mmd_k = s;
+	data = &msg.me_message_u.omega_message.data;
+	//data->type = ME_OMEGA_ALERT;
+	data->me_omega_msg_data_u.round.k = s;
 
-	message_send_all(&msg);
+	//message_send_all(&msg);
 }
 
 void start_round(const int s)
@@ -282,8 +314,8 @@ void do_msg_start(struct me_message *msg, const struct peer *from)
 	int k;
 	struct me_omega_msg_data *data;
 
-	data = &msg->me_message_u.mm_omega_msg.mom_data;
-	k = data->me_omega_msg_data_u.mmd_k;
+	data = &msg->me_message_u.omega_message.data;
+	k = data->me_omega_msg_data_u.round.k;
 
 	printf("R %d: Got START(%d) from peer #%d\n",
 		omega.r,
@@ -302,14 +334,17 @@ void do_msg_ok(struct me_message *msg, const struct peer *from)
 {
 	int k;
 	struct me_omega_msg_data *data;
+	char buf[512];
 
-	data = &msg->me_message_u.mm_omega_msg.mom_data;
-	k = data->me_omega_msg_data_u.mmd_k;
+	data = &msg->me_message_u.omega_message.data;
+	k = data->me_omega_msg_data_u.ok.k;
 
-	printf("R %d: Got OK(%d) from peer #%d\n",
+	bitmask_displayhex(buf, 512, data->me_omega_msg_data_u.ok.trust.mask);
+	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
 		omega.r,
 		k,
-		from->index
+		from->index,
+		buf
 	);
 
 	if(k > omega.r)
@@ -337,8 +372,8 @@ void do_msg_alert(struct me_message *msg, const struct peer *from)
 	int k;
 	struct me_omega_msg_data *data;
 
-	data = &msg->me_message_u.mm_omega_msg.mom_data;
-	k = data->me_omega_msg_data_u.mmd_k;
+	data = &msg->me_message_u.omega_message.data;
+	k = data->me_omega_msg_data_u.round.k;
 	
 	printf("R %d: Got ALERT(%d) from peer #%d\n",
 		omega.r,
@@ -360,6 +395,7 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 	struct me_omega_msg_data *data;
 	XDR xdrs;
 
+	memset(&msg, 0, sizeof(msg));
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
 	if(!xdr_me_message(&xdrs, &msg))
 		err(EXIT_FAILURE, "unable to decode a message");
@@ -378,7 +414,7 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		return;
 	}
 
-	data = &msg.me_message_u.mm_omega_msg.mom_data;
+	data = &msg.me_message_u.omega_message.data;
 
 	switch (data->type) {
 		case ME_OMEGA_START:
@@ -387,13 +423,14 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		case ME_OMEGA_OK:
 			do_msg_ok(&msg, p);
 			break;
-		case ME_OMEGA_ALERT:
-			do_msg_alert(&msg, p);
-			break;
+		//case ME_OMEGA_ALERT:
+		//	do_msg_alert(&msg, p);
+		//	break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
 			break;
 	}
+	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
 }
 
 static void socket_read_cb (EV_P_ ev_io *w, int revents)
@@ -463,6 +500,7 @@ void load_peer_list(int my_index) {
 			me = p;
 			printf("My ip is %s\n", line_buf);
 		}
+		p->ack_ttl = 2;
 		add_peer(p);
 		i++;
 	}

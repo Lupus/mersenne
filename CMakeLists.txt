@@ -12,10 +12,16 @@ find_package(RpcGen REQUIRED)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
-set(CMAKE_C_FLAGS "-g -O0 -Wall -Werror")
+set(CMAKE_C_FLAGS "-Wall -Werror")
 
 RPCGEN_CREATE_XDR(me_protocol.x)
 set_source_files_properties( me_protocol.c PROPERTIES COMPILE_FLAGS "-Wno-unused" )
 
-add_executable(mersenne mersenne.c me_protocol.h me_protocol.c)
-target_link_libraries(mersenne ev)
+add_executable(mersenne
+	mersenne.c
+	xdr.h
+	xdr.c
+	me_protocol.h
+	me_protocol.c
+)
+target_link_libraries(mersenne ev crypto bitmask)

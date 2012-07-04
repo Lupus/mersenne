@@ -5,6 +5,8 @@
 #define __MAX_XDR_MESSAGE_LEN (__MTU - __UDP_HEADER_SIZE - 8)
 %#define ME_MAX_XDR_MESSAGE_LEN __MAX_XDR_MESSAGE_LEN
 
+%#include <xdr.h>
+
 enum me_message_supertype {
 	ME_OMEGA
 };
@@ -12,37 +14,48 @@ enum me_message_supertype {
 enum me_message_type {
 	ME_OMEGA_OK,
 	ME_OMEGA_START,
-	ME_OMEGA_ALERT
-};
-
-struct me_timeval {
-	uint32_t tv_sec;
-	uint32_t tv_usec;
+	ME_OMEGA_ACK
 };
 
 struct me_omega_msg_header {
-	int momh_count;
-	struct me_timeval momh_sent;
+	int count;
+	struct timeval sent;
+};
+
+struct me_omega_trust {
+	uint8_t config_checksum<32>;
+	bitmask_ptr mask;
+};
+
+struct me_omega_msg_ok_data {
+	int k;
+	struct me_omega_trust trust;
+};
+
+struct me_omega_msg_round_data {
+	int k;
 };
 
 union me_omega_msg_data switch(me_message_type type) {
-	case ME_OMEGA_OK:
 	case ME_OMEGA_START:
-	case ME_OMEGA_ALERT:
-	int mmd_k;
+	case ME_OMEGA_ACK:
+	struct me_omega_msg_round_data round;
+
+	case ME_OMEGA_OK:
+	struct me_omega_msg_ok_data ok;
 
 	default:
 	void;
 };
 
 struct me_omega_message {
-	struct me_omega_msg_header mom_header;
-	struct me_omega_msg_data mom_data;
+	struct me_omega_msg_header header;
+	struct me_omega_msg_data data;
 };
 
-union me_message switch(me_message_supertype stype) {
+union me_message switch(me_message_supertype mm_stype) {
 	case ME_OMEGA:
-	struct me_omega_message mm_omega_msg;
+	struct me_omega_message omega_message;
 
 	default:
 	void;
