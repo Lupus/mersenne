@@ -60,9 +60,6 @@ struct peer {
 static struct omega {
 	int r;
 	int leader;
-	int ok_count;
-	int last_ok_from;
-	int alert_count;
 	int delta_count;
 } omega;
 
@@ -134,6 +131,26 @@ void trust_free(struct me_omega_trust *trust)
 {
 	free(trust->config_checksum.config_checksum_val);
 	bitmask_free(trust->mask);
+}
+
+void get_config_checksum(char **buf, int *size)
+{
+	EVP_MD_CTX mdctx;
+	const EVP_MD *md = EVP_md4();
+	struct peer *p;
+	*buf = malloc(EVP_MAX_MD_SIZE);
+	
+	EVP_MD_CTX_init(&mdctx);
+        EVP_DigestInit_ex(&mdctx, md, NULL);
+
+	for(p=peers; p != NULL; p=p->hh.next) {
+        	EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
+		EVP_DigestUpdate(&mdctx, &p->addr.sin_addr.s_addr,
+				sizeof(in_addr_t));
+	}
+
+	EVP_DigestFinal_ex(&mdctx, (unsigned char *)*buf, (unsigned int *)size);
+        EVP_MD_CTX_cleanup(&mdctx);
 }
 
 void message_init(struct me_message *msg)
@@ -209,22 +226,6 @@ static int make_socket_non_blocking(int fd)
 	return 0;
 }
 
-void check_leader() {
-	if(omega.alert_count == 0 && omega.ok_count >= 2) {
-		omega.leader = omega.r % HASH_COUNT(peers);
-		printf("R %d: Leader check has passed, alerts = %d, ok = %d\n",
-			omega.r,
-			omega.alert_count,
-			omega.ok_count
-		);
-	} else
-		printf("R %d: Leader check has FAILED, alerts = %d, ok = %d\n",
-			omega.r,
-			omega.alert_count,
-			omega.ok_count
-		);
-}
-
 int is_expired(struct me_message *msg)
 {
 	struct timeval now;
@@ -278,7 +279,7 @@ void send_ok(int s)
 	trust_free(&data->me_omega_msg_data_u.ok.trust);
 }
 
-void send_alert(int s)
+void send_ack(int s, int to)
 {
 	struct me_message msg;
 	struct me_omega_msg_data *data;
@@ -286,30 +287,32 @@ void send_alert(int s)
 	message_init(&msg);
 
 	data = &msg.me_message_u.omega_message.data;
-	//data->type = ME_OMEGA_ALERT;
+	data->type = ME_OMEGA_ACK;
 	data->me_omega_msg_data_u.round.k = s;
 
-	//message_send_all(&msg);
+	message_send_to(&msg, to);
 }
 
 void start_round(const int s)
 {
+	struct peer *p;
 	int n = HASH_COUNT(peers);
 
-	send_alert(s);
 	if(me->index != s % n)
 		send_start(s, -1);
 	omega.r = s;
-	omega.leader = -1;
-	omega.ok_count = 0;
-	omega.last_ok_from = -1;
+	omega.leader = omega.r % n;
+
+	for(p=peers; p != NULL; p=p->hh.next) {
+		p->ack_ttl = 3;
+	}
 
 	printf("R %d: new round started\n", omega.r);
 
 	restart_timer();
 }
 
-void do_msg_start(struct me_message *msg, const struct peer *from)
+void do_msg_start(struct me_message *msg, struct peer *from)
 {
 	int k;
 	struct me_omega_msg_data *data;
@@ -330,12 +333,16 @@ void do_msg_start(struct me_message *msg, const struct peer *from)
 
 }
 
-void do_msg_ok(struct me_message *msg, const struct peer *from)
+void do_msg_ok(struct me_message *msg, struct peer *from)
 {
 	int k;
+	struct peer *p;
 	struct me_omega_msg_data *data;
 	char buf[512];
+	char *checksum;
+	int cs_size;
 
+	get_config_checksum(&checksum, &cs_size);
 	data = &msg->me_message_u.omega_message.data;
 	k = data->me_omega_msg_data_u.ok.k;
 
@@ -347,27 +354,35 @@ void do_msg_ok(struct me_message *msg, const struct peer *from)
 		buf
 	);
 
-	if(k > omega.r)
+	if(strncmp(checksum, (char*)data->me_omega_msg_data_u.ok.trust.config_checksum.config_checksum_val, cs_size)) {
+		warnx("config checksum mismatch, ignoring OK message");
+		return;
+	}
+
+	if(k > omega.r) {
+		send_ack(k, k % HASH_COUNT(peers));
 		start_round(k);
-	else if(k == omega.r) {
-		if(omega.ok_count < 2) {
-			if(omega.last_ok_from < 0)
-				omega.last_ok_from = from->index;
-			if(omega.last_ok_from != from->index)
-				// My interpretation of the protocol: two OKs
-				// shold go from one source to be counted as
-				// two OKs from the leader.
-				omega.ok_count = 0;
-			omega.last_ok_from = from->index;
-			omega.ok_count++;
-			check_leader();
-		}
-		restart_timer();
-	} else if(k < omega.r)
+		return;
+	} else if(k < omega.r) {
 		send_start(omega.r, from->index);
+		return;
+	}
+
+	if(!bitmask_isbitset(data->me_omega_msg_data_u.ok.trust.mask, me->index)) {
+		start_round(omega.r + 1);
+		return;
+	}
+
+	for(p=peers; p != NULL; p=p->hh.next) {
+		if(bitmask_isbitset(data->me_omega_msg_data_u.ok.trust.mask, p->index))
+			p->ack_ttl = 1;
+	}
+
+	send_ack(omega.r, omega.r % HASH_COUNT(peers));
+	restart_timer();
 }
 
-void do_msg_alert(struct me_message *msg, const struct peer *from)
+void do_msg_ack(struct me_message *msg, struct peer *from)
 {
 	int k;
 	struct me_omega_msg_data *data;
@@ -375,16 +390,16 @@ void do_msg_alert(struct me_message *msg, const struct peer *from)
 	data = &msg->me_message_u.omega_message.data;
 	k = data->me_omega_msg_data_u.round.k;
 	
-	printf("R %d: Got ALERT(%d) from peer #%d\n",
+	printf("R %d: Got ACK(%d) from peer #%d\n",
 		omega.r,
 		k,
 		from->index
 	);
 
-	if(k > omega.r) {
-		omega.leader = -1;
-		omega.alert_count = 6;
-	}
+	if(k == omega.r) {
+		from->ack_ttl = 3;
+	} else
+		warnx("got ACK from round other than mine");
 }
 
 void do_message(char* buf, int buf_size, const struct sockaddr *addr,
@@ -423,9 +438,9 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 		case ME_OMEGA_OK:
 			do_msg_ok(&msg, p);
 			break;
-		//case ME_OMEGA_ALERT:
-		//	do_msg_alert(&msg, p);
-		//	break;
+		case ME_OMEGA_ACK:
+			do_msg_ack(&msg, p);
+			break;
 		default:
 			warnx("got unknown message from peer #%d\n", p->index);
 			break;
@@ -458,21 +473,24 @@ static void socket_read_cb (EV_P_ ev_io *w, int revents)
 // another callback, this time for a time-out
 static void timeout_cb (EV_P_ ev_timer *w, int revents)
 {
+	struct peer *p;
 	int n = HASH_COUNT(peers);
 
-	if(me->index == omega.r % n)
+
+	if(me->index == omega.r % n) {
+		for(p=peers; p != NULL; p=p->hh.next) {
+			p->ack_ttl--;
+		}
 		send_ok(omega.r);
+	}
 
 	printf("R %d: Leader=%d\n", omega.r, omega.leader);
+
+	
 
 	omega.delta_count++;
 	if(omega.delta_count > 2)
 		start_round(omega.r + 1);
-	
-	if(omega.alert_count > 0) {
-		omega.alert_count--;
-		check_leader();
-	}
 }
 
 void load_peer_list(int my_index) {
@@ -500,7 +518,6 @@ void load_peer_list(int my_index) {
 			me = p;
 			printf("My ip is %s\n", line_buf);
 		}
-		p->ack_ttl = 2;
 		add_peer(p);
 		i++;
 	}
