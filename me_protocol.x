@@ -20,16 +20,12 @@ enum me_message_type {
 struct me_omega_msg_header {
 	int count;
 	struct timeval sent;
-};
-
-struct me_omega_trust {
-	uint8_t config_checksum<32>;
-	bitmask_ptr mask;
+	opaque config_checksum[36];
 };
 
 struct me_omega_msg_ok_data {
 	int k;
-	struct me_omega_trust trust;
+	bitmask_ptr trust;
 };
 
 struct me_omega_msg_round_data {

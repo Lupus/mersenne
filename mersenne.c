@@ -99,38 +99,18 @@ void delete_peer(struct peer *peer)
 	HASH_DEL(peers, peer);
 }
 
-void trust_init(struct me_omega_trust *trust)
+struct bitmask * get_trust()
 {
-	EVP_MD_CTX mdctx;
-	const EVP_MD *md = EVP_md4();
-	int count = HASH_COUNT(peers);
+	struct bitmask *bmp;
 	struct peer *p;
-
-	EVP_MD_CTX_init(&mdctx);
-	EVP_DigestInit_ex(&mdctx, md, NULL);
-
-	trust->mask = bitmask_alloc(count);
-	bitmask_clearall(trust->mask);
+	bmp = bitmask_alloc(HASH_COUNT(peers));
+	bitmask_clearall(bmp);
 
 	for(p=peers; p != NULL; p=p->hh.next) {
-		EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
-		EVP_DigestUpdate(&mdctx, &p->addr.sin_addr.s_addr,
-				sizeof(in_addr_t));
 		if(p->ack_ttl > 0)
-			bitmask_setbit(trust->mask, p->index);
+			bitmask_setbit(bmp, p->index);
 	}
-
-	trust->config_checksum.config_checksum_val = 
-		malloc(EVP_MAX_MD_SIZE);
-	EVP_DigestFinal_ex(&mdctx, trust->config_checksum.config_checksum_val,
-			&trust->config_checksum.config_checksum_len);
-	EVP_MD_CTX_cleanup(&mdctx);
-}
-
-void trust_free(struct me_omega_trust *trust)
-{
-	free(trust->config_checksum.config_checksum_val);
-	bitmask_free(trust->mask);
+	return bmp;
 }
 
 void get_config_checksum(char **buf, int *size)
@@ -138,7 +118,9 @@ void get_config_checksum(char **buf, int *size)
 	EVP_MD_CTX mdctx;
 	const EVP_MD *md = EVP_md4();
 	struct peer *p;
-	*buf = malloc(EVP_MAX_MD_SIZE);
+
+	if(NULL == *buf)
+		*buf = malloc(EVP_MAX_MD_SIZE);
 
 	EVP_MD_CTX_init(&mdctx);
 	EVP_DigestInit_ex(&mdctx, md, NULL);
@@ -156,10 +138,13 @@ void get_config_checksum(char **buf, int *size)
 void message_init(struct me_message *msg)
 {
 	struct me_omega_msg_header *hdr;
+	char *ptr;
 
 	msg->mm_stype = ME_OMEGA;
 	hdr = &msg->me_message_u.omega_message.header;
 	hdr->count = counter++;
+	ptr = hdr->config_checksum;
+	get_config_checksum((char **)&ptr, NULL);
 	gettimeofday(&hdr->sent, NULL);
 }
 
@@ -242,6 +227,20 @@ int is_expired(struct me_message *msg)
 		return 0;
 }
 
+int config_match(struct me_message *msg)
+{
+	struct me_omega_msg_header *hdr;
+	char *checksum = NULL;
+	int cs_size;
+
+	get_config_checksum(&checksum, &cs_size);
+	hdr = &msg->me_message_u.omega_message.header;
+
+	if(strncmp(checksum, hdr->config_checksum, cs_size))
+		return 0;
+	return 1;
+}
+
 void restart_timer()
 {
 	ev_timer_again(loop, &delta_timer);
@@ -273,10 +272,10 @@ void send_ok(int s)
 	message_init(&msg);
 	data = &msg.me_message_u.omega_message.data;
 	data->type = ME_OMEGA_OK;
-	trust_init(&data->me_omega_msg_data_u.ok.trust);
+	data->me_omega_msg_data_u.ok.trust = get_trust();
 	data->me_omega_msg_data_u.ok.k = s;
 	message_send_all(&msg);
-	trust_free(&data->me_omega_msg_data_u.ok.trust);
+	bitmask_free(data->me_omega_msg_data_u.ok.trust);
 }
 
 void send_ack(int s, int to)
@@ -339,25 +338,17 @@ void do_msg_ok(struct me_message *msg, struct peer *from)
 	struct peer *p;
 	struct me_omega_msg_data *data;
 	char buf[512];
-	char *checksum;
-	int cs_size;
 
-	get_config_checksum(&checksum, &cs_size);
 	data = &msg->me_message_u.omega_message.data;
 	k = data->me_omega_msg_data_u.ok.k;
 
-	bitmask_displayhex(buf, 512, data->me_omega_msg_data_u.ok.trust.mask);
+	bitmask_displayhex(buf, 512, data->me_omega_msg_data_u.ok.trust);
 	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
 			omega.r,
 			k,
 			from->index,
 			buf
 	      );
-
-	if(strncmp(checksum, (char*)data->me_omega_msg_data_u.ok.trust.config_checksum.config_checksum_val, cs_size)) {
-		warnx("config checksum mismatch, ignoring OK message");
-		return;
-	}
 
 	if(k > omega.r) {
 		send_ack(k, k % HASH_COUNT(peers));
@@ -368,13 +359,13 @@ void do_msg_ok(struct me_message *msg, struct peer *from)
 		return;
 	}
 
-	if(!bitmask_isbitset(data->me_omega_msg_data_u.ok.trust.mask, me->index)) {
+	if(!bitmask_isbitset(data->me_omega_msg_data_u.ok.trust, me->index)) {
 		start_round(omega.r + 1);
 		return;
 	}
 
 	for(p=peers; p != NULL; p=p->hh.next) {
-		if(bitmask_isbitset(data->me_omega_msg_data_u.ok.trust.mask, p->index))
+		if(bitmask_isbitset(data->me_omega_msg_data_u.ok.trust, p->index))
 			p->ack_ttl = 1;
 	}
 
@@ -417,6 +408,10 @@ void do_message(char* buf, int buf_size, const struct sockaddr *addr,
 
 	if(is_expired(&msg)) {
 		warnx("got expired message");
+		return;
+	}
+	if(!config_match(&msg)) {
+		warnx("sender configuration does not match mine, ignoring message");
 		return;
 	}
 	if (addr->sa_family != AF_INET) {
