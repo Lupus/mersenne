@@ -105,15 +105,15 @@ void trust_init(struct me_omega_trust *trust)
 	const EVP_MD *md = EVP_md4();
 	int count = HASH_COUNT(peers);
 	struct peer *p;
-	
+
 	EVP_MD_CTX_init(&mdctx);
-        EVP_DigestInit_ex(&mdctx, md, NULL);
+	EVP_DigestInit_ex(&mdctx, md, NULL);
 
 	trust->mask = bitmask_alloc(count);
 	bitmask_clearall(trust->mask);
 
 	for(p=peers; p != NULL; p=p->hh.next) {
-        	EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
+		EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
 		EVP_DigestUpdate(&mdctx, &p->addr.sin_addr.s_addr,
 				sizeof(in_addr_t));
 		if(p->ack_ttl > 0)
@@ -124,7 +124,7 @@ void trust_init(struct me_omega_trust *trust)
 		malloc(EVP_MAX_MD_SIZE);
 	EVP_DigestFinal_ex(&mdctx, trust->config_checksum.config_checksum_val,
 			&trust->config_checksum.config_checksum_len);
-        EVP_MD_CTX_cleanup(&mdctx);
+	EVP_MD_CTX_cleanup(&mdctx);
 }
 
 void trust_free(struct me_omega_trust *trust)
@@ -139,18 +139,18 @@ void get_config_checksum(char **buf, int *size)
 	const EVP_MD *md = EVP_md4();
 	struct peer *p;
 	*buf = malloc(EVP_MAX_MD_SIZE);
-	
+
 	EVP_MD_CTX_init(&mdctx);
-        EVP_DigestInit_ex(&mdctx, md, NULL);
+	EVP_DigestInit_ex(&mdctx, md, NULL);
 
 	for(p=peers; p != NULL; p=p->hh.next) {
-        	EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
+		EVP_DigestUpdate(&mdctx, &p->index, sizeof(int));
 		EVP_DigestUpdate(&mdctx, &p->addr.sin_addr.s_addr,
 				sizeof(in_addr_t));
 	}
 
 	EVP_DigestFinal_ex(&mdctx, (unsigned char *)*buf, (unsigned int *)size);
-        EVP_MD_CTX_cleanup(&mdctx);
+	EVP_MD_CTX_cleanup(&mdctx);
 }
 
 void message_init(struct me_message *msg)
@@ -321,10 +321,10 @@ void do_msg_start(struct me_message *msg, struct peer *from)
 	k = data->me_omega_msg_data_u.round.k;
 
 	printf("R %d: Got START(%d) from peer #%d\n",
-		omega.r,
-		k,
-		from->index
-	);
+			omega.r,
+			k,
+			from->index
+	      );
 
 	if(k > omega.r)
 		start_round(k);
@@ -348,11 +348,11 @@ void do_msg_ok(struct me_message *msg, struct peer *from)
 
 	bitmask_displayhex(buf, 512, data->me_omega_msg_data_u.ok.trust.mask);
 	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
-		omega.r,
-		k,
-		from->index,
-		buf
-	);
+			omega.r,
+			k,
+			from->index,
+			buf
+	      );
 
 	if(strncmp(checksum, (char*)data->me_omega_msg_data_u.ok.trust.config_checksum.config_checksum_val, cs_size)) {
 		warnx("config checksum mismatch, ignoring OK message");
@@ -389,12 +389,12 @@ void do_msg_ack(struct me_message *msg, struct peer *from)
 
 	data = &msg->me_message_u.omega_message.data;
 	k = data->me_omega_msg_data_u.round.k;
-	
+
 	printf("R %d: Got ACK(%d) from peer #%d\n",
-		omega.r,
-		k,
-		from->index
-	);
+			omega.r,
+			k,
+			from->index
+	      );
 
 	if(k == omega.r) {
 		from->ack_ttl = 3;
@@ -486,7 +486,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 
 	printf("R %d: Leader=%d\n", omega.r, omega.leader);
 
-	
+
 
 	omega.delta_count++;
 	if(omega.delta_count > 2)
