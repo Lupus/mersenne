@@ -19,9 +19,18 @@ set_source_files_properties( me_protocol.c PROPERTIES COMPILE_FLAGS "-Wno-unused
 
 add_executable(mersenne
 	mersenne.c
+	context.h
+	context.c
+	leader.h
+	leader.c
+	peers.h
+	peers.c
+	util.h
+	util.c
 	xdr.h
 	xdr.c
 	me_protocol.h
 	me_protocol.c
+	vars.h
 )
 target_link_libraries(mersenne ev crypto bitmask)

@@ -1,3 +1,24 @@
+/********************************************************************
+
+  Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
+
+  This file is part of Mersenne.
+
+  Mersenne is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  any later version.
+
+  Mersenne is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
+
+ ********************************************************************/
+
 #define __MTU     1500
 #define __UDP_HEADER_SIZE 28
 %#define ME_UDP_HEADER_SIZE __UDP_HEADER_SIZE
@@ -8,7 +29,7 @@
 %#include <xdr.h>
 
 enum me_message_supertype {
-	ME_OMEGA
+	ME_LEADER
 };
 
 enum me_message_type {
@@ -49,8 +70,8 @@ struct me_omega_message {
 	struct me_omega_msg_data data;
 };
 
-union me_message switch(me_message_supertype mm_stype) {
-	case ME_OMEGA:
+union me_message switch(me_message_supertype super_type) {
+	case ME_LEADER:
 	struct me_omega_message omega_message;
 
 	default:
