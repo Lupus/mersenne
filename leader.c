@@ -66,11 +66,11 @@ void get_config_checksum(ME_P_ char **buf, int *size)
 
 void message_init(ME_P_ struct me_message *msg)
 {
-	struct me_omega_msg_header *hdr;
+	struct me_leader_msg_header *hdr;
 	char *ptr;
 
 	msg->super_type = ME_LEADER;
-	hdr = &msg->me_message_u.omega_message.header;
+	hdr = &msg->me_message_u.leader_message.header;
 	hdr->count = mctx->counter++;
 	ptr = hdr->config_checksum;
 	get_config_checksum(ME_A_ (char **)&ptr, NULL);
@@ -124,10 +124,10 @@ void message_send_all(ME_P_ struct me_message *msg)
 int is_expired(struct me_message *msg)
 {
 	struct timeval now;
-	struct me_omega_msg_header *hdr;
+	struct me_leader_msg_header *hdr;
 	int delta;
 
-	hdr = &msg->me_message_u.omega_message.header;
+	hdr = &msg->me_message_u.leader_message.header;
 	gettimeofday(&now, NULL);
 	delta = (now.tv_sec - hdr->sent.tv_sec) * 1000;
 	delta += (now.tv_usec - hdr->sent.tv_usec) / 1000;
@@ -139,12 +139,12 @@ int is_expired(struct me_message *msg)
 
 int config_match(ME_P_ struct me_message *msg)
 {
-	struct me_omega_msg_header *hdr;
+	struct me_leader_msg_header *hdr;
 	char *checksum = NULL;
 	int cs_size;
 
 	get_config_checksum(ME_A_ &checksum, &cs_size);
-	hdr = &msg->me_message_u.omega_message.header;
+	hdr = &msg->me_message_u.leader_message.header;
 
 	if(strncmp(checksum, hdr->config_checksum, cs_size))
 		return 0;
@@ -160,13 +160,13 @@ void restart_timer(ME_P)
 void send_start(ME_P_ int s, int to)
 {
 	struct me_message msg;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
 	message_init(ME_A_ &msg);
 
-	data = &msg.me_message_u.omega_message.data;
+	data = &msg.me_message_u.leader_message.data;
 	data->type = ME_OMEGA_START;
-	data->me_omega_msg_data_u.round.k = s;
+	data->me_leader_msg_data_u.round.k = s;
 
 	if(to >= 0)
 		message_send_to(ME_A_ &msg, to);
@@ -177,27 +177,27 @@ void send_start(ME_P_ int s, int to)
 void send_ok(ME_P_ int s)
 {
 	struct me_message msg;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
 	message_init(ME_A_ &msg);
-	data = &msg.me_message_u.omega_message.data;
+	data = &msg.me_message_u.leader_message.data;
 	data->type = ME_OMEGA_OK;
-	data->me_omega_msg_data_u.ok.trust = get_trust(ME_A);
-	data->me_omega_msg_data_u.ok.k = s;
+	data->me_leader_msg_data_u.ok.trust = get_trust(ME_A);
+	data->me_leader_msg_data_u.ok.k = s;
 	message_send_all(ME_A_ &msg);
-	bitmask_free(data->me_omega_msg_data_u.ok.trust);
+	bitmask_free(data->me_leader_msg_data_u.ok.trust);
 }
 
 void send_ack(ME_P_ int s, int to)
 {
 	struct me_message msg;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
 	message_init(ME_A_ &msg);
 
-	data = &msg.me_message_u.omega_message.data;
+	data = &msg.me_message_u.leader_message.data;
 	data->type = ME_OMEGA_ACK;
-	data->me_omega_msg_data_u.round.k = s;
+	data->me_leader_msg_data_u.round.k = s;
 
 	message_send_to(ME_A_ &msg, to);
 }
@@ -224,10 +224,10 @@ void start_round(ME_P_ const int s)
 void do_msg_start(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	int k;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
-	data = &msg->me_message_u.omega_message.data;
-	k = data->me_omega_msg_data_u.round.k;
+	data = &msg->me_message_u.leader_message.data;
+	k = data->me_leader_msg_data_u.round.k;
 
 	printf("R %d: Got START(%d) from peer #%d\n",
 			mctx->ldr.r,
@@ -246,13 +246,13 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	int k;
 	struct me_peer *p;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 	char buf[512];
 
-	data = &msg->me_message_u.omega_message.data;
-	k = data->me_omega_msg_data_u.ok.k;
+	data = &msg->me_message_u.leader_message.data;
+	k = data->me_leader_msg_data_u.ok.k;
 
-	bitmask_displayhex(buf, 512, data->me_omega_msg_data_u.ok.trust);
+	bitmask_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
 	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
 			mctx->ldr.r,
 			k,
@@ -269,13 +269,13 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 		return;
 	}
 
-	if(!bitmask_isbitset(data->me_omega_msg_data_u.ok.trust, mctx->me->index)) {
+	if(!bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
 		start_round(ME_A_ mctx->ldr.r + 1);
 		return;
 	}
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
-		if(bitmask_isbitset(data->me_omega_msg_data_u.ok.trust, p->index))
+		if(bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, p->index))
 			p->ack_ttl = 1;
 	}
 
@@ -286,10 +286,10 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	int k;
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
-	data = &msg->me_message_u.omega_message.data;
-	k = data->me_omega_msg_data_u.round.k;
+	data = &msg->me_message_u.leader_message.data;
+	k = data->me_leader_msg_data_u.round.k;
 
 	printf("R %d: Got ACK(%d) from peer #%d\n",
 			mctx->ldr.r,
@@ -331,7 +331,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 
 void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
-	struct me_omega_msg_data *data;
+	struct me_leader_msg_data *data;
 
 	if(is_expired(msg)) {
 		warnx("got expired message");
@@ -341,7 +341,7 @@ void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		warnx("sender configuration does not match mine, ignoring message");
 		return;
 	}
-	data = &msg->me_message_u.omega_message.data;
+	data = &msg->me_message_u.leader_message.data;
 
 	switch (data->type) {
 		case ME_OMEGA_START:

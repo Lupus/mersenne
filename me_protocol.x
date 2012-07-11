@@ -38,41 +38,41 @@ enum me_message_type {
 	ME_OMEGA_ACK
 };
 
-struct me_omega_msg_header {
+struct me_leader_msg_header {
 	int count;
 	struct timeval sent;
 	opaque config_checksum[36];
 };
 
-struct me_omega_msg_ok_data {
+struct me_leader_msg_ok_data {
 	int k;
 	bitmask_ptr trust;
 };
 
-struct me_omega_msg_round_data {
+struct me_leader_msg_round_data {
 	int k;
 };
 
-union me_omega_msg_data switch(me_message_type type) {
+union me_leader_msg_data switch(me_message_type type) {
 	case ME_OMEGA_START:
 	case ME_OMEGA_ACK:
-	struct me_omega_msg_round_data round;
+	struct me_leader_msg_round_data round;
 
 	case ME_OMEGA_OK:
-	struct me_omega_msg_ok_data ok;
+	struct me_leader_msg_ok_data ok;
 
 	default:
 	void;
 };
 
-struct me_omega_message {
-	struct me_omega_msg_header header;
-	struct me_omega_msg_data data;
+struct me_leader_message {
+	struct me_leader_msg_header header;
+	struct me_leader_msg_data data;
 };
 
 union me_message switch(me_message_supertype super_type) {
 	case ME_LEADER:
-	struct me_omega_message omega_message;
+	struct me_leader_message leader_message;
 
 	default:
 	void;
