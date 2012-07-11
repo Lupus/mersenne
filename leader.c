@@ -165,7 +165,7 @@ void send_start(ME_P_ int s, int to)
 	message_init(ME_A_ &msg);
 
 	data = &msg.me_message_u.leader_message.data;
-	data->type = ME_OMEGA_START;
+	data->type = ME_LEADER_START;
 	data->me_leader_msg_data_u.round.k = s;
 
 	if(to >= 0)
@@ -181,7 +181,7 @@ void send_ok(ME_P_ int s)
 
 	message_init(ME_A_ &msg);
 	data = &msg.me_message_u.leader_message.data;
-	data->type = ME_OMEGA_OK;
+	data->type = ME_LEADER_OK;
 	data->me_leader_msg_data_u.ok.trust = get_trust(ME_A);
 	data->me_leader_msg_data_u.ok.k = s;
 	message_send_all(ME_A_ &msg);
@@ -196,7 +196,7 @@ void send_ack(ME_P_ int s, int to)
 	message_init(ME_A_ &msg);
 
 	data = &msg.me_message_u.leader_message.data;
-	data->type = ME_OMEGA_ACK;
+	data->type = ME_LEADER_ACK;
 	data->me_leader_msg_data_u.round.k = s;
 
 	message_send_to(ME_A_ &msg, to);
@@ -344,13 +344,13 @@ void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 
 	switch (data->type) {
-		case ME_OMEGA_START:
+		case ME_LEADER_START:
 			do_msg_start(ME_A_ msg, from);
 			break;
-		case ME_OMEGA_OK:
+		case ME_LEADER_OK:
 			do_msg_ok(ME_A_ msg, from);
 			break;
-		case ME_OMEGA_ACK:
+		case ME_LEADER_ACK:
 			do_msg_ack(ME_A_ msg, from);
 			break;
 		default:

@@ -33,9 +33,9 @@ enum me_message_supertype {
 };
 
 enum me_message_type {
-	ME_OMEGA_OK,
-	ME_OMEGA_START,
-	ME_OMEGA_ACK
+	ME_LEADER_OK,
+	ME_LEADER_START,
+	ME_LEADER_ACK
 };
 
 struct me_leader_msg_header {
@@ -54,11 +54,11 @@ struct me_leader_msg_round_data {
 };
 
 union me_leader_msg_data switch(me_message_type type) {
-	case ME_OMEGA_START:
-	case ME_OMEGA_ACK:
+	case ME_LEADER_START:
+	case ME_LEADER_ACK:
 	struct me_leader_msg_round_data round;
 
-	case ME_OMEGA_OK:
+	case ME_LEADER_OK:
 	struct me_leader_msg_ok_data ok;
 
 	default:
