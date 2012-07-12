@@ -20,6 +20,7 @@
  ********************************************************************/
 
 #include <uthash.h>
+#include <regex.h>
 #include <err.h>
 
 #include <peers.h>
@@ -54,15 +55,22 @@ void delete_peer(ME_P_ struct me_peer *peer)
 	HASH_DEL(mctx->peers, peer);
 }
 
-void load_peer_list(ME_P_ int my_index) {
+void load_peer_list(ME_P_ int my_index)
+{
 	int i;
+	char *addr, *flag;
 	char line_buf[255];
 	FILE* peers_file;
 	struct me_peer *p;
+	static regex_t rx_config_line;
+	regmatch_t match[4];
+	int retval;
 
 	peers_file = fopen("peers", "r");
 	if(!peers_file)
 		err(1, "fopen");
+	if(regcomp(&rx_config_line, "^\\([[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\)\\(\\:\\(a\\)\\)\\?", 0))
+		err(EXIT_FAILURE, "%s", "regcomp failed");
 	i = 0;
 	while(1) {
 		fgets(line_buf, 255, peers_file);
@@ -71,13 +79,30 @@ void load_peer_list(ME_P_ int my_index) {
 		p = malloc(sizeof(struct me_peer));
 		memset(p, 0, sizeof(struct me_peer));
 		p->index = i;
+		
+		retval = regexec(&rx_config_line, line_buf, 4, match, 0);
+		if(retval) {
+			if(REG_NOMATCH != retval)
+				errx(EXIT_FAILURE, "%s", "regexec failed");
+			errx(EXIT_FAILURE, "Invalid config line: %s", line_buf);
+		} else {
+			line_buf[match[1].rm_eo] = '\0';
+			line_buf[match[3].rm_eo] = '\0';
+			addr = line_buf + match[1].rm_so;
+			flag = line_buf + match[3].rm_so;
+		}
+
 		p->addr.sin_family = AF_INET;
-		if(0 == inet_aton(line_buf, &p->addr.sin_addr))
+		if(0 == inet_aton(addr, &p->addr.sin_addr))
 			errx(EXIT_FAILURE, "invalid address: %s", line_buf);
 		p->addr.sin_port = htons(MERSENNE_PORT);
+		if('a' == flag[0])
+			p->pxs.is_acceptor = 1;
 		if(i == my_index) {
 			mctx->me = p;
 			printf("My ip is %s\n", line_buf);
+			if(p->pxs.is_acceptor)
+				printf("I am an acceptor\n");
 		}
 		add_peer(ME_A_ p);
 		i++;

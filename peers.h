@@ -28,6 +28,7 @@
 #include <arpa/inet.h>
 #include <uthash.h>
 #include <context_fwd.h>
+#include <paxos.h>
 
 struct sockaddr_in;
 
@@ -35,6 +36,7 @@ struct me_peer {
 	int index;
 	struct sockaddr_in addr;
 	int ack_ttl;
+	struct pxs_peer_info pxs;
 
 	UT_hash_handle hh;
 };
