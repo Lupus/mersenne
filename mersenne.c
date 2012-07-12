@@ -66,6 +66,9 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		case ME_LEADER:
 			ldr_do_message(ME_A_ &msg, p);
 			break;
+		case ME_PAXOS:
+			//Do nothing (for now)
+			break;
 	}
 	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
 }

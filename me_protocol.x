@@ -29,10 +29,11 @@
 %#include <xdr.h>
 
 enum me_message_supertype {
-	ME_LEADER
+	ME_LEADER,
+	ME_PAXOS
 };
 
-enum me_message_type {
+enum me_leader_message_type {
 	ME_LEADER_OK,
 	ME_LEADER_START,
 	ME_LEADER_ACK
@@ -53,7 +54,7 @@ struct me_leader_msg_round_data {
 	int k;
 };
 
-union me_leader_msg_data switch(me_message_type type) {
+union me_leader_msg_data switch(me_leader_message_type type) {
 	case ME_LEADER_START:
 	case ME_LEADER_ACK:
 	struct me_leader_msg_round_data round;
@@ -70,9 +71,60 @@ struct me_leader_message {
 	struct me_leader_msg_data data;
 };
 
+enum me_paxos_message_type {
+	ME_PAXOS_PREPARE,
+	ME_PAXOS_PROMISE,
+	ME_PAXOS_ACCEPT,
+	ME_PAXOS_LEARN
+};
+
+struct me_paxos_msg_prepare_data {
+	uint64_t i;
+	uint64_t b;
+};
+
+struct me_paxos_promise_data {
+	uint64_t i;
+	uint64_t b;
+	opaque v<ME_MAX_XDR_MESSAGE_LEN>;
+	uint64_t vb;
+};
+
+struct me_paxos_accept_data {
+	uint64_t i;
+	uint64_t b;
+	opaque v<ME_MAX_XDR_MESSAGE_LEN>;
+};
+
+struct me_paxos_learn_data {
+	uint64_t i;
+	uint64_t b;
+	opaque v<ME_MAX_XDR_MESSAGE_LEN>;
+};
+
+union me_paxos_msg_data switch(me_paxos_message_type type) {
+	case ME_PAXOS_PREPARE:
+	struct me_paxos_msg_prepare_data prepare;
+	case ME_PAXOS_PROMISE:
+	struct me_paxos_promise_data promise;
+	case ME_PAXOS_ACCEPT:
+	struct me_paxos_accept_data accept;
+	case ME_PAXOS_LEARN:
+	struct me_paxos_learn_data learn;
+
+	default:
+	void;
+};
+
+struct me_paxos_message {
+	struct me_paxos_msg_data data;
+};
+
 union me_message switch(me_message_supertype super_type) {
 	case ME_LEADER:
 	struct me_leader_message leader_message;
+	case ME_PAXOS:
+	struct me_paxos_message paxos_message;
 
 	default:
 	void;
