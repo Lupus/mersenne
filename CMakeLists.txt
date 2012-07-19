@@ -17,20 +17,8 @@ set(CMAKE_C_FLAGS "-Wall -Werror")
 RPCGEN_CREATE_XDR(me_protocol.x)
 set_source_files_properties( me_protocol.c PROPERTIES COMPILE_FLAGS "-Wno-unused" )
 
-add_executable(mersenne
-	mersenne.c
-	context.h
-	context.c
-	leader.h
-	leader.c
-	peers.h
-	peers.c
-	util.h
-	util.c
-	xdr.h
-	xdr.c
-	me_protocol.h
-	me_protocol.c
-	vars.h
-)
+AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR} MERSENNE_SOURCES)
+SET(MERSENNE_GEN_SOURCES me_protocol.h me_protocol.c)
+
+add_executable(mersenne ${MERSENNE_SOURCES} ${MERSENNE_GEN_SOURCES})
 target_link_libraries(mersenne ev crypto bitmask)
