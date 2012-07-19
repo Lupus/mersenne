@@ -77,50 +77,6 @@ void message_init(ME_P_ struct me_message *msg)
 	gettimeofday(&hdr->sent, NULL);
 }
 
-void message_send_to(ME_P_ struct me_message *msg, const int peer_num)
-{
-	struct me_peer *p;
-	int size;
-	XDR xdrs;
-	char buf[ME_MAX_XDR_MESSAGE_LEN];
-
-	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
-	if(!xdr_me_message(&xdrs, msg))
-		err(EXIT_FAILURE, "failed to encode a message");
-	size = xdr_getpos(&xdrs);
-
-	p = find_peer_by_index(ME_A_ peer_num);
-	if(!p) {
-		warn("unable to find peer #%d", peer_num);
-		return;
-	}
-
-	if (sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
-		err(EXIT_FAILURE, "failed to send message");
-
-	xdr_destroy(&xdrs);
-}
-
-void message_send_all(ME_P_ struct me_message *msg)
-{
-	struct me_peer *p;
-	int size;
-	XDR xdrs;
-	char buf[ME_MAX_XDR_MESSAGE_LEN];
-
-	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
-	if(!xdr_me_message(&xdrs, msg))
-		err(EXIT_FAILURE, "failed to encode a message");
-	size = xdr_getpos(&xdrs);
-
-	for(p=mctx->peers; p != NULL; p=p->hh.next) {
-		if (sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
-			err(EXIT_FAILURE, "failed to send message");
-	}
-	xdr_destroy(&xdrs);
-}
-
-
 int is_expired(struct me_message *msg)
 {
 	struct timeval now;
@@ -169,9 +125,9 @@ void send_start(ME_P_ int s, int to)
 	data->me_leader_msg_data_u.round.k = s;
 
 	if(to >= 0)
-		message_send_to(ME_A_ &msg, to);
+		msg_send_to(ME_A_ &msg, to);
 	else
-		message_send_all(ME_A_ &msg);
+		msg_send_all(ME_A_ &msg);
 }
 
 void send_ok(ME_P_ int s)
@@ -184,7 +140,7 @@ void send_ok(ME_P_ int s)
 	data->type = ME_LEADER_OK;
 	data->me_leader_msg_data_u.ok.trust = get_trust(ME_A);
 	data->me_leader_msg_data_u.ok.k = s;
-	message_send_all(ME_A_ &msg);
+	msg_send_all(ME_A_ &msg);
 	bitmask_free(data->me_leader_msg_data_u.ok.trust);
 }
 
@@ -199,7 +155,7 @@ void send_ack(ME_P_ int s, int to)
 	data->type = ME_LEADER_ACK;
 	data->me_leader_msg_data_u.round.k = s;
 
-	message_send_to(ME_A_ &msg, to);
+	msg_send_to(ME_A_ &msg, to);
 }
 
 void start_round(ME_P_ const int s)

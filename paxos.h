@@ -19,28 +19,44 @@
 
  ********************************************************************/
 
-#ifndef _LEADER_H_
-#define _LEADER_H_
+#ifndef _PAXOS_H_
+#define _PAXOS_H_
+
+#include <stdlib.h>
+#include <uthash.h>
 
 #include <me_protocol.h>
 #include <context_fwd.h>
-#include <peers.h>
-#include <message.h>
+#include <acceptor.h>
+#include <proposer.h>
+#include <learner.h>
 
-struct ldr_context {
-	int r;
-	int leader;
-	int delta_count;
-	ev_timer delta_timer;
+#define HASH_FIND_IID(head,findiid,out) \
+	HASH_FIND(hh,head,findiid,sizeof(uint64_t),out)
+#define HASH_ADD_IID(head,iidfield,add) \
+	HASH_ADD(hh,head,iidfield,sizeof(uint64_t),add)
+
+struct me_peer;
+
+struct pxs_peer_info {
+	int is_acceptor;
 };
 
-#define LDR_CONTEXT_INITIALIZER { \
-	.r = 0, \
-	.leader = 0, \
-	.delta_count = 0, \
+struct pxs_context {
+	struct acc_context acc;
+	struct pro_context pro;
+	struct lea_context lea;
+};
+
+#define PXS_CONTEXT_INITIALIZER { \
+	.acc = ACC_CONTEXT_INITIALIZER, \
+	.pro = ACC_CONTEXT_INITIALIZER, \
+	.lea = LEA_CONTEXT_INITIALIZER, \
 }
 
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-void ldr_fiber_init(ME_P);
+void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
+void pxs_fiber_init(ME_P);
+void pxs_send_acceptors(ME_P_ struct me_message *msg);
+int pxs_acceptors_count(ME_P);
 
 #endif

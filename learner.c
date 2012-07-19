@@ -19,28 +19,8 @@
 
  ********************************************************************/
 
-#ifndef _LEADER_H_
-#define _LEADER_H_
+#include <learner.h>
 
-#include <me_protocol.h>
-#include <context_fwd.h>
-#include <peers.h>
-#include <message.h>
-
-struct ldr_context {
-	int r;
-	int leader;
-	int delta_count;
-	ev_timer delta_timer;
-};
-
-#define LDR_CONTEXT_INITIALIZER { \
-	.r = 0, \
-	.leader = 0, \
-	.delta_count = 0, \
+void lea_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+{
 }
-
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-void ldr_fiber_init(ME_P);
-
-#endif

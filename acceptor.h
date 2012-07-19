@@ -19,28 +19,34 @@
 
  ********************************************************************/
 
-#ifndef _LEADER_H_
-#define _LEADER_H_
+#ifndef _ACCEPTOR_H_
+#define _ACCEPTOR_H_
 
-#include <me_protocol.h>
+#include <uthash.h>
+
 #include <context_fwd.h>
-#include <peers.h>
-#include <message.h>
 
-struct ldr_context {
-	int r;
-	int leader;
-	int delta_count;
-	ev_timer delta_timer;
+struct me_peer;
+struct me_message;
+
+struct acc_instance_record {
+	uint64_t iid;
+	uint64_t b;
+	char *v;
+	uint32_t v_size;
+	uint64_t vb;
+
+	UT_hash_handle hh;
 };
 
-#define LDR_CONTEXT_INITIALIZER { \
-	.r = 0, \
-	.leader = 0, \
-	.delta_count = 0, \
+struct acc_context {
+	struct acc_instance_record *records;
+};
+
+#define ACC_CONTEXT_INITIALIZER { \
+	.records = NULL, \
 }
 
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-void ldr_fiber_init(ME_P);
+void acc_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
 
 #endif

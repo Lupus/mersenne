@@ -109,3 +109,21 @@ void load_peer_list(ME_P_ int my_index)
 	}
 	fclose(peers_file);
 }
+
+int peer_count(ME_P)
+{
+	return HASH_COUNT(mctx->peers);
+}
+
+int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *))
+{
+	int count = 0;
+	struct me_peer *p;
+
+	for(p=mctx->peers; p != NULL; p=p->hh.next) {
+		if(predicate(p))
+			count++;
+	}
+	return count;
+}
+

@@ -24,6 +24,7 @@
 
 #include <ev.h>
 #include <leader.h>
+#include <paxos.h>
 
 #include <context_fwd.h>
 
@@ -37,6 +38,7 @@ struct me_context {
 	struct me_peer *peers;
 	struct me_peer *me;
 	struct ldr_context ldr;
+	struct pxs_context pxs;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
