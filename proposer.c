@@ -51,13 +51,13 @@ struct pro_instance {
 	uint64_t b;
 	enum instance_state state;
 	struct {
-		char *v;
+		char v[ME_MAX_XDR_MESSAGE_LEN];
 		uint32_t v_size;
 		uint64_t vb;
 		struct bitmask *acks;
 	} p1;
 	struct {
-		char *v;
+		char v[ME_MAX_XDR_MESSAGE_LEN];
 		uint32_t v_size;
 	} p2;
 	int client_value;
@@ -66,12 +66,28 @@ struct pro_instance {
 	struct me_context *mctx;
 };
 
+static int veql(struct pro_instance *instance)
+{
+	if(instance->p1.v_size != instance->p2.v_size)
+		return 0;
+	if(memcmp(instance->p1.v, instance->p2.v, instance->p1.v_size))
+		return 0;
+	return 1;
+}
+
+static void v1_to_v2(struct pro_instance *instance)
+{
+	memcpy(instance->p2.v, instance->p1.v, instance->p1.v_size);
+	instance->p2.v_size = instance->p1.v_size;
+}
+
 enum instance_event_type {
 	IE_S,
 	IE_TO,
 	IE_P,
 	IE_R0,
 	IE_R1,
+	IE_NV,
 	IE_A,
 	IE_E,
 	IE_C,
@@ -84,6 +100,7 @@ struct ie_base {
 
 struct ie_p {
 	struct me_peer *from;
+	struct me_paxos_promise_data *data;
 	struct ie_base b;
 };
 
@@ -151,6 +168,9 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	int b;
 	struct ie_p *p;
+	struct ie_base new_base;
+	int p_num;
+	int acc_maj;
 	switch(base->type) {
 		case IE_S:
 			instance->b = encode_ballot(ME_A_ 1);
@@ -161,8 +181,27 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
 			bitmask_setbit(instance->p1.acks, p->from->index);
-			//TODO: Continue here and change acks from bitmask to
-			//something reasonable
+			if(p->data->vb > instance->p1.vb) {
+				instance->p1.v_size = p->data->v.v_len;
+				memcpy(instance->p1.v, p->data->v.v_val,
+						p->data->v.v_len);
+			}
+			p_num = bitmask_weight(instance->p1.acks);
+			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
+			if(p_num >= acc_maj) {
+				if(instance->p1.v_size) {
+					new_base.type = IE_R1;
+					switch_instance(ME_A_ instance,
+							IS_P1_READY_WITH_VALUE,
+							&new_base);
+				} else {
+					new_base.type = IE_R0;
+					switch_instance(ME_A_ instance,
+							IS_P1_READY_NO_VALUE,
+							&new_base);
+				}
+			}
+			break;
 		case IE_TO:
 			bitmask_clearall(instance->p1.acks);
 			b = decode_ballot(ME_A_ instance->b);
@@ -180,10 +219,55 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 
 void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	struct ie_base new_base;
+	switch(base->type) {
+		case IE_R0:
+			if(instance->p2.v_size) {
+				new_base.type = IE_A;
+				switch_instance(ME_A_ instance,
+						IS_P1_READY_WITH_VALUE,
+						&new_base);
+			}
+			break;
+		case IE_NV:
+			//TODO: Implement client values
+			break;
+		default:
+			errx(EXIT_FAILURE, "inappropriate transition %d for "
+					"state %d", base->type,
+					instance->state);
+	}
 }
 
 void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	struct ie_base new_base;
+	switch(base->type) {
+		case IE_R1:
+			if(0 == instance->p2.v_size) {
+				v1_to_v2(instance);
+				instance->client_value = 0;
+			} else if(veql(instance)) {
+				//Do nothing here?
+			} else if(!veql(instance)) {
+				if(instance->client_value) {
+					//TODO: Push v2 back to pending list
+				}
+				v1_to_v2(instance);
+				instance->client_value = 0;
+			}
+			//Fall through
+		case IE_A:
+			new_base.type = IE_E;
+			switch_instance(ME_A_ instance,
+					IS_P2_PENDING,
+					&new_base);
+			break;
+		default:
+			errx(EXIT_FAILURE, "inappropriate transition %d for "
+					"state %d", base->type,
+					instance->state);
+	}
 }
 
 void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -204,11 +288,13 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct pro_instance *instance;
 	struct me_paxos_promise_data *data;
 	struct ie_p p;
+	data = &pmsg->data.me_paxos_msg_data_u.promise;
 	p.b.type = IE_P;
 	p.from = from;
-	data = &pmsg->data.me_paxos_msg_data_u.promise;
+	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % INSTANCE_WINDOW);
-	run_instance(ME_A_ instance, &p.b);
+	if(instance->b == data->b)
+		run_instance(ME_A_ instance, &p.b);
 }
 
 static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
