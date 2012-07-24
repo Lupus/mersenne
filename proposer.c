@@ -24,46 +24,23 @@
 #include <bitmask.h>
 
 #include <proposer.h>
+#include <proposer_prv.h>
+#include <proposer_prv.strenum.h>
 #include <paxos.h>
 #include <context.h>
 #include <message.h>
 #include <peers.h>
 #include <util.h>
 
-#define INSTANCE_WINDOW 10
-#define MAX_PROC 100
-#define TO1 0.1
-#define TO2 0.1
 
-enum instance_state {
-    IS_EMPTY = 0,
-    IS_P1_PENDING,
-    IS_P1_READY_NO_VALUE,
-    IS_P1_READY_WITH_VALUE,
-    IS_P2_PENDING,
-    IS_CLOSED,
-    IS_DELIVERED,
-    IS_MAX
-};
-
-struct pro_instance {
-	uint64_t iid;
-	uint64_t b;
-	enum instance_state state;
-	struct {
-		char v[ME_MAX_XDR_MESSAGE_LEN];
-		uint32_t v_size;
-		uint64_t vb;
-		struct bitmask *acks;
-	} p1;
-	struct {
-		char v[ME_MAX_XDR_MESSAGE_LEN];
-		uint32_t v_size;
-	} p2;
-	int client_value;
-	ev_timer timer;
-
-	struct me_context *mctx;
+static is_func_t * const state_table[IS_MAX] = {
+	do_is_empty,
+	do_is_p1_pending,
+	do_is_p1_ready_no_value,
+	do_is_p1_ready_with_value,
+	do_is_p2_pending,
+	do_is_closed,
+	do_is_delivered,
 };
 
 static int veql(struct pro_instance *instance)
@@ -81,50 +58,6 @@ static void v1_to_v2(struct pro_instance *instance)
 	instance->p2.v_size = instance->p1.v_size;
 }
 
-enum instance_event_type {
-	IE_I = 0,
-	IE_S,
-	IE_TO,
-	IE_P,
-	IE_R0,
-	IE_R1,
-	IE_NV,
-	IE_A,
-	IE_E,
-	IE_C,
-	IE_D,
-};
-
-struct ie_base {
-	enum instance_event_type type;
-};
-
-struct ie_p {
-	struct me_peer *from;
-	struct me_paxos_promise_data *data;
-	struct ie_base b;
-};
-
-typedef void is_func_t(ME_P_ struct pro_instance *instance, struct ie_base *base);
-
-void do_is_empty(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_closed(ME_P_ struct pro_instance *instance, struct ie_base *base);
-void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base);
-
-static is_func_t * const state_table[IS_MAX] = {
-	do_is_empty,
-	do_is_p1_pending,
-	do_is_p1_ready_no_value,
-	do_is_p1_ready_with_value,
-	do_is_p2_pending,
-	do_is_closed,
-	do_is_delivered,
-};
-
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	if(IE_D == base->type)
@@ -135,7 +68,11 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-	printf("[PROPOSER] Switching instance %ld ballot %ld from state %d to state %d\n", instance->iid, instance->b, instance->state, state);
+	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s\n",
+			instance->iid,
+			instance->b,
+			strval_instance_state(instance->state),
+			strval_instance_state(state));
 	instance->state = state;
 	run_instance(ME_A_ instance, base);
 }
@@ -230,9 +167,10 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		default:
-			errx(EXIT_FAILURE, "inappropriate transition %d for "
-					"state %d", base->type,
-					instance->state);
+			errx(EXIT_FAILURE, "inappropriate transition %s for "
+					"state %s",
+					strval_instance_event_type(base->type),
+					strval_instance_state(instance->state));
 	}
 }
 
@@ -252,9 +190,10 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 			//TODO: Implement client values
 			break;
 		default:
-			errx(EXIT_FAILURE, "inappropriate transition %d for "
-					"state %d", base->type,
-					instance->state);
+			errx(EXIT_FAILURE, "inappropriate transition %s for "
+					"state %s",
+					strval_instance_event_type(base->type),
+					strval_instance_state(instance->state));
 	}
 }
 
@@ -283,9 +222,10 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 					&new_base);
 			break;
 		default:
-			errx(EXIT_FAILURE, "inappropriate transition %d for "
-					"state %d", base->type,
-					instance->state);
+			errx(EXIT_FAILURE, "inappropriate transition %s for "
+					"state %s",
+					strval_instance_event_type(base->type),
+					strval_instance_state(instance->state));
 	}
 }
 
@@ -304,9 +244,10 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			break;
 
 		default:
-			errx(EXIT_FAILURE, "inappropriate transition %d for "
-					"state %d", base->type,
-					instance->state);
+			errx(EXIT_FAILURE, "inappropriate transition %s for "
+					"state %s",
+					strval_instance_event_type(base->type),
+					strval_instance_state(instance->state));
 	}
 }
 
@@ -322,9 +263,10 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			//TODO: We're done! Need to remove this instance
 			break;
 		default:
-			errx(EXIT_FAILURE, "inappropriate transition %d for "
-					"state %d", base->type,
-					instance->state);
+			errx(EXIT_FAILURE, "inappropriate transition %s for "
+					"state %s",
+					strval_instance_event_type(base->type),
+					strval_instance_state(instance->state));
 	}
 }
 
@@ -367,7 +309,8 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 	instance = container_of(w, struct pro_instance, timer);
 	if(IS_P1_PENDING != instance->state
 			&& IS_P2_PENDING != instance->state) {
-		printf("[PROPOSER] discarding timer for state %d\n", instance->state);
+		printf("[PROPOSER] discarding timer for state %s\n",
+				strval_instance_state(instance->state));
 		ev_timer_set(w, 0., 0.);
 		return;
 	}

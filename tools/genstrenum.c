@@ -1,6 +1,28 @@
+/********************************************************************
+
+  Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
+
+  This file is part of Mersenne.
+
+  Mersenne is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  any later version.
+
+  Mersenne is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
+
+ ********************************************************************/
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <libgen.h>
 #include <err.h>
 #include <clang-c/Index.h>
 
@@ -11,7 +33,6 @@ enum CXChildVisitResult enum_constant_finder(CXCursor cursor, CXCursor parent, C
 	CXString string;
 	if(CXCursor_EnumConstantDecl == clang_getCursorKind(cursor)) {
 		string = clang_getCursorSpelling(cursor);
-		printf("\tconstant: %s\n", clang_getCString(string));
 		fprintf(source, "\t\tcase %s: return \"%s\";\n", clang_getCString(string), clang_getCString(string));
 		clang_disposeString(string);
 		return CXChildVisit_Continue;
@@ -35,7 +56,6 @@ enum CXChildVisitResult enum_finder(CXCursor cursor, CXCursor parent, CXClientDa
 			return CXChildVisit_Continue;
 		}
 		enum_name = clang_getCursorSpelling(cursor);
-		printf("enum: %s from: %s\n", clang_getCString(enum_name), clang_getCString(file_name));
 		fprintf(header, "const char * strval_%s(enum %s val);\n", clang_getCString(enum_name), clang_getCString(enum_name));
 		fprintf(source, "const char * strval_%s(enum %s val) {\n", clang_getCString(enum_name), clang_getCString(enum_name));
 		fprintf(source, "\tswitch(val) {\n");
@@ -83,8 +103,8 @@ int main(int argc, char *argv[]) {
 	}
 	cursor = clang_getTranslationUnitCursor(tu);
 	file_name = clang_getTranslationUnitSpelling(tu);
-	header_name = replace_ext(basename(clang_getCString(file_name)), ".strenum.h");
-	source_name = replace_ext(basename(clang_getCString(file_name)), ".strenum.c");
+	header_name = replace_ext(basename((char *)clang_getCString(file_name)), ".strenum.h");
+	source_name = replace_ext(basename((char *)clang_getCString(file_name)), ".strenum.c");
 	header = fopen(header_name, "w+");
 	if(!header)
 		err(EXIT_FAILURE, "fopen");
