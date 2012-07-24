@@ -25,9 +25,13 @@
 #include <util.h>
 #include <message.h>
 #include <peers.h>
+#include <proposer.h>
+
 
 inline static int acceptor_predicate(struct me_peer *peer)
 {
+	//if(peer->pxs.is_acceptor)
+		//printf("%d is acceptor\n", peer->pxs.is_acceptor);
 	return peer->pxs.is_acceptor;
 }
 

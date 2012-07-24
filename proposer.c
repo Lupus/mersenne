@@ -30,7 +30,7 @@
 #include <peers.h>
 #include <util.h>
 
-#define INSTANCE_WINDOW 100
+#define INSTANCE_WINDOW 10
 #define MAX_PROC 100
 #define TO1 0.1
 #define TO2 0.1
@@ -82,6 +82,7 @@ static void v1_to_v2(struct pro_instance *instance)
 }
 
 enum instance_event_type {
+	IE_I = 0,
 	IE_S,
 	IE_TO,
 	IE_P,
@@ -126,18 +127,22 @@ static is_func_t * const state_table[IS_MAX] = {
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	if(IE_D == base->type)
+		do_is_delivered(ME_A_ instance, base);
 	state_table[instance->state](ME_A_ instance, base);
 }
 
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
+	printf("[PROPOSER] Switching instance %ld ballot %ld from state %d to state %d\n", instance->iid, instance->b, instance->state, state);
 	instance->state = state;
 	run_instance(ME_A_ instance, base);
 }
 
 static uint64_t encode_ballot(ME_P_ uint64_t ballot)
 {
+	//printf("%ld * %d + %d == %ld\n", ballot, MAX_PROC, mctx->me->index, ballot * MAX_PROC + mctx->me->index);
 	return ballot * MAX_PROC + mctx->me->index;
 }
 
@@ -154,6 +159,19 @@ static void send_prepare(ME_P_ struct pro_instance *instance)
 	data->type = ME_PAXOS_PREPARE;
 	data->me_paxos_msg_data_u.prepare.i = instance->iid;
 	data->me_paxos_msg_data_u.prepare.b = instance->b;
+	pxs_send_acceptors(ME_A_ &msg);
+}
+
+static void send_accept(ME_P_ struct pro_instance *instance)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_ACCEPT;
+	data->me_paxos_msg_data_u.accept.i = instance->iid;
+	data->me_paxos_msg_data_u.accept.b = instance->b;
+	data->me_paxos_msg_data_u.accept.v.v_len = instance->p2.v_size;
+	data->me_paxos_msg_data_u.accept.v.v_val = instance->p2.v;
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
@@ -175,7 +193,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_S:
 			instance->b = encode_ballot(ME_A_ 1);
 			send_prepare(ME_A_ instance);
-			instance->timer.repeat = TO1;
+			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_P:
@@ -187,6 +205,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 						p->data->v.v_len);
 			}
 			p_num = bitmask_weight(instance->p1.acks);
+			puts("[PROPOSER] Got promise!");
 			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
 			if(p_num >= acc_maj) {
 				if(instance->p1.v_size) {
@@ -207,7 +226,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			b = decode_ballot(ME_A_ instance->b);
 			instance->b = encode_ballot(ME_A_ ++b);
 			send_prepare(ME_A_ instance);
-			instance->timer.repeat = TO1;
+			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		default:
@@ -272,14 +291,41 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 
 void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	switch(base->type) {
+		case IE_E:
+			send_accept(ME_A_ instance);
+			instance->timer.repeat = TO2;
+			ev_timer_again(mctx->loop, &instance->timer);
+			break;
+		case IE_TO:
+			switch_instance(ME_A_ instance,
+					IS_P1_PENDING,
+					base);
+			break;
+
+		default:
+			errx(EXIT_FAILURE, "inappropriate transition %d for "
+					"state %d", base->type,
+					instance->state);
+	}
 }
 
 void do_is_closed(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	//TODO: Do we really need this?
 }
 
 void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	switch(base->type) {
+		case IE_D:
+			//TODO: We're done! Need to remove this instance
+			break;
+		default:
+			errx(EXIT_FAILURE, "inappropriate transition %d for "
+					"state %d", base->type,
+					instance->state);
+	}
 }
 
 static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -293,7 +339,7 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.from = from;
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % INSTANCE_WINDOW);
-	if(instance->b == data->b)
+	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }
 
@@ -318,8 +364,14 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
 	struct pro_instance *instance;
 	struct ie_base base;
-	base.type = IE_TO;
 	instance = container_of(w, struct pro_instance, timer);
+	if(IS_P1_PENDING != instance->state
+			&& IS_P2_PENDING != instance->state) {
+		printf("[PROPOSER] discarding timer for state %d\n", instance->state);
+		ev_timer_set(w, 0., 0.);
+		return;
+	}
+	base.type = IE_TO;
 	run_instance(instance->mctx, instance, &base);
 }
 
@@ -328,16 +380,35 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	instance->p1.acks = bitmask_alloc(peer_count(ME_A));
 	instance->mctx = ME_A;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
+	//ev_timer_start(mctx->loop, &instance->timer);
+	//puts("timer started");
+}
+
+static void free_instance(ME_P_ struct pro_instance *instance)
+{
+	bitmask_free(instance->p1.acks);
+	ev_timer_stop(mctx->loop, &instance->timer);
 }
 
 void pro_init(ME_P)
 {
 	int i;
+	struct ie_base base;
+	base.type = IE_I;
 	mctx->pxs.pro.instances = calloc(sizeof(struct pro_instance),
 			INSTANCE_WINDOW);
 	for(i = 0; i < INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
 		mctx->pxs.pro.instances[i].iid = i + 1;
-		run_instance(ME_A_ mctx->pxs.pro.instances + i, NULL);
+		run_instance(ME_A_ mctx->pxs.pro.instances + i, &base);
 	}
+}
+
+void pro_shutdown(ME_P)
+{
+	int i;
+	for(i = 0; i < INSTANCE_WINDOW; i++) {
+		free_instance(ME_A_ mctx->pxs.pro.instances + i);
+	}
+	free(mctx->pxs.pro.instances);
 }

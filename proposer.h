@@ -39,5 +39,6 @@ struct pro_context {
 
 void pro_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
 void pro_init(ME_P);
+void pro_shutdown(ME_P);
 
 #endif

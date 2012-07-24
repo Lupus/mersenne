@@ -38,6 +38,7 @@
 #include <context.h>
 #include <peers.h>
 #include <vars.h>
+#include <paxos.h>
 #include <util.h>
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
@@ -67,7 +68,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 			ldr_do_message(ME_A_ &msg, p);
 			break;
 		case ME_PAXOS:
-			//Do nothing (for now)
+			pxs_do_message(ME_A_ &msg, p);
 			break;
 	}
 	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
@@ -136,6 +137,7 @@ int main(int argc, char *argv[])
 	ev_io_start(context.loop, &context.socket_watcher);
 
 	ldr_fiber_init(&context);
+	pxs_fiber_init(&context);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");

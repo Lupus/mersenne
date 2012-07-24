@@ -49,6 +49,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(!predicate(p))
 			continue;
+		//printf("Sending predicated msg to %d\n", p->index);
 		if (sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
 			err(EXIT_FAILURE, "failed to send message");
 	}

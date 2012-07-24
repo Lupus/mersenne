@@ -25,6 +25,7 @@
 
 #include <leader.h>
 #include <context.h>
+#include <proposer.h>
 #include <vars.h>
 #include <util.h>
 
@@ -107,6 +108,32 @@ int config_match(ME_P_ struct me_message *msg)
 	return 1;
 }
 
+void lost_leadership(ME_P)
+{
+	puts("Lost Leadership :(");
+	pro_shutdown(ME_A);
+}
+
+void gained_leadership(ME_P)
+{
+	puts("Gained Leadership :)");
+	pro_init(ME_A);
+}
+
+void update_leader(ME_P_ int new_leader)
+{
+	int old_leader;
+	old_leader = mctx->ldr.leader;
+	if(old_leader != new_leader) {
+		if(old_leader == mctx->me->index)
+			lost_leadership(ME_A);
+		else if(new_leader == mctx->me->index)
+			gained_leadership(ME_A);
+	}
+	mctx->ldr.leader = new_leader;
+	printf("R %d: Leader=%d\n", mctx->ldr.r, mctx->ldr.leader);
+}
+
 void restart_timer(ME_P)
 {
 	ev_timer_again(mctx->loop, &mctx->ldr.delta_timer);
@@ -163,16 +190,16 @@ void start_round(ME_P_ const int s)
 	struct me_peer *p;
 	int n = HASH_COUNT(mctx->peers);
 
+	printf("R %d: new round started\n", mctx->ldr.r);
+
 	if(mctx->me->index != s % n)
 		send_start(ME_A_ s, -1);
 	mctx->ldr.r = s;
-	mctx->ldr.leader = mctx->ldr.r % n;
+	update_leader(ME_A_ mctx->ldr.r % n);
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		p->ack_ttl = 3;
 	}
-
-	printf("R %d: new round started\n", mctx->ldr.r);
 
 	restart_timer(ME_A);
 }
@@ -185,16 +212,18 @@ void do_msg_start(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.round.k;
 
+#ifdef _LDR_DEBUG_MSG
 	printf("R %d: Got START(%d) from peer #%d\n",
 			mctx->ldr.r,
 			k,
 			from->index
 	      );
+#endif
 
 	if(k > mctx->ldr.r)
 		start_round(ME_A_ k);
 	else if(k < mctx->ldr.r)
-		start_round(ME_A_ mctx->ldr.r);
+		send_start(ME_A_ mctx->ldr.r, from->index);
 
 }
 
@@ -208,6 +237,7 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.ok.k;
 
+#ifdef _LDR_DEBUG_MSG
 	bitmask_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
 	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
 			mctx->ldr.r,
@@ -215,6 +245,7 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 			from->index,
 			buf
 	      );
+#endif
 
 	if(k > mctx->ldr.r) {
 		send_ack(ME_A_ k, k % HASH_COUNT(mctx->peers));
@@ -226,13 +257,15 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 
 	if(!bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
+		bitmask_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
+		printf("Current leader does not trust me, trustmask: %s\n", buf);
 		start_round(ME_A_ mctx->ldr.r + 1);
 		return;
 	}
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, p->index))
-			p->ack_ttl = 1;
+			p->ack_ttl = 3;
 	}
 
 	send_ack(ME_A_ mctx->ldr.r, mctx->ldr.r % HASH_COUNT(mctx->peers));
@@ -247,16 +280,21 @@ void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.round.k;
 
+#ifdef _LDR_DEBUG_MSG
 	printf("R %d: Got ACK(%d) from peer #%d\n",
 			mctx->ldr.r,
 			k,
 			from->index
 	      );
+#endif
 
 	if(k == mctx->ldr.r) {
 		from->ack_ttl = 3;
+	} else if(k < mctx->ldr.r) {
+		send_start(ME_A_ mctx->ldr.r, from->index);
+		return;
 	} else
-		warnx("got ACK from round other than mine");
+		warnx("got ACK from round higher than mine O.o");
 }
 
 
@@ -278,11 +316,14 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 		send_ok(ME_A_ mctx->ldr.r);
 	}
 
-	printf("R %d: Leader=%d\n", mctx->ldr.r, mctx->ldr.leader);
+	//printf("R %d: Leader=%d\n", mctx->ldr.r, mctx->ldr.leader);
+	//FIXME: Without this line simulation works wierd
 
 	mctx->ldr.delta_count++;
-	if(mctx->ldr.delta_count > 2)
+	if(mctx->ldr.delta_count > 2) {
+		printf("Current leader timed out\n");
 		start_round(ME_A_ mctx->ldr.r + 1);
+	}
 }
 
 void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
@@ -319,6 +360,6 @@ void ldr_fiber_init(ME_P)
 {
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000., TIME_DELTA / 1000.);
 	ev_timer_start(mctx->loop, &mctx->ldr.delta_timer);
-
+	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
 }
