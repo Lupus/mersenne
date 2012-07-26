@@ -25,11 +25,11 @@
 #include <stdlib.h>
 #include <uthash.h>
 
-#include <me_protocol.h>
-#include <context_fwd.h>
-#include <acceptor.h>
-#include <proposer.h>
-#include <learner.h>
+#include <mersenne/me_protocol.h>
+#include <mersenne/context_fwd.h>
+#include <mersenne/acceptor.h>
+#include <mersenne/proposer.h>
+#include <mersenne/learner.h>
 
 #define HASH_FIND_IID(head,findiid,out) \
 	HASH_FIND(hh,head,findiid,sizeof(uint64_t),out)

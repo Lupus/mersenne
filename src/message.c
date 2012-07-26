@@ -20,8 +20,8 @@
  ********************************************************************/
 
 #include <err.h>
-#include <message.h>
-#include <context.h>
+#include <mersenne/message.h>
+#include <mersenne/context.h>
 
 void msg_send_to(ME_P_ struct me_message *msg, const int peer_num)
 {

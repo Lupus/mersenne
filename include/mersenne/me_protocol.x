@@ -26,7 +26,7 @@
 #define __MAX_XDR_MESSAGE_LEN (__MTU - __UDP_HEADER_SIZE - 8)
 %#define ME_MAX_XDR_MESSAGE_LEN __MAX_XDR_MESSAGE_LEN
 
-%#include <xdr.h>
+%#include <mersenne/xdr.h>
 
 enum me_message_supertype {
 	ME_LEADER,

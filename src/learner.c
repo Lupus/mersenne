@@ -19,7 +19,7 @@
 
  ********************************************************************/
 
-#include <learner.h>
+#include <mersenne/learner.h>
 
 void lea_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {

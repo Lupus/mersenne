@@ -19,13 +19,13 @@
 
  ********************************************************************/
 
-#include <paxos.h>
-#include <context.h>
-#include <vars.h>
-#include <util.h>
-#include <message.h>
-#include <peers.h>
-#include <proposer.h>
+#include <mersenne/paxos.h>
+#include <mersenne/context.h>
+#include <mersenne/vars.h>
+#include <mersenne/util.h>
+#include <mersenne/message.h>
+#include <mersenne/peers.h>
+#include <mersenne/proposer.h>
 
 
 inline static int acceptor_predicate(struct me_peer *peer)

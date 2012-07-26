@@ -1,4 +1,3 @@
-
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -19,31 +18,23 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#include <err.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <mersenne/util.h>
 
-#include <rpc/xdr.h>
-#include <xdr.h>
-
-bool_t xdr_timeval(XDR *xdrs, struct timeval *tv)
+int make_socket_non_blocking(int fd)
 {
-	return (
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
-			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
-	       );
-}
+	int flags, s;
 
-bool_t xdr_bitmask_ptr(XDR *xdrs, struct bitmask **pptr)
-{
-	uint32_t size;
-	if(XDR_ENCODE == xdrs->x_op)
-		size = bitmask_nbits(*pptr);
-	if(!xdr_uint32_t(xdrs, &size))
-		return FALSE;
-	if(XDR_DECODE == xdrs->x_op && NULL == *pptr)
-		*pptr = bitmask_alloc(size);
-	if(XDR_FREE == xdrs->x_op)
-		bitmask_free(*pptr);
-	size = bitmask_nbytes(*pptr);
-	if(!xdr_opaque(xdrs, (caddr_t)bitmask_mask(*pptr), size))
-		return FALSE;
-	return TRUE;
+	flags = fcntl(fd, F_GETFL, 0);
+	if (-1 == flags)
+		err(EXIT_FAILURE, "fcntl failed");
+
+	flags |= O_NONBLOCK;
+	s = fcntl(fd, F_SETFL, flags);
+	if (-1 == s)
+		errx(EXIT_FAILURE, "fcntl failed");
+
+	return 0;
 }

@@ -23,11 +23,11 @@
 #include <openssl/evp.h>
 #include <err.h>
 
-#include <leader.h>
-#include <context.h>
-#include <proposer.h>
-#include <vars.h>
-#include <util.h>
+#include <mersenne/leader.h>
+#include <mersenne/context.h>
+#include <mersenne/proposer.h>
+#include <mersenne/vars.h>
+#include <mersenne/util.h>
 
 struct bitmask * get_trust(ME_P)
 {

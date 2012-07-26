@@ -23,9 +23,9 @@
 #include <regex.h>
 #include <err.h>
 
-#include <peers.h>
-#include <context.h>
-#include <vars.h>
+#include <mersenne/peers.h>
+#include <mersenne/context.h>
+#include <mersenne/vars.h>
 
 void add_peer(ME_P_ struct me_peer *p)
 {

@@ -19,10 +19,10 @@
 
  ********************************************************************/
 
-#include <acceptor.h>
-#include <paxos.h>
-#include <context.h>
-#include <message.h>
+#include <mersenne/acceptor.h>
+#include <mersenne/paxos.h>
+#include <mersenne/context.h>
+#include <mersenne/message.h>
 
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)

@@ -1,21 +1,5 @@
-# Compiled Object files
-*.slo
-*.lo
-*.o
-
-# Dependency files
-*.d
-
-# Compiled Dynamic libraries
-*.so
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-
-# Mersenne binary
-mersenne
+# CMake build diry
+build
 
 # Vim swap files
 .*.swp

@@ -23,14 +23,14 @@
 #include <err.h>
 #include <bitmask.h>
 
-#include <proposer.h>
-#include <proposer_prv.h>
-#include <proposer_prv.strenum.h>
-#include <paxos.h>
-#include <context.h>
-#include <message.h>
-#include <peers.h>
-#include <util.h>
+#include <mersenne/proposer.h>
+#include <mersenne/proposer_prv.h>
+#include <mersenne/proposer_prv.strenum.h>
+#include <mersenne/paxos.h>
+#include <mersenne/context.h>
+#include <mersenne/message.h>
+#include <mersenne/peers.h>
+#include <mersenne/util.h>
 
 
 static is_func_t * const state_table[IS_MAX] = {

@@ -19,39 +19,28 @@
 
  ********************************************************************/
 
-#ifndef _CONTEXT_H_
-#define _CONTEXT_H_
+#ifndef _LEADER_H_
+#define _LEADER_H_
 
-#include <ev.h>
-#include <leader.h>
-#include <paxos.h>
+#include <mersenne/me_protocol.h>
+#include <mersenne/context_fwd.h>
+#include <mersenne/peers.h>
+#include <mersenne/message.h>
 
-#include <context_fwd.h>
-
-struct me_peer;
-
-struct me_context {
-	struct ev_loop *loop;
-	int counter;
-	ev_io socket_watcher;
-	int fd;
-	struct me_peer *peers;
-	struct me_peer *me;
-	struct ldr_context ldr;
-	struct pxs_context pxs;
+struct ldr_context {
+	int r;
+	int leader;
+	int delta_count;
+	ev_timer delta_timer;
 };
 
-#define ME_CONTEXT_INITIALIZER { \
-	.loop = NULL, \
-	.counter = 0, \
-	.peers = NULL, \
-	.me = NULL, \
-	.ldr = LDR_CONTEXT_INITIALIZER, \
+#define LDR_CONTEXT_INITIALIZER { \
+	.r = 0, \
+	.leader = 0, \
+	.delta_count = 0, \
 }
 
-#define ME_P struct me_context *mctx
-#define ME_P_ ME_P,
-#define ME_A mctx
-#define ME_A_ ME_A,
+void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
+void ldr_fiber_init(ME_P);
 
 #endif

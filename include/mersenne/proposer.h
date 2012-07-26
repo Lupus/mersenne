@@ -23,7 +23,7 @@
 #define _PROPOSER_H_
 
 #include <stdint.h>
-#include <context_fwd.h>
+#include <mersenne/context_fwd.h>
 
 struct me_peer;
 struct me_message;

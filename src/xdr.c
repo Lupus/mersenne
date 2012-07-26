@@ -1,3 +1,4 @@
+
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -19,23 +20,30 @@
 
  ********************************************************************/
 
-#ifndef _LEARNER_H_
-#define _LEARNER_H_
+#include <rpc/xdr.h>
+#include <mersenne/xdr.h>
 
-#include <stdint.h>
-#include <context_fwd.h>
-
-struct me_peer;
-struct me_message;
-
-struct lea_context {
-	uint64_t last_delivered;
-};
-
-#define LEA_CONTEXT_INITIALIZER { \
-	.last_delivered = 0, \
+bool_t xdr_timeval(XDR *xdrs, struct timeval *tv)
+{
+	return (
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_sec) &&
+			xdr_uint64_t(xdrs, (uint64_t *)&tv->tv_usec)
+	       );
 }
 
-void lea_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-
-#endif
+bool_t xdr_bitmask_ptr(XDR *xdrs, struct bitmask **pptr)
+{
+	uint32_t size;
+	if(XDR_ENCODE == xdrs->x_op)
+		size = bitmask_nbits(*pptr);
+	if(!xdr_uint32_t(xdrs, &size))
+		return FALSE;
+	if(XDR_DECODE == xdrs->x_op && NULL == *pptr)
+		*pptr = bitmask_alloc(size);
+	if(XDR_FREE == xdrs->x_op)
+		bitmask_free(*pptr);
+	size = bitmask_nbytes(*pptr);
+	if(!xdr_opaque(xdrs, (caddr_t)bitmask_mask(*pptr), size))
+		return FALSE;
+	return TRUE;
+}

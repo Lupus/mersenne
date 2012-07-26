@@ -18,24 +18,17 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
-#include <err.h>
-#include <stdlib.h>
 
-#include <fcntl.h>
-#include <util.h>
+#ifndef _MESSAGE_H_
+#define _MESSAGE_H_
 
-int make_socket_non_blocking(int fd)
-{
-	int flags, s;
+#include <mersenne/me_protocol.h>
+#include <mersenne/context_fwd.h>
 
-	flags = fcntl(fd, F_GETFL, 0);
-	if (-1 == flags)
-		err(EXIT_FAILURE, "fcntl failed");
+struct me_peer;
 
-	flags |= O_NONBLOCK;
-	s = fcntl(fd, F_SETFL, flags);
-	if (-1 == s)
-		errx(EXIT_FAILURE, "fcntl failed");
+void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
+void msg_send_all(ME_P_ struct me_message *msg);
+void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *));
 
-	return 0;
-}
+#endif

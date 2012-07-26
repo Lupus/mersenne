@@ -19,28 +19,34 @@
 
  ********************************************************************/
 
-#ifndef _LEADER_H_
-#define _LEADER_H_
+#ifndef _PEERS_H_
+#define _PEERS_H_
 
-#include <me_protocol.h>
-#include <context_fwd.h>
-#include <peers.h>
-#include <message.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <uthash.h>
+#include <mersenne/context_fwd.h>
+#include <mersenne/paxos.h>
 
-struct ldr_context {
-	int r;
-	int leader;
-	int delta_count;
-	ev_timer delta_timer;
+struct sockaddr_in;
+
+struct me_peer {
+	int index;
+	struct sockaddr_in addr;
+	int ack_ttl;
+	struct pxs_peer_info pxs;
+
+	UT_hash_handle hh;
 };
 
-#define LDR_CONTEXT_INITIALIZER { \
-	.r = 0, \
-	.leader = 0, \
-	.delta_count = 0, \
-}
-
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-void ldr_fiber_init(ME_P);
+void add_peer(ME_P_ struct me_peer *p);
+struct me_peer *find_peer(ME_P_ struct sockaddr_in *addr);
+struct me_peer *find_peer_by_index(ME_P_ int index);
+void delete_peer(ME_P_ struct me_peer *peer);
+void load_peer_list(ME_P_ int my_index);
+int peer_count(ME_P);
+int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *));
 
 #endif

@@ -25,8 +25,8 @@
 #include <ev.h>
 #include <bitmask.h>
 
-#include <context.h>
-#include <me_protocol.h>
+#include <mersenne/context.h>
+#include <mersenne/me_protocol.h>
 
 #define INSTANCE_WINDOW 10
 #define MAX_PROC 100

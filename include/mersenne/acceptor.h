@@ -19,34 +19,34 @@
 
  ********************************************************************/
 
-#ifndef _PEERS_H_
-#define _PEERS_H_
+#ifndef _ACCEPTOR_H_
+#define _ACCEPTOR_H_
 
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <uthash.h>
-#include <context_fwd.h>
-#include <paxos.h>
 
-struct sockaddr_in;
+#include <mersenne/context_fwd.h>
 
-struct me_peer {
-	int index;
-	struct sockaddr_in addr;
-	int ack_ttl;
-	struct pxs_peer_info pxs;
+struct me_peer;
+struct me_message;
+
+struct acc_instance_record {
+	uint64_t iid;
+	uint64_t b;
+	char *v;
+	uint32_t v_size;
+	uint64_t vb;
 
 	UT_hash_handle hh;
 };
 
-void add_peer(ME_P_ struct me_peer *p);
-struct me_peer *find_peer(ME_P_ struct sockaddr_in *addr);
-struct me_peer *find_peer_by_index(ME_P_ int index);
-void delete_peer(ME_P_ struct me_peer *peer);
-void load_peer_list(ME_P_ int my_index);
-int peer_count(ME_P);
-int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *));
+struct acc_context {
+	struct acc_instance_record *records;
+};
+
+#define ACC_CONTEXT_INITIALIZER { \
+	.records = NULL, \
+}
+
+void acc_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
 
 #endif

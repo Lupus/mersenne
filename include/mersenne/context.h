@@ -19,16 +19,39 @@
 
  ********************************************************************/
 
-#ifndef _MESSAGE_H_
-#define _MESSAGE_H_
+#ifndef _CONTEXT_H_
+#define _CONTEXT_H_
 
-#include <me_protocol.h>
-#include <context_fwd.h>
+#include <ev.h>
+
+#include <mersenne/leader.h>
+#include <mersenne/paxos.h>
+#include <mersenne/context_fwd.h>
 
 struct me_peer;
 
-void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
-void msg_send_all(ME_P_ struct me_message *msg);
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *));
+struct me_context {
+	struct ev_loop *loop;
+	int counter;
+	ev_io socket_watcher;
+	int fd;
+	struct me_peer *peers;
+	struct me_peer *me;
+	struct ldr_context ldr;
+	struct pxs_context pxs;
+};
+
+#define ME_CONTEXT_INITIALIZER { \
+	.loop = NULL, \
+	.counter = 0, \
+	.peers = NULL, \
+	.me = NULL, \
+	.ldr = LDR_CONTEXT_INITIALIZER, \
+}
+
+#define ME_P struct me_context *mctx
+#define ME_P_ ME_P,
+#define ME_A mctx
+#define ME_A_ ME_A,
 
 #endif

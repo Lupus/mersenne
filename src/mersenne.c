@@ -34,12 +34,12 @@
 #include <bitmask.h>
 #include <ev.h>
 
-#include <me_protocol.h>
-#include <context.h>
-#include <peers.h>
-#include <vars.h>
-#include <paxos.h>
-#include <util.h>
+#include <mersenne/me_protocol.h>
+#include <mersenne/context.h>
+#include <mersenne/peers.h>
+#include <mersenne/vars.h>
+#include <mersenne/paxos.h>
+#include <mersenne/util.h>
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
