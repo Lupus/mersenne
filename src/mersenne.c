@@ -40,6 +40,7 @@
 #include <mersenne/vars.h>
 #include <mersenne/paxos.h>
 #include <mersenne/util.h>
+#include <mersenne/fiber.h>
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
@@ -147,4 +148,3 @@ int main(int argc, char *argv[])
 	// break was called, so exit
 	return 0;
 }
-

@@ -50,7 +50,7 @@ struct pxs_context {
 
 #define PXS_CONTEXT_INITIALIZER { \
 	.acc = ACC_CONTEXT_INITIALIZER, \
-	.pro = ACC_CONTEXT_INITIALIZER, \
+	.pro = PRO_CONTEXT_INITIALIZER, \
 	.lea = LEA_CONTEXT_INITIALIZER, \
 }
 

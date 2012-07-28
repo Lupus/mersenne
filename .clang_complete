@@ -1,1 +1,1 @@
--I . -I build
+-I./include -I./build/include

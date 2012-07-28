@@ -26,6 +26,7 @@
 
 #include <mersenne/leader.h>
 #include <mersenne/paxos.h>
+#include <mersenne/fiber.h>
 #include <mersenne/context_fwd.h>
 
 struct me_peer;
@@ -39,6 +40,7 @@ struct me_context {
 	struct me_peer *me;
 	struct ldr_context ldr;
 	struct pxs_context pxs;
+	struct fbr_context fbr;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
@@ -47,6 +49,8 @@ struct me_context {
 	.peers = NULL, \
 	.me = NULL, \
 	.ldr = LDR_CONTEXT_INITIALIZER, \
+	.pxs = PXS_CONTEXT_INITIALIZER, \
+	.fbr = FBR_CONTEXT_INITIALIZER, \
 }
 
 #define ME_P struct me_context *mctx

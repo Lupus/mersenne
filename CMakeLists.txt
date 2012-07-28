@@ -46,6 +46,10 @@ set_source_files_properties(include/mersenne/me_protocol.c
 
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/src" MERSENNE_SOURCES)
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/include/mersenne" MERSENNE_HEADERS)
+set(LIBCORO_SOURCES
+	"${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/coro.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/include/coro.h"
+	)
 set(MERSENNE_GEN_SOURCES
 	"include/mersenne/me_protocol.h"
 	"include/mersenne/me_protocol.c"
@@ -53,5 +57,12 @@ set(MERSENNE_GEN_SOURCES
 	"include/mersenne/proposer_prv.strenum.c"
 	)
 
-add_executable(mersenne ${MERSENNE_SOURCES} ${MERSENNE_HEADERS} ${MERSENNE_GEN_SOURCES})
+add_executable(mersenne
+	${MERSENNE_SOURCES}
+	${MERSENNE_HEADERS}
+	${MERSENNE_GEN_SOURCES}
+	${LIBCORO_SOURCES}
+	)
 target_link_libraries(mersenne ev crypto bitmask)
+
+subdirs(testing)
