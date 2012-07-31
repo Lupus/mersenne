@@ -28,10 +28,19 @@ void coro_io_test(ME_P)
 	char buf[11] = {0};
 	int fd = STDIN_FILENO;
 	for(;;) {
-		fbr_read(ME_A_ fd, buf, 10);
-		fbr_write(ME_A_ STDOUT_FILENO, "read: ", 6);
-		fbr_write(ME_A_ STDOUT_FILENO, buf, 10);
-		fbr_write(ME_A_ STDOUT_FILENO, "\n", 1);
+		fbr_read(ME_A_ fd, buf, 10, NULL);
+		fbr_write(ME_A_ STDOUT_FILENO, "read: ", 6, NULL);
+		fbr_write(ME_A_ STDOUT_FILENO, buf, 10, NULL);
+		fbr_write(ME_A_ STDOUT_FILENO, "\n", 1, NULL);
+	}
+}
+
+void coro_timer_test(ME_P)
+{
+	int i = 0;
+	for(;;) {
+		printf("Timer #%d\n", i++);
+		fbr_sleep(ME_A_ 5.5);
 	}
 }
 
@@ -39,16 +48,19 @@ void coro_test(ME_P)
 {
 	int i;
 	struct fbr_fiber *io_fiber;
+	struct fbr_fiber *timer_fiber;
 
 	io_fiber = fbr_create(ME_A_ coro_io_test);
 	fbr_call(ME_A_ io_fiber, 0);
 
+	timer_fiber = fbr_create(ME_A_ coro_timer_test);
+	fbr_call(ME_A_ timer_fiber, 0);
+
 	for(i = 0;;i++) {
-		printf("%d: %s\n", i, (char *)FBR_ARG_V(0));
+		printf("%d: %s\n", i, (char *)FBR_ARGV_V(0));
 		fbr_yield(ME_A);
 	}
 }
-
 
 int main(int argc, char *argv[]) {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
