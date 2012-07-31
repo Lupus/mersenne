@@ -41,6 +41,20 @@ static void call_wrapper(ME_P_ void (*func) (ME_P))
 	fbr_yield(ME_A);
 }
 
+struct fbr_fiber_arg fbr_arg_i(int i)
+{
+	struct fbr_fiber_arg arg;
+	arg.i = i;
+	return arg;
+}
+
+struct fbr_fiber_arg fbr_arg_v(void *v)
+{
+	struct fbr_fiber_arg arg;
+	arg.v = v;
+	return arg;
+}
+
 void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
 {
 	struct fbr_fiber *caller = *mctx->fbr.sp++;
@@ -51,11 +65,11 @@ void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
 
 	va_start(ap, argnum);
 	for(i = 0; i < argnum; i++)
-		callee->argv[i] = va_arg(ap, void *);
-        va_end(ap);
+		callee->argv[i] = va_arg(ap, struct fbr_fiber_arg);
+	va_end(ap);
 
 	coro_transfer(&caller->ctx, &callee->ctx);
-	
+
 }
 
 void fbr_yield(ME_P)
@@ -72,9 +86,9 @@ static void ev_wakeup_io(EV_P_ ev_io *w, int event)
 	fiber = container_of(w, struct fbr_fiber, w_io);
 	mctx = (struct me_context *)w->data;
 
-        ENSURE_ROOT_FIBER
+	ENSURE_ROOT_FIBER
 
-        fbr_call(ME_A_ fiber, 0);
+		fbr_call(ME_A_ fiber, 0);
 }
 
 ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count)
@@ -85,18 +99,18 @@ ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count)
 
 	ev_io_set(&fiber->w_io, fd, EV_READ);
 	ev_io_start(mctx->loop, &fiber->w_io);
-        while (count != done) {
+	while (count != done) {
 
-                fbr_yield(ME_A);
+		fbr_yield(ME_A);
 
-                if ((r = read(fd, buf + done, count - done)) <= 0) {
-                        if (errno == EAGAIN || errno == EWOULDBLOCK)
-                                continue;
-                        else
-                                break;
-                }
-                done += r;
-        }
+		if ((r = read(fd, buf + done, count - done)) <= 0) {
+			if (errno == EAGAIN || errno == EWOULDBLOCK)
+				continue;
+			else
+				break;
+		}
+		done += r;
+	}
 	ev_io_stop(mctx->loop, &fiber->w_io);
 	return done;
 }
@@ -122,6 +136,34 @@ ssize_t fbr_write(ME_P_ int fd, const void *buf, size_t count)
 	ev_io_stop(mctx->loop, &fiber->w_io);
 
 	return done;
+}
+
+ssize_t fbr_recvfrom(ME_P_ int sockfd, void *buf, size_t len, int flags, struct
+		sockaddr *src_addr, socklen_t *addrlen)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	int nbytes;
+
+	ev_io_set(&fiber->w_io, sockfd, EV_READ);
+	ev_io_start(mctx->loop, &fiber->w_io);
+	fbr_yield(ME_A);
+	nbytes = recvfrom(sockfd, buf, len, flags, src_addr, addrlen);
+	ev_io_stop(mctx->loop, &fiber->w_io);
+	return nbytes;
+}
+
+ssize_t fbr_sendto(ME_P_ int sockfd, const void *buf, size_t len, int flags, const
+		struct sockaddr *dest_addr, socklen_t addrlen)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	int nbytes;
+
+	ev_io_set(&fiber->w_io, sockfd, EV_WRITE);
+	ev_io_start(mctx->loop, &fiber->w_io);
+	fbr_yield(ME_A);
+	nbytes = sendto(sockfd, buf, len, flags, dest_addr, addrlen);
+	ev_io_stop(mctx->loop, &fiber->w_io);
+	return nbytes;
 }
 
 struct fbr_fiber * fbr_create(ME_P_ void (*func) (ME_P))

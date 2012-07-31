@@ -24,6 +24,8 @@
 
 #include <unistd.h>
 #include <stdarg.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <ev.h>
 #include <coro.h>
 #include <mersenne/context_fwd.h>
@@ -32,15 +34,23 @@
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
 #define FBR_MAX_ARG_NUM 10 // 64 KB
 
-#define FBR_ARG(i) ((*mctx->fbr.sp)->argv[i])
+#define FBR_ARG_I(i) ((*mctx->fbr.sp)->argv[i].i)
+#define FBR_ARG_V(i) ((*mctx->fbr.sp)->argv[i].v)
 
 typedef void (*fbr_fiber_func_t)(ME_P);
+
+struct fbr_fiber_arg {
+	union {
+		int i;
+		void *v;
+	};
+};
 
 struct fbr_fiber {
 	fbr_fiber_func_t func;
 	coro_context ctx;
 	char *stack;
-	void *argv[FBR_MAX_ARG_NUM];
+	struct fbr_fiber_arg argv[FBR_MAX_ARG_NUM];
 	ev_io w_io;
 };
 
@@ -60,10 +70,16 @@ struct fbr_context {
 
 void fbr_init(ME_P);
 struct fbr_fiber * fbr_create(ME_P_ void (*func) (ME_P));
+struct fbr_fiber_arg fbr_arg_i(int i);
+struct fbr_fiber_arg fbr_arg_v(void *v);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
 void fbr_yield(ME_P);
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber);
 ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count);
 ssize_t fbr_write(ME_P_ int fd, const void *buf, size_t count);
+ssize_t fbr_recvfrom(ME_P_ int sockfd, void *buf, size_t len, int flags, struct
+		sockaddr *src_addr, socklen_t *addrlen);
+ssize_t fbr_sendto(ME_P_ int sockfd, const void *buf, size_t len, int flags, const
+		struct sockaddr *dest_addr, socklen_t addrlen);
 
 #endif

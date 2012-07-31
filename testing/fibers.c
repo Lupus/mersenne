@@ -44,7 +44,7 @@ void coro_test(ME_P)
 	fbr_call(ME_A_ io_fiber, 0);
 
 	for(i = 0;;i++) {
-		printf("%d: %s\n", i, (char *)FBR_ARG(0));
+		printf("%d: %s\n", i, (char *)FBR_ARG_V(0));
 		fbr_yield(ME_A);
 	}
 }
@@ -60,9 +60,9 @@ int main(int argc, char *argv[]) {
 	fbr_init(ME_A);
 	fiber = fbr_create(ME_A_ coro_test);
 
-	fbr_call(ME_A_ fiber, 1, "Hello, muthafucka!");
-	fbr_call(ME_A_ fiber, 1, "Hello, you fucker!");
-	fbr_call(ME_A_ fiber, 1, "Blah, blah, blah!");
+	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));
+	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, you fucker!"));
+	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Blah, blah, blah!"));
 
 
 	ev_loop(context.loop, 0);

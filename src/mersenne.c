@@ -75,35 +75,30 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
 }
 
-static void socket_read_cb (EV_P_ ev_io *w, int revents)
+static void fiber_main(ME_P)
 {
 	int nbytes;
 	struct sockaddr client_addr;
 	socklen_t client_addrlen = sizeof(client_addr);
 	char msgbuf[MSGBUFSIZE];
 	
-	ME_P = container_of(w, struct me_context, socket_watcher);
-
-	while(1) {
-		nbytes = recvfrom(w->fd, msgbuf, MSGBUFSIZE, 0,
+	for(;;) {
+		nbytes = fbr_recvfrom(ME_A_ mctx->fd, msgbuf, MSGBUFSIZE, 0,
 				&client_addr, &client_addrlen);
-		if (nbytes < 0) {
-			if (errno == EAGAIN)
-				break;
-			else if (errno != EINTR)
+		if (nbytes < 0 && errno != EINTR)
 				err(1, "recvfrom");
-		} else {
-			process_message(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);
-		}
+		process_message(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);
 	}
-
 }
-
 
 int main(int argc, char *argv[])
 {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
+	struct me_context *mctx = &context;
 	int yes = 1;
+	struct fbr_fiber *fiber;
+
+	fiber = fbr_create(ME_A_ fiber_main);
 
 	if(argc != 2) {
 		puts("Please enter peer number!");
@@ -112,7 +107,7 @@ int main(int argc, char *argv[])
 
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
-	load_peer_list(&context, atoi(argv[1]));
+	load_peer_list(ME_A_ atoi(argv[1]));
 
 	/* create what looks like an ordinary UDP socket */
 	if ((context.fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
@@ -132,13 +127,11 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	context.loop = EV_DEFAULT;
 
-	// initialise an io watcher, then start it
-	// this one will watch for stdin to become readable
-	ev_io_init(&context.socket_watcher, socket_read_cb, context.fd, EV_READ);
-	ev_io_start(context.loop, &context.socket_watcher);
+	fbr_init(ME_A);
+	ldr_fiber_init(ME_A);
+	pxs_fiber_init(ME_A);
 
-	ldr_fiber_init(&context);
-	pxs_fiber_init(&context);
+	fbr_call(ME_A_ fiber, 0);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");
