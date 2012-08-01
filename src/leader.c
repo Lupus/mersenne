@@ -22,12 +22,15 @@
 #include <ev.h>
 #include <openssl/evp.h>
 #include <err.h>
+#include <assert.h>
 
 #include <mersenne/leader.h>
 #include <mersenne/context.h>
 #include <mersenne/proposer.h>
 #include <mersenne/vars.h>
 #include <mersenne/util.h>
+#include <mersenne/fiber.h>
+#include <mersenne/fiber_args.h>
 
 struct bitmask * get_trust(ME_P)
 {
@@ -326,40 +329,46 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	}
 }
 
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+void ldr_fiber(ME_P)
 {
+	struct me_message *msg;
 	struct me_leader_msg_data *data;
-
-	if(is_expired(msg)) {
-		warnx("got expired message");
-		return;
-	}
-	if(!config_match(ME_A_ msg)) {
-		warnx("sender configuration does not match mine, ignoring message");
-		return;
-	}
-	data = &msg->me_message_u.leader_message.data;
-
-	switch (data->type) {
-		case ME_LEADER_START:
-			do_msg_start(ME_A_ msg, from);
-			break;
-		case ME_LEADER_OK:
-			do_msg_ok(ME_A_ msg, from);
-			break;
-		case ME_LEADER_ACK:
-			do_msg_ack(ME_A_ msg, from);
-			break;
-		default:
-			warnx("got unknown message from peer #%d\n", from->index);
-			break;
-	}
-}
-
-void ldr_fiber_init(ME_P)
-{
+	struct me_peer *from;
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000., TIME_DELTA / 1000.);
 	ev_timer_start(mctx->loop, &mctx->ldr.delta_timer);
+
 	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
+       
+	for(;;) {
+		fbr_yield(ME_A);
+		assert(FBR_ARGC > 1);
+		assert(FAT_ME_MESSAGE == FBR_ARGV_I(0));
+		msg = FBR_ARGV_V(1);
+		from = FBR_ARGV_V(2);
+		if(is_expired(msg)) {
+			warnx("got expired message");
+			continue;
+		}
+		if(!config_match(ME_A_ msg)) {
+			warnx("sender configuration does not match mine, ignoring message");
+			continue;
+		}
+		data = &msg->me_message_u.leader_message.data;
+
+		switch (data->type) {
+			case ME_LEADER_START:
+				do_msg_start(ME_A_ msg, from);
+				break;
+			case ME_LEADER_OK:
+				do_msg_ok(ME_A_ msg, from);
+				break;
+			case ME_LEADER_ACK:
+				do_msg_ack(ME_A_ msg, from);
+				break;
+			default:
+				warnx("got unknown message from peer #%d\n", from->index);
+				break;
+		}
+	}
 }

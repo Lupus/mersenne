@@ -19,46 +19,11 @@
 
  ********************************************************************/
 
-#ifndef _CONTEXT_H_
-#define _CONTEXT_H_
+#ifndef _FIBER_ARGS_H_
+#define _FIBER_ARGS_H_
 
-#include <ev.h>
-
-#include <mersenne/leader.h>
-#include <mersenne/paxos.h>
-#include <mersenne/fiber.h>
-#include <mersenne/context_fwd.h>
-
-struct me_peer;
-
-struct me_context {
-	struct ev_loop *loop;
-	int counter;
-	ev_io socket_watcher;
-	int fd;
-	struct me_peer *peers;
-	struct me_peer *me;
-	struct ldr_context ldr;
-	struct pxs_context pxs;
-	struct fbr_context fbr;
-	struct fbr_fiber *fiber_main;
-	struct fbr_fiber *fiber_leader;
-	struct fbr_fiber *fiber_paxos;
+enum fiber_args_type {
+	FAT_ME_MESSAGE = 1,
 };
-
-#define ME_CONTEXT_INITIALIZER { \
-	.loop = NULL, \
-	.counter = 0, \
-	.peers = NULL, \
-	.me = NULL, \
-	.ldr = LDR_CONTEXT_INITIALIZER, \
-	.pxs = PXS_CONTEXT_INITIALIZER, \
-	.fbr = FBR_CONTEXT_INITIALIZER, \
-}
-
-#define ME_P struct me_context *mctx
-#define ME_P_ ME_P,
-#define ME_A mctx
-#define ME_A_ ME_A,
 
 #endif

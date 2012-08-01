@@ -41,6 +41,7 @@
 #include <mersenne/paxos.h>
 #include <mersenne/util.h>
 #include <mersenne/fiber.h>
+#include <mersenne/fiber_args.h>
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
@@ -66,7 +67,11 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		err(EXIT_FAILURE, "unable to decode a message");
 	switch(msg.super_type) {
 		case ME_LEADER:
-			ldr_do_message(ME_A_ &msg, p);
+			fbr_call(ME_A_ mctx->fiber_leader, 3,
+					fbr_arg_i(FAT_ME_MESSAGE),
+					fbr_arg_v(&msg),
+					fbr_arg_v(p)
+				);
 			break;
 		case ME_PAXOS:
 			pxs_do_message(ME_A_ &msg, p);
@@ -96,9 +101,9 @@ int main(int argc, char *argv[])
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 	int yes = 1;
-	struct fbr_fiber *fiber;
 
-	fiber = fbr_create(ME_A_ fiber_main);
+	mctx->fiber_main = fbr_create(ME_A_ fiber_main);
+	mctx->fiber_leader = fbr_create(ME_A_ ldr_fiber);
 
 	if(argc != 2) {
 		puts("Please enter peer number!");
@@ -128,10 +133,10 @@ int main(int argc, char *argv[])
 	context.loop = EV_DEFAULT;
 
 	fbr_init(ME_A);
-	ldr_fiber_init(ME_A);
 	pxs_fiber_init(ME_A);
 
-	fbr_call(ME_A_ fiber, 0);
+	fbr_call(ME_A_ mctx->fiber_main, 0);
+	fbr_call(ME_A_ mctx->fiber_leader, 0);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");

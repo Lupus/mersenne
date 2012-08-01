@@ -40,7 +40,6 @@ struct ldr_context {
 	.delta_count = 0, \
 }
 
-void ldr_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
-void ldr_fiber_init(ME_P);
+void ldr_fiber(ME_P);
 
 #endif

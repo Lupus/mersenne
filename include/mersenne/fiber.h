@@ -34,8 +34,8 @@
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
 #define FBR_MAX_ARG_NUM 10 // 64 KB
 
-#define FBR_ARGV_I(i) ((*mctx->fbr.sp)->argv[i].i)
-#define FBR_ARGV_V(i) ((*mctx->fbr.sp)->argv[i].v)
+#define FBR_ARGV_I(index) ((*mctx->fbr.sp)->argv[index].i)
+#define FBR_ARGV_V(index) ((*mctx->fbr.sp)->argv[index].v)
 #define FBR_ARGC ((*mctx->fbr.sp)->argc)
 
 typedef void (*fbr_fiber_func_t)(ME_P);
