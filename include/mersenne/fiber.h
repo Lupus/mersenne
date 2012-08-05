@@ -26,17 +26,19 @@
 #include <stdarg.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <obstack.h>
 #include <ev.h>
 #include <coro.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/util.h>
 
+#define obstack_chunk_alloc malloc
+#define obstack_chunk_free free
+
 #define FBR_CALL_STACK_SIZE 16
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
 #define FBR_MAX_ARG_NUM 10 // 64 KB
 
-#define FBR_ARGV_I(index) ((*mctx->fbr.sp)->argv[index].i)
-#define FBR_ARGV_V(index) ((*mctx->fbr.sp)->argv[index].v)
 #define FBR_ARGC ((*mctx->fbr.sp)->argc)
 
 typedef void (*fbr_fiber_func_t)(ME_P);
@@ -61,6 +63,7 @@ struct fbr_fiber {
 	coro_context ctx;
 	char *stack;
 	struct fbr_call_info *call_list;
+	struct obstack obstack;
 	ev_io w_io;
 	ev_timer w_timer;
 };
@@ -92,6 +95,7 @@ struct fbr_fiber_arg fbr_arg_i(int i);
 struct fbr_fiber_arg fbr_arg_v(void *v);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
 void fbr_yield(ME_P);
+void * fbr_alloc(ME_P_ size_t size);
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber);
 int fbr_next_call_info(ME_P_ struct fbr_call_info **info_ptr);
 void fbr_free_call_info(ME_P_ struct fbr_call_info *info);

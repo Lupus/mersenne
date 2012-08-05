@@ -327,9 +327,10 @@ static void proposer_init(ME_P)
 {
 	int i;
 	struct ie_base base;
+	size_t size = sizeof(struct pro_instance) * INSTANCE_WINDOW;
 	base.type = IE_I;
-	mctx->pxs.pro.instances = calloc(sizeof(struct pro_instance),
-			INSTANCE_WINDOW);
+	mctx->pxs.pro.instances = fbr_alloc(ME_A_ size);
+	memset(mctx->pxs.pro.instances, 0, size);
 	for(i = 0; i < INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
 		mctx->pxs.pro.instances[i].iid = i + 1;
@@ -343,7 +344,6 @@ static void proposer_shutdown(ME_P)
 	for(i = 0; i < INSTANCE_WINDOW; i++) {
 		free_instance(ME_A_ mctx->pxs.pro.instances + i);
 	}
-	free(mctx->pxs.pro.instances);
 }
 
 static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)

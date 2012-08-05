@@ -284,6 +284,7 @@ struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P))
 	fiber->stack = malloc(FBR_STACK_SIZE);
 	fiber->func = func;
 	fiber->call_list = NULL;
+	obstack_init(&fiber->obstack);
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
@@ -297,6 +298,8 @@ void fbr_reset(ME_P_ struct fbr_fiber *fiber)
 	//coro_destroy(&fiber->ctx);
 	ev_io_stop(mctx->loop, &fiber->w_io);
 	ev_timer_stop(mctx->loop, &fiber->w_timer);
+	obstack_free(&fiber->obstack, NULL);
+	obstack_init(&fiber->obstack);
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
@@ -306,6 +309,11 @@ void fbr_reset(ME_P_ struct fbr_fiber *fiber)
 
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber)
 {
+}
+
+void * fbr_alloc(ME_P_ size_t size)
+{
+	return obstack_alloc(&CURRENT_FIBER->obstack, size);
 }
 
 void fbr_dump_stack(ME_P)
