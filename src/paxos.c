@@ -26,6 +26,8 @@
 #include <mersenne/message.h>
 #include <mersenne/peers.h>
 #include <mersenne/proposer.h>
+#include <mersenne/fiber.h>
+#include <mersenne/fiber_args.h>
 
 
 inline static int acceptor_predicate(struct me_peer *peer)
@@ -48,23 +50,41 @@ int pxs_acceptors_count(ME_P)
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
-
 	pmsg = &msg->me_message_u.paxos_message;
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 		case ME_PAXOS_ACCEPT:
 			if(mctx->me->pxs.is_acceptor)
-				acc_do_message(ME_A_ msg, from);
+				fbr_call(ME_A_ mctx->fiber_acceptor, 3,
+						fbr_arg_i(FAT_ME_MESSAGE),
+						fbr_arg_v(msg),
+						fbr_arg_v(from)
+					);
 			break;
 		case ME_PAXOS_LEARN:
-			lea_do_message(ME_A_ msg, from);
+			fbr_call(ME_A_ mctx->fiber_learner, 3,
+					fbr_arg_i(FAT_ME_MESSAGE),
+					fbr_arg_v(msg),
+					fbr_arg_v(from)
+				);
+			/* Falltrhough */
 		case ME_PAXOS_PROMISE:
 			if(mctx->ldr.leader == mctx->me->index)
-				pro_do_message(ME_A_ msg, from);
+				fbr_call(ME_A_ mctx->fiber_proposer, 3,
+						fbr_arg_i(FAT_ME_MESSAGE),
+						fbr_arg_v(msg),
+						fbr_arg_v(from)
+					);
 			break;
 	}
 }
 
 void pxs_fiber_init(ME_P)
 {
+	mctx->fiber_acceptor = fbr_create(ME_A_ "acceptor", acc_fiber);
+	mctx->fiber_proposer = fbr_create(ME_A_ "proposer", pro_fiber);
+	mctx->fiber_learner = fbr_create(ME_A_ "learner", lea_fiber);
+
+	fbr_call(ME_A_ mctx->fiber_acceptor, 0);
+	fbr_call(ME_A_ mctx->fiber_learner, 0);
 }

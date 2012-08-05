@@ -21,10 +21,19 @@
 #ifndef _UTIL_H_
 #define _UTIL_H_
 
+#define TRACE_SIZE 16
+
+struct trace_info {
+	void *array[TRACE_SIZE];
+	size_t size;
+};
+
 #define container_of(ptr, type, member) ({            \
  const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
  (type *)( (char *)__mptr - offsetof(type,member) );})
 
 int make_socket_non_blocking(int fd);
+void fill_trace_info(struct trace_info *info);
+void print_trace_info(struct trace_info *info);
 
 #endif

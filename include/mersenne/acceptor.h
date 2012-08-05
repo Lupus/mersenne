@@ -47,6 +47,6 @@ struct acc_context {
 	.records = NULL, \
 }
 
-void acc_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
+void acc_fiber(ME_P);
 
 #endif

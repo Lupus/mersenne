@@ -24,6 +24,7 @@
 
 enum fiber_args_type {
 	FAT_ME_MESSAGE = 1,
+	FAT_QUIT,
 };
 
 #endif

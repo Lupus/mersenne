@@ -18,11 +18,13 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#include <assert.h>
 
 #include <mersenne/acceptor.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
 #include <mersenne/message.h>
+#include <mersenne/fiber_args.h>
 
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)
@@ -97,14 +99,29 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	send_learn(ME_A_ r);
 }
 
-void acc_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+void acc_fiber(ME_P)
 {
+	struct me_message *msg;
+	struct me_peer *from;
 	struct me_paxos_message *pmsg;
+	struct fbr_call_info *info;
 
-	pmsg = &msg->me_message_u.paxos_message;
-	if(ME_PAXOS_PREPARE == pmsg->data.type) {
-		do_prepare(ME_A_ pmsg, from);
-	} else if(ME_PAXOS_ACCEPT == pmsg->data.type) {
-		do_accept(ME_A_ pmsg, from);
+	fbr_next_call_info(ME_A_ NULL);
+
+start:
+	fbr_yield(ME_A);
+	while(fbr_next_call_info(ME_A_ &info)) {
+		assert(FAT_ME_MESSAGE == info->argv[0].i);
+		msg = info->argv[1].v;
+		from = info->argv[2].v;
+
+		pmsg = &msg->me_message_u.paxos_message;
+		if(ME_PAXOS_PREPARE == pmsg->data.type) {
+			do_prepare(ME_A_ pmsg, from);
+		} else if(ME_PAXOS_ACCEPT == pmsg->data.type) {
+			do_accept(ME_A_ pmsg, from);
+		}
 	}
+	goto start;
 }
+

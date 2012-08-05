@@ -114,13 +114,13 @@ int config_match(ME_P_ struct me_message *msg)
 void lost_leadership(ME_P)
 {
 	puts("Lost Leadership :(");
-	pro_shutdown(ME_A);
+	pro_stop(ME_A);
 }
 
 void gained_leadership(ME_P)
 {
 	puts("Gained Leadership :)");
-	pro_init(ME_A);
+	pro_start(ME_A);
 }
 
 void update_leader(ME_P_ int new_leader)
@@ -329,46 +329,61 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	}
 }
 
+static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+{
+	struct me_leader_msg_data *data;
+	data = &msg->me_message_u.leader_message.data;
+
+	switch (data->type) {
+		case ME_LEADER_START:
+			do_msg_start(ME_A_ msg, from);
+			break;
+		case ME_LEADER_OK:
+			do_msg_ok(ME_A_ msg, from);
+			break;
+		case ME_LEADER_ACK:
+			do_msg_ack(ME_A_ msg, from);
+			break;
+		default:
+			warnx("got unknown message from peer #%d\n",
+					from->index);
+			break;
+	}
+}
+
 void ldr_fiber(ME_P)
 {
 	struct me_message *msg;
-	struct me_leader_msg_data *data;
 	struct me_peer *from;
-	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000., TIME_DELTA / 1000.);
+	struct fbr_call_info *info;
+	
+	fbr_next_call_info(ME_A_ NULL);
+
+	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
+			TIME_DELTA / 1000.);
 	ev_timer_start(mctx->loop, &mctx->ldr.delta_timer);
 
 	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
-       
-	for(;;) {
-		fbr_yield(ME_A);
-		assert(FBR_ARGC > 1);
-		assert(FAT_ME_MESSAGE == FBR_ARGV_I(0));
-		msg = FBR_ARGV_V(1);
-		from = FBR_ARGV_V(2);
+
+start:
+	fbr_yield(ME_A);
+	while(fbr_next_call_info(ME_A_ &info)) {
+		assert(FAT_ME_MESSAGE == info->argv[0].i);
+		msg = info->argv[1].v;
+		from = info->argv[1].v;
+
 		if(is_expired(msg)) {
 			warnx("got expired message");
 			continue;
 		}
 		if(!config_match(ME_A_ msg)) {
-			warnx("sender configuration does not match mine, ignoring message");
+			warnx("sender configuration does not match mine, "
+					"ignoring message");
 			continue;
 		}
-		data = &msg->me_message_u.leader_message.data;
 
-		switch (data->type) {
-			case ME_LEADER_START:
-				do_msg_start(ME_A_ msg, from);
-				break;
-			case ME_LEADER_OK:
-				do_msg_ok(ME_A_ msg, from);
-				break;
-			case ME_LEADER_ACK:
-				do_msg_ack(ME_A_ msg, from);
-				break;
-			default:
-				warnx("got unknown message from peer #%d\n", from->index);
-				break;
-		}
+		do_message(ME_A_ msg, from);
 	}
+	goto start;
 }

@@ -36,6 +36,6 @@ struct lea_context {
 	.last_delivered = 0, \
 }
 
-void lea_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
+void lea_fiber(ME_P);
 
 #endif

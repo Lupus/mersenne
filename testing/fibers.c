@@ -20,6 +20,7 @@
  ********************************************************************/
 
 #include <stdio.h>
+#include <assert.h>
 #include <mersenne/fiber.h>
 #include <mersenne/context.h>
 
@@ -38,9 +39,20 @@ void coro_io_test(ME_P)
 void coro_timer_test(ME_P)
 {
 	int i = 0;
+	struct fbr_call_info *info;
+	struct fbr_fiber *printer;
+	ev_tstamp timer_interval;
+	const int buf_size = 256;
+	char buf[buf_size];
+
+	assert(1 == fbr_next_call_info(ME_A_ &info));
+	assert(1 == info->argc);
+	timer_interval = *(ev_tstamp *)info->argv[0].v;
+	printer = info->caller;
 	for(;;) {
-		printf("Timer #%d\n", i++);
-		fbr_sleep(ME_A_ 5.5);
+		snprintf(buf, buf_size, "Timer #%d\n", i++);
+		fbr_call(ME_A_ printer, 1, fbr_arg_v(buf));
+		fbr_sleep(ME_A_ timer_interval);
 	}
 }
 
@@ -49,16 +61,20 @@ void coro_test(ME_P)
 	int i;
 	struct fbr_fiber *io_fiber;
 	struct fbr_fiber *timer_fiber;
+	struct fbr_call_info *info;
+	ev_tstamp timer_interval = 5.5;
 
-	io_fiber = fbr_create(ME_A_ coro_io_test);
+	io_fiber = fbr_create(ME_A_ "io_test", coro_io_test);
 	fbr_call(ME_A_ io_fiber, 0);
 
-	timer_fiber = fbr_create(ME_A_ coro_timer_test);
-	fbr_call(ME_A_ timer_fiber, 0);
+	timer_fiber = fbr_create(ME_A_ "timer_test", coro_timer_test);
+	fbr_call(ME_A_ timer_fiber, 1, fbr_arg_v(&timer_interval));
 
 	for(i = 0;;i++) {
-		printf("%d: %s\n", i, (char *)FBR_ARGV_V(0));
-		fbr_yield(ME_A);
+		while(fbr_next_call_info(ME_A_ &info)) {
+			printf("%d: %s\n", i++, (char *)info->argv[0].v);
+			fbr_yield(ME_A);
+		}
 	}
 }
 
@@ -70,7 +86,7 @@ int main(int argc, char *argv[]) {
 	context.loop = EV_DEFAULT;
 
 	fbr_init(ME_A);
-	fiber = fbr_create(ME_A_ coro_test);
+	fiber = fbr_create(ME_A_ "coro_test", coro_test);
 
 	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));
 	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, you fucker!"));

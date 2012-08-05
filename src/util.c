@@ -21,6 +21,8 @@
 #include <err.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <execinfo.h>
 #include <mersenne/util.h>
 
 int make_socket_non_blocking(int fd)
@@ -37,4 +39,18 @@ int make_socket_non_blocking(int fd)
 		errx(EXIT_FAILURE, "fcntl failed");
 
 	return 0;
+}
+
+void fill_trace_info(struct trace_info *info)
+{
+	info->size = backtrace(info->array, TRACE_SIZE);
+}
+
+void print_trace_info(struct trace_info *info)
+{
+	size_t i;
+	char **strings = backtrace_symbols(info->array, info->size);
+	for (i = 0; i < info->size; i++)
+		fprintf(stderr, "%s\n", strings[i]);
+	free(strings);
 }

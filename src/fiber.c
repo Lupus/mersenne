@@ -20,25 +20,27 @@
  ********************************************************************/
 #include <assert.h>
 #include <errno.h>
+#include <utlist.h>
 
 #include <mersenne/fiber.h>
 #include <mersenne/context.h>
 #include <mersenne/util.h>
 
-#define ENSURE_ROOT_FIBER do { assert(*mctx->fbr.sp == &mctx->fbr.root); } while(0);
-#define CURRENT_FIBER (*mctx->fbr.sp)
-#define CALLED_BY_ROOT (*(mctx->fbr.sp - 1) == &mctx->fbr.root)
+#define ENSURE_ROOT_FIBER do { assert(mctx->fbr.sp->fiber == &mctx->fbr.root); } while(0);
+#define CURRENT_FIBER mctx->fbr.sp->fiber
+#define CALLED_BY_ROOT ((mctx->fbr.sp - 1)->fiber == &mctx->fbr.root)
 
 void fbr_init(ME_P)
 {
 	coro_create(&mctx->fbr.root.ctx, NULL, NULL, NULL, 0);
 	mctx->fbr.sp = mctx->fbr.stack;
-	*mctx->fbr.sp = &mctx->fbr.root;
+	mctx->fbr.sp->fiber = &mctx->fbr.root;
+	fill_trace_info(&mctx->fbr.sp->tinfo);
 }
 
 static void call_wrapper(ME_P_ void (*func) (ME_P))
 {
-	(*mctx->fbr.sp)->func(ME_A);
+	mctx->fbr.sp->fiber->func(ME_A);
 	fbr_yield(ME_A);
 }
 
@@ -58,26 +60,56 @@ struct fbr_fiber_arg fbr_arg_v(void *v)
 
 void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
 {
-	struct fbr_fiber *caller = *mctx->fbr.sp++;
+	struct fbr_fiber *caller = mctx->fbr.sp->fiber;
 	va_list ap;
 	int i;
+	struct fbr_call_info *info;
 	
 	assert(argnum < FBR_MAX_ARG_NUM);
 
-	*mctx->fbr.sp = callee;
-	callee->argc = argnum;
+	mctx->fbr.sp++;
+
+	mctx->fbr.sp->fiber = callee;
+	fill_trace_info(&mctx->fbr.sp->tinfo);
+
+	info = malloc(sizeof(struct fbr_call_info));
+	info->caller = caller;
+	info->argc = argnum;
 	va_start(ap, argnum);
 	for(i = 0; i < argnum; i++)
-		callee->argv[i] = va_arg(ap, struct fbr_fiber_arg);
+		info->argv[i] = va_arg(ap, struct fbr_fiber_arg);
 	va_end(ap);
+
+	DL_APPEND(callee->call_list, info);
 
 	coro_transfer(&caller->ctx, &callee->ctx);
 }
 
+int fbr_next_call_info(ME_P_ struct fbr_call_info **info_ptr)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	struct fbr_call_info *tmp;
+
+	if(NULL == fiber->call_list)
+		return 0;
+	tmp = fiber->call_list;
+	DL_DELETE(fiber->call_list, fiber->call_list);
+	if(NULL == info_ptr)
+		fbr_free_call_info(ME_A_ tmp);
+	else
+		*info_ptr = tmp;
+	return 1;
+}
+
+void fbr_free_call_info(ME_P_ struct fbr_call_info *info)
+{
+	free(info);
+}
+
 void fbr_yield(ME_P)
 {
-	struct fbr_fiber *callee = *mctx->fbr.sp--;
-	struct fbr_fiber *caller = *mctx->fbr.sp;
+	struct fbr_fiber *callee = mctx->fbr.sp->fiber;
+	struct fbr_fiber *caller = (--mctx->fbr.sp)->fiber;
 	coro_transfer(&callee->ctx, &caller->ctx);
 }
 
@@ -244,12 +276,14 @@ ev_tstamp fbr_sleep(ME_P_ ev_tstamp seconds)
 	return expected - ev_now(mctx->loop);
 }
 
-struct fbr_fiber * fbr_create(ME_P_ void (*func) (ME_P))
+struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P))
 {
 	struct fbr_fiber *fiber;
 	fiber = malloc(sizeof(struct fbr_fiber));
+	fiber->name = name;
 	fiber->stack = malloc(FBR_STACK_SIZE);
 	fiber->func = func;
+	fiber->call_list = NULL;
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
@@ -258,6 +292,33 @@ struct fbr_fiber * fbr_create(ME_P_ void (*func) (ME_P))
 	return fiber;
 }
 
+void fbr_reset(ME_P_ struct fbr_fiber *fiber)
+{
+	//coro_destroy(&fiber->ctx);
+	ev_io_stop(mctx->loop, &fiber->w_io);
+	ev_timer_stop(mctx->loop, &fiber->w_timer);
+	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
+	ev_init(&fiber->w_io, ev_wakeup_io);
+	ev_init(&fiber->w_timer, ev_wakeup_timer);
+	fiber->w_io.data = ME_A;
+	fiber->w_timer.data = ME_A;
+}
+
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber)
 {
+}
+
+void fbr_dump_stack(ME_P)
+{
+	struct fbr_stack_item *ptr = mctx->fbr.sp;
+		fprintf(stderr, "%s\n%s\n", "Fiber call stack:",
+				"-------------------------------");
+	while(ptr >= mctx->fbr.stack) {
+		fprintf(stderr, "fiber_call: 0x%lx\t%s\n",
+				(long unsigned int)ptr->fiber,
+				ptr->fiber->name);
+		print_trace_info(&ptr->tinfo);
+		fprintf(stderr, "%s\n", "-------------------------------");
+		ptr--;
+	}
 }

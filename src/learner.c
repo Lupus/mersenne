@@ -20,7 +20,14 @@
  ********************************************************************/
 
 #include <mersenne/learner.h>
+#include <mersenne/fiber.h>
 
-void lea_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+void lea_fiber(ME_P)
 {
+	fbr_next_call_info(ME_A_ NULL);
+	for(;;) {
+		fbr_yield(ME_A);
+		fbr_next_call_info(ME_A_ NULL);
+	}
 }
+

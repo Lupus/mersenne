@@ -31,6 +31,7 @@
 #include <mersenne/message.h>
 #include <mersenne/peers.h>
 #include <mersenne/util.h>
+#include <mersenne/fiber_args.h>
 
 
 static is_func_t * const state_table[IS_MAX] = {
@@ -290,18 +291,6 @@ static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 }
 
-void pro_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
-{
-	struct me_paxos_message *pmsg;
-
-	pmsg = &msg->me_message_u.paxos_message;
-	if(ME_PAXOS_PROMISE == pmsg->data.type) {
-		do_promise(ME_A_ pmsg, from);
-	} else if(ME_PAXOS_LEARN == pmsg->data.type) {
-		do_learn(ME_A_ pmsg, from);
-	}
-}
-
 static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
 	struct pro_instance *instance;
@@ -333,7 +322,8 @@ static void free_instance(ME_P_ struct pro_instance *instance)
 	ev_timer_stop(mctx->loop, &instance->timer);
 }
 
-void pro_init(ME_P)
+
+static void proposer_init(ME_P)
 {
 	int i;
 	struct ie_base base;
@@ -347,11 +337,65 @@ void pro_init(ME_P)
 	}
 }
 
-void pro_shutdown(ME_P)
+static void proposer_shutdown(ME_P)
 {
 	int i;
 	for(i = 0; i < INSTANCE_WINDOW; i++) {
 		free_instance(ME_A_ mctx->pxs.pro.instances + i);
 	}
 	free(mctx->pxs.pro.instances);
+}
+
+static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+{
+	struct me_paxos_message *pmsg;
+
+	pmsg = &msg->me_message_u.paxos_message;
+
+	if(ME_PAXOS_PROMISE == pmsg->data.type) {
+		do_promise(ME_A_ pmsg, from);
+	} else if(ME_PAXOS_LEARN == pmsg->data.type) {
+		do_learn(ME_A_ pmsg, from);
+	}
+}
+
+void pro_fiber(ME_P)
+{
+	struct me_message *msg;
+	struct me_peer *from;
+	struct fbr_call_info *info;
+
+	fbr_next_call_info(ME_A_ NULL);
+
+	proposer_init(ME_A);
+
+start:
+	fbr_yield(ME_A);
+	while(fbr_next_call_info(ME_A_ &info)) {
+
+		switch(info->argv[0].i) {
+			case FAT_ME_MESSAGE:
+				msg = info->argv[1].v;
+				from = info->argv[2].v;
+
+				do_message(ME_A_ msg, from);
+				break;
+		case FAT_QUIT:
+			goto fiber_exit;
+		}
+	}
+	goto start;
+fiber_exit:
+	proposer_shutdown(ME_A);
+}
+
+void pro_start(ME_P)
+{
+	fbr_reset(ME_A_ mctx->fiber_proposer);
+	fbr_call(ME_A_ mctx->fiber_proposer, 0);
+}
+
+void pro_stop(ME_P)
+{
+	fbr_call(ME_A_ mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
 }

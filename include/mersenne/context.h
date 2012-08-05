@@ -43,7 +43,9 @@ struct me_context {
 	struct fbr_context fbr;
 	struct fbr_fiber *fiber_main;
 	struct fbr_fiber *fiber_leader;
-	struct fbr_fiber *fiber_paxos;
+	struct fbr_fiber *fiber_acceptor;
+	struct fbr_fiber *fiber_proposer;
+	struct fbr_fiber *fiber_learner;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
@@ -54,6 +56,10 @@ struct me_context {
 	.ldr = LDR_CONTEXT_INITIALIZER, \
 	.pxs = PXS_CONTEXT_INITIALIZER, \
 	.fbr = FBR_CONTEXT_INITIALIZER, \
+	.fiber_main = NULL, \
+	.fiber_leader = NULL, \
+	.fiber_proposer = NULL, \
+	.fiber_learner = NULL, \
 }
 
 #define ME_P struct me_context *mctx

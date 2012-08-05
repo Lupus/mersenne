@@ -102,9 +102,6 @@ int main(int argc, char *argv[])
 	struct me_context *mctx = &context;
 	int yes = 1;
 
-	mctx->fiber_main = fbr_create(ME_A_ fiber_main);
-	mctx->fiber_leader = fbr_create(ME_A_ ldr_fiber);
-
 	if(argc != 2) {
 		puts("Please enter peer number!");
 		abort();
@@ -134,6 +131,9 @@ int main(int argc, char *argv[])
 
 	fbr_init(ME_A);
 	pxs_fiber_init(ME_A);
+
+	mctx->fiber_main = fbr_create(ME_A_ "main", fiber_main);
+	mctx->fiber_leader = fbr_create(ME_A_ "leader", ldr_fiber);
 
 	fbr_call(ME_A_ mctx->fiber_main, 0);
 	fbr_call(ME_A_ mctx->fiber_leader, 0);
