@@ -115,13 +115,13 @@ int peer_count(ME_P)
 	return HASH_COUNT(mctx->peers);
 }
 
-int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *))
+int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *, void *context), void *context)
 {
 	int count = 0;
 	struct me_peer *p;
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
-		if(predicate(p))
+		if(predicate(p, context))
 			count++;
 	}
 	return count;

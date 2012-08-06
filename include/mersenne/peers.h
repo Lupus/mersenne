@@ -47,6 +47,6 @@ struct me_peer *find_peer_by_index(ME_P_ int index);
 void delete_peer(ME_P_ struct me_peer *peer);
 void load_peer_list(ME_P_ int my_index);
 int peer_count(ME_P);
-int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *));
+int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *, void *context), void *context);
 
 #endif

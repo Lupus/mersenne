@@ -23,19 +23,27 @@
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 
+static inline int p_peer(struct me_peer *peer, void *context)
+{
+	return peer->index == *(int *)context;
+}
+
 void msg_send_to(ME_P_ struct me_message *msg, const int peer_num)
 {
-	int p(struct me_peer *peer) { return peer->index == peer_num; }
-	msg_send_matching(ME_A_ msg, &p);
+	msg_send_matching(ME_A_ msg, &p_peer, (int *)&peer_num);
+}
+
+static inline int p_all(struct me_peer *peer, void *context)
+{
+	return 1;
 }
 
 void msg_send_all(ME_P_ struct me_message *msg)
 {
-	int p(struct me_peer *peer) { return 1; }
-	msg_send_matching(ME_A_ msg, &p);
+	msg_send_matching(ME_A_ msg, &p_all, NULL);
 }
 
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *)) {
+void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
 	struct me_peer *p;
 	int size;
 	XDR xdrs;
@@ -47,7 +55,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 	size = xdr_getpos(&xdrs);
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
-		if(!predicate(p))
+		if(!predicate(p, context))
 			continue;
 		//printf("Sending predicated msg to %d\n", p->index);
 		if (sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)

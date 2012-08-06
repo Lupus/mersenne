@@ -30,21 +30,19 @@
 #include <mersenne/fiber_args.h>
 
 
-inline static int acceptor_predicate(struct me_peer *peer)
+static inline int acceptor_predicate(struct me_peer *peer, void *context)
 {
-	//if(peer->pxs.is_acceptor)
-		//printf("%d is acceptor\n", peer->pxs.is_acceptor);
 	return peer->pxs.is_acceptor;
 }
 
 void pxs_send_acceptors(ME_P_ struct me_message *msg)
 {
-	msg_send_matching(ME_A_ msg, &acceptor_predicate);
+	msg_send_matching(ME_A_ msg, &acceptor_predicate, NULL);
 }
 
 int pxs_acceptors_count(ME_P)
 {
-	return peer_count_matching(ME_A_ &acceptor_predicate);
+	return peer_count_matching(ME_A_ &acceptor_predicate, NULL);
 }
 
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
