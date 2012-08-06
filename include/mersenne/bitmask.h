@@ -1,4 +1,3 @@
-
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -20,14 +19,22 @@
 
  ********************************************************************/
 
-#ifndef _XDR_H_
-#define _XDR_H_
+#ifndef _BITMASK_H_
+#define _BITMASK_H_
 
-#include <mersenne/bitmask.h>
+struct bm_mask {
+	unsigned int size;
+	unsigned int nbits;
+	unsigned long mask[1];
+};
 
-typedef struct bm_mask * bm_mask_ptr;
-
-bool_t xdr_timeval(XDR *xdrs, struct timeval *tv);
-bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr);
+unsigned int bm_size(unsigned int nbits);
+void bm_set_all(struct bm_mask *mask);
+void bm_clear_all(struct bm_mask *mask);
+void bm_init(struct bm_mask *mask, unsigned int nbits);
+unsigned int bm_get_bit(const struct bm_mask *mask, unsigned int n);
+void bm_set_bit(struct bm_mask *mask, unsigned int n, unsigned int v);
+unsigned int bm_hweight(struct bm_mask *mask);
+int bm_displayhex(char *buf, int buflen, const struct bm_mask *bmp);
 
 #endif

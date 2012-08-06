@@ -31,19 +31,21 @@ bool_t xdr_timeval(XDR *xdrs, struct timeval *tv)
 	       );
 }
 
-bool_t xdr_bitmask_ptr(XDR *xdrs, struct bitmask **pptr)
+bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr)
 {
-	uint32_t size;
-	if(XDR_ENCODE == xdrs->x_op)
-		size = bitmask_nbits(*pptr);
-	if(!xdr_uint32_t(xdrs, &size))
-		return FALSE;
-	if(XDR_DECODE == xdrs->x_op && NULL == *pptr)
-		*pptr = bitmask_alloc(size);
+	unsigned int nbits;
+	if(XDR_DECODE == xdrs->x_op && NULL == *pptr) {
+		if(!xdr_u_int(xdrs, &nbits))
+			return FALSE;
+		*pptr = malloc(bm_size(nbits));
+		bm_init(*pptr, nbits);
+	} else if(XDR_ENCODE == xdrs->x_op) {
+		if(!xdr_u_int(xdrs, &((*pptr)->nbits)))
+			return FALSE;
+	}
 	if(XDR_FREE == xdrs->x_op)
-		bitmask_free(*pptr);
-	size = bitmask_nbytes(*pptr);
-	if(!xdr_opaque(xdrs, (caddr_t)bitmask_mask(*pptr), size))
+		free(*pptr);
+	if(!xdr_opaque(xdrs, (caddr_t)(*pptr)->mask, (*pptr)->size * sizeof(unsigned long)))
 		return FALSE;
 	return TRUE;
 }

@@ -21,7 +21,6 @@
 
 #include <ev.h>
 #include <err.h>
-#include <bitmask.h>
 
 #include <mersenne/proposer.h>
 #include <mersenne/proposer_prv.h>
@@ -32,7 +31,7 @@
 #include <mersenne/peers.h>
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
-
+#include <mersenne/bitmask.h>
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -136,13 +135,13 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
-			bitmask_setbit(instance->p1.acks, p->from->index);
+			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			if(p->data->vb > instance->p1.vb) {
 				instance->p1.v_size = p->data->v.v_len;
 				memcpy(instance->p1.v, p->data->v.v_val,
 						p->data->v.v_len);
 			}
-			p_num = bitmask_weight(instance->p1.acks);
+			p_num = bm_hweight(instance->p1.acks);
 			puts("[PROPOSER] Got promise!");
 			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
 			if(p_num >= acc_maj) {
@@ -160,7 +159,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			}
 			break;
 		case IE_TO:
-			bitmask_clearall(instance->p1.acks);
+			bm_clear_all(instance->p1.acks);
 			b = decode_ballot(ME_A_ instance->b);
 			instance->b = encode_ballot(ME_A_ ++b);
 			send_prepare(ME_A_ instance);
@@ -309,7 +308,9 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 
 static void init_instance(ME_P_ struct pro_instance *instance)
 {
-	instance->p1.acks = bitmask_alloc(peer_count(ME_A));
+	int nbits = peer_count(ME_A);
+	instance->p1.acks = fbr_alloc(ME_A_ bm_size(nbits));
+	bm_init(instance->p1.acks, nbits);
 	instance->mctx = ME_A;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	//ev_timer_start(mctx->loop, &instance->timer);
@@ -318,7 +319,6 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 
 static void free_instance(ME_P_ struct pro_instance *instance)
 {
-	bitmask_free(instance->p1.acks);
 	ev_timer_stop(mctx->loop, &instance->timer);
 }
 

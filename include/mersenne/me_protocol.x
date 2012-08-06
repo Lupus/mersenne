@@ -47,7 +47,7 @@ struct me_leader_msg_header {
 
 struct me_leader_msg_ok_data {
 	int k;
-	bitmask_ptr trust;
+	bm_mask_ptr trust;
 };
 
 struct me_leader_msg_round_data {

@@ -63,6 +63,6 @@ add_executable(mersenne
 	${MERSENNE_GEN_SOURCES}
 	${LIBCORO_SOURCES}
 	)
-target_link_libraries(mersenne ev crypto bitmask)
+target_link_libraries(mersenne ${LIBEV_LDFLAGS} crypto)
 
 subdirs(testing)

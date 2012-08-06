@@ -23,10 +23,10 @@
 #define _PROPOSER_PRV_H_
 
 #include <ev.h>
-#include <bitmask.h>
 
 #include <mersenne/context.h>
 #include <mersenne/me_protocol.h>
+#include <mersenne/bitmask.h>
 
 #define INSTANCE_WINDOW 10
 #define MAX_PROC 100
@@ -52,7 +52,7 @@ struct pro_instance {
 		char v[ME_MAX_XDR_MESSAGE_LEN];
 		uint32_t v_size;
 		uint64_t vb;
-		struct bitmask *acks;
+		struct bm_mask *acks;
 	} p1;
 	struct {
 		char v[ME_MAX_XDR_MESSAGE_LEN];

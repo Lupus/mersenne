@@ -32,16 +32,17 @@
 #include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
 
-struct bitmask * get_trust(ME_P)
+struct bm_mask * get_trust(ME_P)
 {
-	struct bitmask *bmp;
+	struct bm_mask *bmp;
 	struct me_peer *p;
-	bmp = bitmask_alloc(HASH_COUNT(mctx->peers));
-	bitmask_clearall(bmp);
+	int nbits = HASH_COUNT(mctx->peers);
+	bmp = malloc(bm_size(nbits));
+	bm_init(bmp, nbits);
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(p->ack_ttl > 0)
-			bitmask_setbit(bmp, p->index);
+			bm_set_bit(bmp, p->index, 1);
 	}
 	return bmp;
 }
@@ -171,7 +172,7 @@ void send_ok(ME_P_ int s)
 	data->me_leader_msg_data_u.ok.trust = get_trust(ME_A);
 	data->me_leader_msg_data_u.ok.k = s;
 	msg_send_all(ME_A_ &msg);
-	bitmask_free(data->me_leader_msg_data_u.ok.trust);
+	free(data->me_leader_msg_data_u.ok.trust);
 }
 
 void send_ack(ME_P_ int s, int to)
@@ -241,7 +242,7 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	k = data->me_leader_msg_data_u.ok.k;
 
 #ifdef _LDR_DEBUG_MSG
-	bitmask_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
+	bm_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
 	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
 			mctx->ldr.r,
 			k,
@@ -259,15 +260,15 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 		return;
 	}
 
-	if(!bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
-		bitmask_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
+	if(!bm_get_bit(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
+		bm_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
 		printf("Current leader does not trust me, trustmask: %s\n", buf);
 		start_round(ME_A_ mctx->ldr.r + 1);
 		return;
 	}
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
-		if(bitmask_isbitset(data->me_leader_msg_data_u.ok.trust, p->index))
+		if(bm_get_bit(data->me_leader_msg_data_u.ok.trust, p->index))
 			p->ack_ttl = 3;
 	}
 

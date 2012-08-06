@@ -32,6 +32,12 @@ struct trace_info {
  const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
  (type *)( (char *)__mptr - offsetof(type,member) );})
 
+
+#define max(a,b) \
+   ({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
+
 int make_socket_non_blocking(int fd);
 void fill_trace_info(struct trace_info *info);
 void print_trace_info(struct trace_info *info);
