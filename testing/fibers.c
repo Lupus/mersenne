@@ -29,7 +29,7 @@ void coro_io_test(ME_P)
 	char buf[11] = {0};
 	int fd = STDIN_FILENO;
 	for(;;) {
-		fbr_read(ME_A_ fd, buf, 10, NULL);
+		fbr_read_all(ME_A_ fd, buf, 10, NULL);
 		fbr_write(ME_A_ STDOUT_FILENO, "read: ", 6, NULL);
 		fbr_write(ME_A_ STDOUT_FILENO, buf, 10, NULL);
 		fbr_write(ME_A_ STDOUT_FILENO, "\n", 1, NULL);
@@ -39,7 +39,7 @@ void coro_io_test(ME_P)
 void coro_timer_test(ME_P)
 {
 	int i = 0;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	struct fbr_fiber *printer;
 	ev_tstamp timer_interval;
 	const int buf_size = 256;

@@ -18,37 +18,8 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
-#include <err.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <execinfo.h>
-#include <mersenne/util.h>
 
-void make_socket_non_blocking(int fd)
-{
-	int flags, s;
+struct cl_message {
+	opaque value<>;
+};
 
-	flags = fcntl(fd, F_GETFL, 0);
-	if (-1 == flags)
-		err(EXIT_FAILURE, "fcntl failed");
-
-	flags |= O_NONBLOCK;
-	s = fcntl(fd, F_SETFL, flags);
-	if (-1 == s)
-		errx(EXIT_FAILURE, "fcntl failed");
-}
-
-void fill_trace_info(struct trace_info *info)
-{
-	info->size = backtrace(info->array, TRACE_SIZE);
-}
-
-void print_trace_info(struct trace_info *info)
-{
-	size_t i;
-	char **strings = backtrace_symbols(info->array, info->size);
-	for (i = 0; i < info->size; i++)
-		fprintf(stderr, "%s\n", strings[i]);
-	free(strings);
-}

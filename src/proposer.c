@@ -142,7 +142,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 						p->data->v.v_len);
 			}
 			p_num = bm_hweight(instance->p1.acks);
-			puts("[PROPOSER] Got promise!");
+			//puts("[PROPOSER] Got promise!");
 			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
 			if(p_num >= acc_maj) {
 				if(instance->p1.v_size) {

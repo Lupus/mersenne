@@ -72,7 +72,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		return;
 	}
 	r->b = data->b;
-	printf("[ACCEPTOR] Promised to not accept ballots lower that %ld\n", data->b);
+	//printf("[ACCEPTOR] Promised to not accept ballots lower that %ld\n", data->b);
 	send_promise(ME_A_ r, from);
 }
 

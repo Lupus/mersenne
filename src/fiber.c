@@ -40,7 +40,8 @@ void fbr_init(ME_P)
 
 static void call_wrapper(ME_P_ void (*func) (ME_P))
 {
-	mctx->fbr.sp->fiber->func(ME_A);
+	CURRENT_FIBER->func(ME_A);
+	fbr_reclaim(ME_A_ CURRENT_FIBER);
 	fbr_yield(ME_A);
 }
 
@@ -137,7 +138,29 @@ static void ev_wakeup_timer(EV_P_ ev_timer *w, int event)
 	fbr_call(ME_A_ fiber, 0);
 }
 
-ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count, ssize_t *done)
+ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	ssize_t r;
+
+	ev_io_set(&fiber->w_io, fd, EV_READ);
+	ev_io_start(mctx->loop, &fiber->w_io);
+		fbr_yield(ME_A);
+		if(!CALLED_BY_ROOT) {
+			errno = EINTR;
+			r = -1;
+			goto finish;
+		}
+		do {
+			r = read(fd, buf, count);
+		} while(-1 == r && EINTR == errno);
+
+finish:
+		ev_io_stop(mctx->loop, &fiber->w_io);
+		return r;
+}
+
+ssize_t fbr_read_all(ME_P_ int fd, void *buf, size_t count, ssize_t *done)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ssize_t r;
@@ -153,6 +176,7 @@ next:
 		if(!CALLED_BY_ROOT) {
 			if(uninterruptable)
 				continue;
+			ev_io_stop(mctx->loop, &fiber->w_io);
 			errno = EINTR;
 			return -1;
 		}
@@ -199,6 +223,7 @@ next:
 		if(!CALLED_BY_ROOT) {
 			if(uninterruptable)
 				continue;
+			ev_io_stop(mctx->loop, &fiber->w_io);
 			errno = EINTR;
 			return -1;
 		}
@@ -263,6 +288,27 @@ ssize_t fbr_sendto(ME_P_ int sockfd, const void *buf, size_t len, int flags, con
 	return -1;
 }
 
+int fbr_accept(ME_P_ int sockfd, struct sockaddr *addr, socklen_t *addrlen)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	int r;
+
+	ev_io_set(&fiber->w_io, sockfd, EV_READ);
+	ev_io_start(mctx->loop, &fiber->w_io);
+	fbr_yield(ME_A);
+	if(!CALLED_BY_ROOT) {
+		ev_io_stop(mctx->loop, &fiber->w_io);
+		errno = EINTR;
+		return -1;
+	}
+	do {
+		r = accept(sockfd, addr, addrlen);
+	} while(-1 == r && EINTR == errno);
+	ev_io_stop(mctx->loop, &fiber->w_io);
+
+	return r;
+}
+
 ev_tstamp fbr_sleep(ME_P_ ev_tstamp seconds)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
@@ -276,39 +322,58 @@ ev_tstamp fbr_sleep(ME_P_ ev_tstamp seconds)
 	return expected - ev_now(mctx->loop);
 }
 
-struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P))
+static void fiber_init(ME_P_ struct fbr_fiber *fiber)
 {
-	struct fbr_fiber *fiber;
-	fiber = malloc(sizeof(struct fbr_fiber));
-	fiber->name = name;
-	fiber->stack = malloc(FBR_STACK_SIZE);
-	fiber->func = func;
-	fiber->call_list = NULL;
 	obstack_init(&fiber->obstack);
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
+	fiber->call_list = NULL;
 	fiber->w_io.data = ME_A;
 	fiber->w_timer.data = ME_A;
+	fiber->reclaimed = 0;
+}
+
+static void fiber_cleanup(ME_P_ struct fbr_fiber *fiber)
+{
+	struct fbr_call_info *elt, *tmp;
+	//coro_destroy(&fiber->ctx);
+	ev_io_stop(mctx->loop, &fiber->w_io);
+	ev_timer_stop(mctx->loop, &fiber->w_timer);
+	obstack_free(&fiber->obstack, NULL);
+	DL_FOREACH_SAFE(fiber->call_list, elt, tmp) {
+		DL_DELETE(fiber->call_list, elt);
+		fbr_free_call_info(ME_A_ elt);
+	}
+}
+
+struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P))
+{
+	struct fbr_fiber *fiber;
+	if(mctx->fbr.reclaimed) {
+		fiber = mctx->fbr.reclaimed;
+		LL_DELETE(mctx->fbr.reclaimed, mctx->fbr.reclaimed);
+	} else {
+		fiber = malloc(sizeof(struct fbr_fiber));
+		fiber->stack = malloc(FBR_STACK_SIZE);
+	}
+		fiber_init(ME_A_ fiber);
+	fiber->name = name;
+	fiber->func = func;
 	return fiber;
 }
 
 void fbr_reset(ME_P_ struct fbr_fiber *fiber)
 {
-	//coro_destroy(&fiber->ctx);
-	ev_io_stop(mctx->loop, &fiber->w_io);
-	ev_timer_stop(mctx->loop, &fiber->w_timer);
-	obstack_free(&fiber->obstack, NULL);
-	obstack_init(&fiber->obstack);
-	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack, FBR_STACK_SIZE);
-	ev_init(&fiber->w_io, ev_wakeup_io);
-	ev_init(&fiber->w_timer, ev_wakeup_timer);
-	fiber->w_io.data = ME_A;
-	fiber->w_timer.data = ME_A;
+	fiber_cleanup(ME_A_ fiber);
+	fiber_init(ME_A_ fiber);
 }
 
-void fbr_destroy(ME_P_ struct fbr_fiber *fiber)
+void fbr_reclaim(ME_P_ struct fbr_fiber *fiber)
 {
+	fiber_cleanup(ME_A_ fiber);
+	fiber->reclaimed = 1;
+	LL_PREPEND(mctx->fbr.reclaimed, fiber);
 }
 
 void * fbr_alloc(ME_P_ size_t size)

@@ -64,8 +64,12 @@ struct fbr_fiber {
 	char *stack;
 	struct fbr_call_info *call_list;
 	struct obstack obstack;
+	struct obstack args_obstack;
 	ev_io w_io;
 	ev_timer w_timer;
+	int reclaimed;
+
+	struct fbr_fiber *next;
 };
 
 struct fbr_stack_item {
@@ -77,6 +81,7 @@ struct fbr_context {
 	struct fbr_stack_item stack[FBR_CALL_STACK_SIZE];
 	struct fbr_stack_item *sp;
 	struct fbr_fiber root;
+	struct fbr_fiber *reclaimed;
 };
 
 #define FBR_CONTEXT_INITIALIZER { \
@@ -86,11 +91,13 @@ struct fbr_context {
 		.stack = NULL, \
 		.name = "root", \
 	}, \
+	.reclaimed = NULL, \
 }
 
 void fbr_init(ME_P);
 struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P));
 void fbr_reset(ME_P_ struct fbr_fiber *fiber);
+void fbr_reclaim(ME_P_ struct fbr_fiber *fiber);
 struct fbr_fiber_arg fbr_arg_i(int i);
 struct fbr_fiber_arg fbr_arg_v(void *v);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
@@ -99,12 +106,14 @@ void * fbr_alloc(ME_P_ size_t size);
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber);
 int fbr_next_call_info(ME_P_ struct fbr_call_info **info_ptr);
 void fbr_free_call_info(ME_P_ struct fbr_call_info *info);
-ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count, ssize_t *done);
+ssize_t fbr_read(ME_P_ int fd, void *buf, size_t count);
+ssize_t fbr_read_all(ME_P_ int fd, void *buf, size_t count, ssize_t *done);
 ssize_t fbr_write(ME_P_ int fd, const void *buf, size_t count, ssize_t *done);
 ssize_t fbr_recvfrom(ME_P_ int sockfd, void *buf, size_t len, int flags, struct
 		sockaddr *src_addr, socklen_t *addrlen);
 ssize_t fbr_sendto(ME_P_ int sockfd, const void *buf, size_t len, int flags, const
 		struct sockaddr *dest_addr, socklen_t addrlen);
+int fbr_accept(ME_P_ int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 ev_tstamp fbr_sleep(ME_P_ ev_tstamp seconds);
 void fbr_dump_stack(ME_P);
 

@@ -42,6 +42,9 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
+#include <mersenne/client.h>
+
+#define LISTEN_BACKLOG 50
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
@@ -96,47 +99,82 @@ static void fiber_main(ME_P)
 	}
 }
 
+static void set_up_udp_socket(ME_P)
+{
+	int yes = 1;
+
+	if ((mctx->fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+		err(EXIT_FAILURE, "failed to create an udp socket");
+
+	make_socket_non_blocking(mctx->fd);
+
+	/* allow multiple sockets to use the same PORT number */
+	if (setsockopt(mctx->fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
+		err(EXIT_FAILURE, "reusing of address failed");
+
+	/* bind to receive address */
+	if (bind(mctx->fd, (struct sockaddr *) &mctx->me->addr, sizeof(mctx->me->addr)) < 0)
+		err(EXIT_FAILURE, "bind failed");
+}
+
+static void set_up_client_socket(ME_P)
+{
+	struct sockaddr_un addr;
+	char *rendezvous = getenv("UNIX_SOCKET");
+
+	if ((mctx->client_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+		err(EXIT_FAILURE, "failed to create a client socket");
+
+	make_socket_non_blocking(mctx->client_fd);
+
+	addr.sun_family = AF_UNIX;
+	strcpy(addr.sun_path, rendezvous);
+	unlink(rendezvous);
+	/* bind to receive address */
+	if (bind(mctx->client_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0)
+		err(EXIT_FAILURE, "client socket bind failed");
+	if (-1 == listen(mctx->client_fd, LISTEN_BACKLOG))
+               err(EXIT_FAILURE, "client socket listen failed");
+}
+
+static void check_config()
+{
+	if(NULL == getenv("UNIX_SOCKET"))
+		errx(EXIT_FAILURE, "UNIX_SOCKET is not set in env");
+}
+
 int main(int argc, char *argv[])
 {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
-	int yes = 1;
 
 	if(argc != 2) {
 		puts("Please enter peer number!");
 		abort();
 	}
 
+	check_config();
+
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
 	load_peer_list(ME_A_ atoi(argv[1]));
 
-	/* create what looks like an ordinary UDP socket */
-	if ((context.fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-		err(EXIT_FAILURE, "failed to create a socket");
-
-	if (-1 == make_socket_non_blocking(context.fd))
-		abort();
-
-	/* allow multiple sockets to use the same PORT number */
-	if (setsockopt(context.fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) < 0)
-		err(EXIT_FAILURE, "reusing of address failed");
-
-	/* bind to receive address */
-	if (bind(context.fd, (struct sockaddr *) &context.me->addr, sizeof(context.me->addr)) < 0)
-		err(EXIT_FAILURE, "bind failed");
+	set_up_udp_socket(ME_A);
+	set_up_client_socket(ME_A);
 
 	// use the default event loop unless you have special needs
-	context.loop = EV_DEFAULT;
+	mctx->loop = EV_DEFAULT;
 
 	fbr_init(ME_A);
 	pxs_fiber_init(ME_A);
 
 	mctx->fiber_main = fbr_create(ME_A_ "main", fiber_main);
 	mctx->fiber_leader = fbr_create(ME_A_ "leader", ldr_fiber);
+	mctx->fiber_client = fbr_create(ME_A_ "client", clt_fiber);
 
 	fbr_call(ME_A_ mctx->fiber_main, 0);
 	fbr_call(ME_A_ mctx->fiber_leader, 0);
+	fbr_call(ME_A_ mctx->fiber_client, 0);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");

@@ -36,6 +36,7 @@ struct me_context {
 	int counter;
 	ev_io socket_watcher;
 	int fd;
+	int client_fd;
 	struct me_peer *peers;
 	struct me_peer *me;
 	struct ldr_context ldr;
@@ -46,6 +47,7 @@ struct me_context {
 	struct fbr_fiber *fiber_acceptor;
 	struct fbr_fiber *fiber_proposer;
 	struct fbr_fiber *fiber_learner;
+	struct fbr_fiber *fiber_client;
 };
 
 #define ME_CONTEXT_INITIALIZER { \

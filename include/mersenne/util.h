@@ -38,7 +38,7 @@ struct trace_info {
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
-int make_socket_non_blocking(int fd);
+void make_socket_non_blocking(int fd);
 void fill_trace_info(struct trace_info *info);
 void print_trace_info(struct trace_info *info);
 
