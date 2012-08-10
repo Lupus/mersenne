@@ -58,6 +58,12 @@ static void v1_to_v2(struct pro_instance *instance)
 	instance->p2.v_size = instance->p1.v_size;
 }
 
+static void set_client_v2(struct pro_instance *instance, char *data, int len)
+{
+	memcpy(instance->p2.v, data, len);
+	instance->client_value = 1;
+}
+
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	if(IE_D == base->type)
@@ -109,6 +115,7 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	data->me_paxos_msg_data_u.accept.v.v_len = instance->p2.v_size;
 	data->me_paxos_msg_data_u.accept.v.v_val = instance->p2.v;
+	printf("[PROPOSER] Sending accepts for instance %ld\n", instance->iid);
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
@@ -177,6 +184,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	struct ie_base new_base;
+	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
 			if(instance->p2.v_size) {
@@ -187,7 +195,12 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 			}
 			break;
 		case IE_NV:
-			//TODO: Implement client values
+			nv = container_of(base, struct ie_nv, b);
+			set_client_v2(instance, nv->data, nv->len);
+			new_base.type = IE_A;
+			switch_instance(ME_A_ instance,
+					IS_P1_READY_WITH_VALUE,
+					&new_base);
 			break;
 		default:
 			errx(EXIT_FAILURE, "inappropriate transition %s for "
@@ -288,6 +301,16 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		*from)
 {
+	struct pro_instance *instance;
+	struct me_paxos_promise_data *data;
+	struct ie_p p;
+	data = &pmsg->data.me_paxos_msg_data_u.promise;
+	p.b.type = IE_P;
+	p.from = from;
+	p.data = data;
+	instance = mctx->pxs.pro.instances + (data->i % INSTANCE_WINDOW);
+	if(instance->b == data->b && IS_P1_PENDING == instance->state)
+		run_instance(ME_A_ instance, &p.b);
 }
 
 static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
@@ -359,11 +382,32 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 }
 
+static void do_client_value(ME_P_ char *data, int len)
+{
+	struct ie_nv nv;
+	struct pro_instance *instance;
+	int i;
+	nv.b.type = IE_NV;
+	nv.data = data;
+	nv.len = len;
+	for(i = 0; i < INSTANCE_WINDOW; i++) {
+		instance = mctx->pxs.pro.instances + i;
+		if(IS_P1_READY_NO_VALUE == instance->state) {
+			run_instance(ME_A_ instance, &nv.b);
+			return;
+		}
+	}
+	warnx("client value is discarded");
+	//TODO: add value to pending queue here
+}
+
 void pro_fiber(ME_P)
 {
 	struct me_message *msg;
 	struct me_peer *from;
 	struct fbr_call_info *info;
+	char *data;
+	int len;
 
 	fbr_next_call_info(ME_A_ NULL);
 
@@ -380,9 +424,17 @@ start:
 
 				do_message(ME_A_ msg, from);
 				break;
-		case FAT_QUIT:
-			goto fiber_exit;
+			case FAT_PXS_CLIENT_VALUE:
+				data = info->argv[1].v;
+				len = info->argv[2].i;
+
+				do_client_value(ME_A_ data, len);
+				break;
+			case FAT_QUIT:
+				goto fiber_exit;
 		}
+
+		fbr_free_call_info(ME_A_ info);
 	}
 	goto start;
 fiber_exit:

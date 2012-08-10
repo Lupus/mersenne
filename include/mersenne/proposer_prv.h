@@ -31,7 +31,7 @@
 #define INSTANCE_WINDOW 10
 #define MAX_PROC 100
 #define TO1 0.1
-#define TO2 0.1
+#define TO2 10
 
 enum instance_state {
     IS_EMPTY = 0,
@@ -85,6 +85,12 @@ struct ie_base {
 struct ie_p {
 	struct me_peer *from;
 	struct me_paxos_promise_data *data;
+	struct ie_base b;
+};
+
+struct ie_nv {
+	char *data;
+	int len;
 	struct ie_base b;
 };
 

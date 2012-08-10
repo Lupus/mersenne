@@ -66,6 +66,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r = calloc(sizeof(struct acc_instance_record), 1);
 		r->iid = data->i;
 		r->b = data->b;
+		HASH_ADD_IID(mctx->pxs.acc.records, iid, r);
 	}
 	if(data->b < r->b) {
 		//TODO: Add REJECT message here for speedup
@@ -96,6 +97,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	r->v = malloc(data->v.v_len);
 	memcpy(r->v, data->v.v_val, data->v.v_len);
 	r->v_size = data->v.v_len;
+	printf("[ACCEPTOR] Accepted instance #%ld\n", data->i);
 	send_learn(ME_A_ r);
 }
 

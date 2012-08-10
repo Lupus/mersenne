@@ -75,7 +75,7 @@ static void connection_fiber(ME_P)
 			}
 			snprintf(buf, msg.value.value_len + 1, "%s", msg.value.value_val);
 			printf("[CLIENT] Got value: ``%s''\n", buf);
-			fbr_call(ME_A_ mctx->fiber_proposer, 2,
+			fbr_call(ME_A_ mctx->fiber_proposer, 3,
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
 					fbr_arg_v(msg.value.value_val),
 					fbr_arg_i(msg.value.value_len)
