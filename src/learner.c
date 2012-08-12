@@ -59,6 +59,7 @@ static void try_deliver(ME_P)
 		instance->v_size = 0;
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
+
 	}
 }
 
@@ -70,11 +71,13 @@ static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	int num;
 
 	data = &pmsg->data.me_paxos_msg_data_u.learn;
-	if(data->i >= mctx->pxs.lea.first_non_delivered + LEA_INSTANCE_WINDOW) {
+	if(data->i < mctx->pxs.lea.first_non_delivered)
+		return;
+	if(data->i > mctx->pxs.lea.first_non_delivered + LEA_INSTANCE_WINDOW) {
 		warnx("instance windows is full, discarding next record");
 		return;
 	}
-	instance = mctx->pxs.lea.instances + data->i % LEA_INSTANCE_WINDOW;
+	instance = mctx->pxs.lea.instances + (data->i % LEA_INSTANCE_WINDOW);
 	if(instance->closed)
 		return;
 	if(!instance->v_size) {

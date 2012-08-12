@@ -102,7 +102,6 @@ void clt_fiber(ME_P)
 		sockfd = fbr_accept(ME_A_ mctx->client_fd, (struct sockaddr *)&addr, &addrlen);
 		if(-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed");
-		puts("Accepted a socket");
 		fiber = fbr_create(ME_A_ "client_fiber", connection_fiber);
 		fbr_call(ME_A_ fiber, 1, fbr_arg_i(sockfd));
 	}
