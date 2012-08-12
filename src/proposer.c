@@ -99,7 +99,6 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 {
 	struct ie_base base;
 	struct bm_mask *mask = instance->p1.acks;
-	fprintf(stderr, "REclaiming...\n");
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
 	memset(instance, 0, sizeof(struct pro_instance));
@@ -115,7 +114,7 @@ static void adjust_window(ME_P)
 	struct pro_instance *instance;
 	int i, j;
 	int start = mctx->pxs.pro.lowest_non_closed;
-	for(j = 0, i = start; i < PRO_INSTANCE_WINDOW; j++, i++) {
+	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_DELIVERED != instance->state)
 			return;
@@ -193,6 +192,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			//puts("[PROPOSER] Got promise!");
 			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
 			if(p_num >= acc_maj) {
+				ev_timer_stop(mctx->loop, &instance->timer);
 				if(instance->p1.v_size) {
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
@@ -324,6 +324,7 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					//TODO: Push v2 back to pending list
 				}
 			}
+			ev_timer_stop(mctx->loop, &instance->timer);
 			adjust_window(ME_A);
 			break;
 			fprintf(stderr, "Adjusted window!\n");
@@ -371,13 +372,6 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 	struct pro_instance *instance;
 	struct ie_base base;
 	instance = container_of(w, struct pro_instance, timer);
-	if(IS_P1_PENDING != instance->state
-			&& IS_P2_PENDING != instance->state) {
-		printf("[PROPOSER] discarding timer for state %s\n",
-				strval_instance_state(instance->state));
-		ev_timer_set(w, 0., 0.);
-		return;
-	}
 	base.type = IE_TO;
 	run_instance(ME_A_ instance, &base);
 }
@@ -445,7 +439,7 @@ static void do_client_value(ME_P_ char *data, int len)
 	nv.b.type = IE_NV;
 	nv.data = data;
 	nv.len = len;
-	for(j = 0, i = start; i < PRO_INSTANCE_WINDOW; j++, i++) {
+	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
 			run_instance(ME_A_ instance, &nv.b);

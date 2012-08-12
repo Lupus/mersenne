@@ -27,7 +27,7 @@
 #include <mersenne/bitmask.h>
 #include <mersenne/me_protocol.h>
 
-#define LEA_INSTANCE_WINDOW 10
+#define LEA_INSTANCE_WINDOW 5
 
 struct lea_instance {
 	uint64_t iid;
