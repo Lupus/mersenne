@@ -352,6 +352,11 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 }
 
+int ldr_is_leader(ME_P)
+{
+	return mctx->ldr.leader == mctx->me->index;
+}
+
 void ldr_fiber(ME_P)
 {
 	struct me_message *msg;

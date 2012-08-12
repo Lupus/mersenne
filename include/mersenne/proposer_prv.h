@@ -28,10 +28,10 @@
 #include <mersenne/me_protocol.h>
 #include <mersenne/bitmask.h>
 
-#define INSTANCE_WINDOW 10
+#define PRO_INSTANCE_WINDOW 15
 #define MAX_PROC 100
 #define TO1 0.1
-#define TO2 10
+#define TO2 0.1
 
 enum instance_state {
     IS_EMPTY = 0,
@@ -60,8 +60,6 @@ struct pro_instance {
 	} p2;
 	int client_value;
 	ev_timer timer;
-
-	struct me_context *mctx;
 };
 
 enum instance_event_type {
@@ -89,6 +87,12 @@ struct ie_p {
 };
 
 struct ie_nv {
+	char *data;
+	int len;
+	struct ie_base b;
+};
+
+struct ie_d {
 	char *data;
 	int len;
 	struct ie_base b;

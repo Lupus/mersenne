@@ -37,9 +37,11 @@ int main(int argc, char *argv[]) {
 	struct sockaddr_un addr;
 	char *rendezvous = getenv("UNIX_SOCKET");
 	char buf[1000];
+	char buf2[1200];
 	int fd;
 	XDR xdrs;
 	struct cl_message msg;
+	int i = 0;
 
 	if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
 		err(EXIT_FAILURE, "failed to create a client socket");
@@ -54,10 +56,11 @@ int main(int argc, char *argv[]) {
 	while(fgets(buf, 1000, stdin)) {
 		if(feof(stdin))
 			break;
+		snprintf(buf2, 1200, "%03d:%s", i++, buf);
 		xdrrec_create(&xdrs, 0, 0, (char *)&fd, NULL, writeit);
 		xdrs.x_op = XDR_ENCODE;
-		msg.value.value_val = buf;
-		msg.value.value_len = strlen(buf) - 1;
+		msg.value.value_val = buf2;
+		msg.value.value_len = strlen(buf2) - 1;
 		if(!xdr_cl_message(&xdrs, &msg))
 			err(EXIT_FAILURE, "unable to encode a client message");
 		xdrrec_endofrecord(&xdrs, TRUE);

@@ -45,6 +45,12 @@ int pxs_acceptors_count(ME_P)
 	return peer_count_matching(ME_A_ &acceptor_predicate, NULL);
 }
 
+int pxs_is_acc_majority(ME_P_ int acc_num)
+{
+	int acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
+	return acc_num >= acc_maj;
+}
+
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
@@ -67,7 +73,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 				);
 			/* Falltrhough */
 		case ME_PAXOS_PROMISE:
-			if(mctx->ldr.leader == mctx->me->index)
+			if(ldr_is_leader(ME_A))
 				fbr_call(ME_A_ mctx->fiber_proposer, 3,
 						fbr_arg_i(FAT_ME_MESSAGE),
 						fbr_arg_v(msg),

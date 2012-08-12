@@ -52,6 +52,15 @@ static int veql(struct pro_instance *instance)
 	return 1;
 }
 
+static int v2_eql_to(struct pro_instance *instance, char *data, int len)
+{
+	if(instance->p2.v_size != len)
+		return 0;
+	if(memcmp(instance->p2.v, data, len))
+		return 0;
+	return 1;
+}
+
 static void v1_to_v2(struct pro_instance *instance)
 {
 	memcpy(instance->p2.v, instance->p1.v, instance->p1.v_size);
@@ -61,6 +70,7 @@ static void v1_to_v2(struct pro_instance *instance)
 static void set_client_v2(struct pro_instance *instance, char *data, int len)
 {
 	memcpy(instance->p2.v, data, len);
+	instance->p2.v_size = len;
 	instance->client_value = 1;
 }
 
@@ -68,19 +78,50 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 {
 	if(IE_D == base->type)
 		do_is_delivered(ME_A_ instance, base);
-	state_table[instance->state](ME_A_ instance, base);
+	else
+		state_table[instance->state](ME_A_ instance, base);
 }
 
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s\n",
+	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
 			instance->iid,
 			instance->b,
 			strval_instance_state(instance->state),
-			strval_instance_state(state));
+			strval_instance_state(state),
+			strval_instance_event_type(base->type));
 	instance->state = state;
 	run_instance(ME_A_ instance, base);
+}
+
+static void reclaim_instance(ME_P_ struct pro_instance *instance)
+{
+	struct ie_base base;
+	struct bm_mask *mask = instance->p1.acks;
+	fprintf(stderr, "REclaiming...\n");
+	base.type = IE_I;
+	ev_timer timer = instance->timer;
+	memset(instance, 0, sizeof(struct pro_instance));
+	bm_init(mask, peer_count(ME_A));
+	instance->p1.acks = mask;
+	instance->timer = timer;
+	instance->iid = mctx->pxs.pro.max_iid++;
+	run_instance(ME_A_ instance, &base);
+}
+
+static void adjust_window(ME_P)
+{
+	struct pro_instance *instance;
+	int i, j;
+	int start = mctx->pxs.pro.lowest_non_closed;
+	for(j = 0, i = start; i < PRO_INSTANCE_WINDOW; j++, i++) {
+		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
+		if(IS_DELIVERED != instance->state)
+			return;
+		mctx->pxs.pro.lowest_non_closed = i + 1;
+		reclaim_instance(ME_A_ instance);
+	}
 }
 
 static uint64_t encode_ballot(ME_P_ uint64_t ballot)
@@ -135,7 +176,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	int acc_maj;
 	switch(base->type) {
 		case IE_S:
-			instance->b = encode_ballot(ME_A_ 1);
+			instance->b = encode_ballot(ME_A_ 0);
 			send_prepare(ME_A_ instance);
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
@@ -271,10 +312,21 @@ void do_is_closed(ME_P_ struct pro_instance *instance, struct ie_base *base)
 
 void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	struct ie_d *d;
 	switch(base->type) {
 		case IE_D:
-			//TODO: We're done! Need to remove this instance
+			d = container_of(base, struct ie_d, b);
+			if(instance->client_value) {
+				if(v2_eql_to(instance, d->data, d->len)) {
+					//TODO: Client value delivered,
+					//TODO: inform it about this
+				} else {
+					//TODO: Push v2 back to pending list
+				}
+			}
+			adjust_window(ME_A);
 			break;
+			fprintf(stderr, "Adjusted window!\n");
 		default:
 			errx(EXIT_FAILURE, "inappropriate transition %s for "
 					"state %s",
@@ -293,7 +345,7 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.b.type = IE_P;
 	p.from = from;
 	p.data = data;
-	instance = mctx->pxs.pro.instances + (data->i % INSTANCE_WINDOW);
+	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }
@@ -308,13 +360,14 @@ static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.b.type = IE_P;
 	p.from = from;
 	p.data = data;
-	instance = mctx->pxs.pro.instances + (data->i % INSTANCE_WINDOW);
+	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }
 
 static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
+	struct me_context *mctx = (struct me_context *)w->data;
 	struct pro_instance *instance;
 	struct ie_base base;
 	instance = container_of(w, struct pro_instance, timer);
@@ -326,7 +379,7 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 		return;
 	}
 	base.type = IE_TO;
-	run_instance(instance->mctx, instance, &base);
+	run_instance(ME_A_ instance, &base);
 }
 
 static void init_instance(ME_P_ struct pro_instance *instance)
@@ -334,8 +387,8 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	int nbits = peer_count(ME_A);
 	instance->p1.acks = fbr_alloc(ME_A_ bm_size(nbits));
 	bm_init(instance->p1.acks, nbits);
-	instance->mctx = ME_A;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
+	instance->timer.data = ME_A;
 	//ev_timer_start(mctx->loop, &instance->timer);
 	//puts("timer started");
 }
@@ -350,13 +403,14 @@ static void proposer_init(ME_P)
 {
 	int i;
 	struct ie_base base;
-	size_t size = sizeof(struct pro_instance) * INSTANCE_WINDOW;
+	size_t size = sizeof(struct pro_instance) * PRO_INSTANCE_WINDOW;
 	base.type = IE_I;
+	mctx->pxs.pro.max_iid = 0;
 	mctx->pxs.pro.instances = fbr_alloc(ME_A_ size);
 	memset(mctx->pxs.pro.instances, 0, size);
-	for(i = 0; i < INSTANCE_WINDOW; i++) {
+	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
-		mctx->pxs.pro.instances[i].iid = i + 1;
+		mctx->pxs.pro.instances[i].iid = mctx->pxs.pro.max_iid++;
 		run_instance(ME_A_ mctx->pxs.pro.instances + i, &base);
 	}
 }
@@ -364,7 +418,7 @@ static void proposer_init(ME_P)
 static void proposer_shutdown(ME_P)
 {
 	int i;
-	for(i = 0; i < INSTANCE_WINDOW; i++) {
+	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		free_instance(ME_A_ mctx->pxs.pro.instances + i);
 	}
 }
@@ -386,12 +440,13 @@ static void do_client_value(ME_P_ char *data, int len)
 {
 	struct ie_nv nv;
 	struct pro_instance *instance;
-	int i;
+	int i, j;
+	int start = mctx->pxs.pro.lowest_non_closed;
 	nv.b.type = IE_NV;
 	nv.data = data;
 	nv.len = len;
-	for(i = 0; i < INSTANCE_WINDOW; i++) {
-		instance = mctx->pxs.pro.instances + i;
+	for(j = 0, i = start; i < PRO_INSTANCE_WINDOW; j++, i++) {
+		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
 			run_instance(ME_A_ instance, &nv.b);
 			return;
@@ -401,6 +456,17 @@ static void do_client_value(ME_P_ char *data, int len)
 	//TODO: add value to pending queue here
 }
 
+static void do_delivered_value(ME_P_ uint64_t iid, char *data, int len)
+{
+	struct ie_d d;
+	struct pro_instance *instance;
+	d.b.type = IE_D;
+	d.data = data;
+	d.len = len;
+	instance = mctx->pxs.pro.instances + (iid % PRO_INSTANCE_WINDOW);
+	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
+}
+
 void pro_fiber(ME_P)
 {
 	struct me_message *msg;
@@ -408,6 +474,7 @@ void pro_fiber(ME_P)
 	struct fbr_call_info *info;
 	char *data;
 	int len;
+	uint64_t iid;
 
 	fbr_next_call_info(ME_A_ NULL);
 
@@ -429,6 +496,13 @@ start:
 				len = info->argv[2].i;
 
 				do_client_value(ME_A_ data, len);
+				break;
+			case FAT_PXS_DELIVERED_VALUE:
+				iid = info->argv[1].i;
+				data = info->argv[2].v;
+				len = info->argv[3].i;
+
+				do_delivered_value(ME_A_ iid, data, len);
 				break;
 			case FAT_QUIT:
 				goto fiber_exit;

@@ -41,5 +41,6 @@ struct ldr_context {
 }
 
 void ldr_fiber(ME_P);
+int ldr_is_leader(ME_P);
 
 #endif

@@ -25,6 +25,7 @@
 enum fiber_args_type {
 	FAT_ME_MESSAGE = 1,
 	FAT_PXS_CLIENT_VALUE,
+	FAT_PXS_DELIVERED_VALUE,
 	FAT_QUIT,
 };
 
