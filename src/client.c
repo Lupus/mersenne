@@ -54,8 +54,8 @@ static void connection_fiber(ME_P)
 	struct cl_message msg;
 	char buf[1000];
 
-	assert(1 == fbr_next_call_info(ME_A_ &info));
-	assert(1 == info->argc);
+	fbr_assert(1 == fbr_next_call_info(ME_A_ &info));
+	fbr_assert(1 == info->argc);
 	fd = info->argv[0].i;
 	context.fd = fd;
 	context.mctx = mctx;

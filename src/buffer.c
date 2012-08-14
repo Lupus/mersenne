@@ -27,6 +27,8 @@ void buf_init(struct buffer *buf, char *ptr, size_t size)
 	buf->ptr = ptr;
 	buf->size1 = size;
 	buf->empty = 1;
+	buf->prev = NULL;
+	buf->next = NULL;
 }
 
 void buf_copy(struct buffer *to, struct buffer *from)

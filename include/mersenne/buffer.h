@@ -27,6 +27,8 @@ struct buffer {
 	char *ptr;
 	unsigned int size1;
 	int empty;
+
+	struct buffer *next, *prev;
 };
 
 void buf_init(struct buffer *buf, char *ptr, size_t size);

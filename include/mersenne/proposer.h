@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <mersenne/context_fwd.h>
+#include <mersenne/buffer.h>
 
 struct me_peer;
 struct me_message;
@@ -33,10 +34,14 @@ struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
 	uint64_t max_iid;
+	struct buffer *pending;
+	int pending_size;
 };
 
 #define PRO_CONTEXT_INITIALIZER { \
 	.instances = NULL, \
+	.pending = NULL, \
+	.pending_size = 0, \
 }
 
 void pro_fiber(ME_P);

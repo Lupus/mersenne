@@ -22,6 +22,7 @@
 #include <ev.h>
 #include <err.h>
 #include <assert.h>
+#include <utlist.h>
 
 #include <mersenne/proposer.h>
 #include <mersenne/proposer_prv.h>
@@ -67,6 +68,34 @@ static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 {
 	buf_copy(&instance->p2.v, buffer);
 	instance->client_value = 1;
+}
+
+static void pending_append(ME_P_ struct buffer *from)
+{
+	struct buffer *buf = malloc(sizeof(struct buffer));
+	buf_init(buf, malloc(from->size1), from->size1);
+	buf_copy(buf, from);
+	DL_APPEND(mctx->pxs.pro.pending, buf);
+}
+
+static int pending_shift(ME_P_ struct buffer *to)
+{
+	struct buffer *buf = mctx->pxs.pro.pending;
+	if(NULL == buf)
+		return 0;
+	DL_DELETE(mctx->pxs.pro.pending, buf);
+	buf_copy(to, buf);
+	free(buf->ptr);
+	free(buf);
+	return 1;
+}
+
+static void pending_unshift(ME_P_ struct buffer *from)
+{
+	struct buffer *buf = malloc(sizeof(struct buffer));
+	buf_init(buf, malloc(from->size1), from->size1);
+	buf_copy(buf, from);
+	DL_PREPEND(mctx->pxs.pro.pending, buf);
 }
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -219,12 +248,15 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(!instance->p2.v.empty) {
-				new_base.type = IE_A;
-				switch_instance(ME_A_ instance,
-						IS_P1_READY_WITH_VALUE,
-						&new_base);
+			if(instance->p2.v.empty) {
+				if(!pending_shift(ME_A_ &instance->p2.v))
+					break;
+				instance->client_value = 1;
+
 			}
+			new_base.type = IE_A;
+			switch_instance(ME_A_ instance, IS_P1_READY_WITH_VALUE,
+					&new_base);
 			break;
 		case IE_NV:
 			nv = container_of(base, struct ie_nv, b);
@@ -253,9 +285,8 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 			} else if(veql(instance)) {
 				//Do nothing here?
 			} else if(!veql(instance)) {
-				if(instance->client_value) {
-					//TODO: Push v2 back to pending list
-				}
+				if(instance->client_value)
+					pending_unshift(ME_A_ &instance->p2.v);
 				v1_to_v2(instance);
 				instance->client_value = 0;
 			}
@@ -311,9 +342,8 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 				if(v2_eql_to(instance, d->buffer)) {
 					//TODO: Client value delivered,
 					//TODO: inform it about this
-				} else {
-					//TODO: Push v2 back to pending list
-				}
+				} else
+					pending_unshift(ME_A_ &instance->p2.v);
 			}
 			ev_timer_stop(mctx->loop, &instance->timer);
 			adjust_window(ME_A);
@@ -438,8 +468,7 @@ static void do_client_value(ME_P_ struct buffer *buf)
 			return;
 		}
 	}
-	warnx("client value is discarded");
-	//TODO: add value to pending queue here
+	pending_append(ME_A_ buf);
 }
 
 static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
