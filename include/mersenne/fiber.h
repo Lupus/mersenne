@@ -39,7 +39,19 @@
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
 #define FBR_MAX_ARG_NUM 10 // 64 KB
 
-#define FBR_ARGC ((*mctx->fbr.sp)->argc)
+#ifdef  NDEBUG
+#define fbr_assert(expr)           ((void)(0))
+#else
+#define fbr_assert(expr)                                                                          \
+	do {                                                                                      \
+		__typeof__(expr) ex = (expr);                                                     \
+		if(ex) (void)(0);                                                                 \
+		else {                                                                            \
+			fbr_dump_stack(ME_A);                                                     \
+			__assert_fail (__STRING(expr), __FILE__, __LINE__, __ASSERT_FUNCTION);    \
+		}                                                                                 \
+	} while(0);
+#endif
 
 typedef void (*fbr_fiber_func_t)(ME_P);
 

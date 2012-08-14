@@ -19,7 +19,10 @@
 
  ********************************************************************/
 
+%#include <mersenne/buffer.h>
+%#include <mersenne/xdr.h>
+
 struct cl_message {
-	opaque value<>;
+	struct buffer value;
 };
 

@@ -1,4 +1,3 @@
-
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -19,17 +18,21 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#ifndef _BUFFER_H_
+#define _BUFFER_H_
 
-#ifndef _XDR_H_
-#define _XDR_H_
+#include <string.h>
 
-#include <mersenne/bitmask.h>
-#include <mersenne/buffer.h>
+struct buffer {
+	char *ptr;
+	unsigned int size1;
+	int empty;
+};
 
-typedef struct bm_mask * bm_mask_ptr;
-
-bool_t xdr_timeval(XDR *xdrs, struct timeval *tv);
-bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr);
-bool_t xdr_buffer(XDR *xdrs, struct buffer *buf);
+void buf_init(struct buffer *buf, char *ptr, size_t size);
+void buf_copy(struct buffer *to, struct buffer *from);
+void buf_share(struct buffer *to, struct buffer *from);
+int buf_cmp(struct buffer *a, struct buffer *b);
 
 #endif
+

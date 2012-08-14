@@ -27,6 +27,7 @@
 #include <mersenne/context.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/bitmask.h>
+#include <mersenne/buffer.h>
 
 #define PRO_INSTANCE_WINDOW 5
 #define MAX_PROC 100
@@ -49,14 +50,14 @@ struct pro_instance {
 	uint64_t b;
 	enum instance_state state;
 	struct {
-		char v[ME_MAX_XDR_MESSAGE_LEN];
-		uint32_t v_size;
+		struct buffer v;
+		char v_data[ME_MAX_XDR_MESSAGE_LEN];
 		uint64_t vb;
 		struct bm_mask *acks;
 	} p1;
 	struct {
-		char v[ME_MAX_XDR_MESSAGE_LEN];
-		uint32_t v_size;
+		struct buffer v;
+		char v_data[ME_MAX_XDR_MESSAGE_LEN];
 	} p2;
 	int client_value;
 	ev_timer timer;
@@ -87,14 +88,12 @@ struct ie_p {
 };
 
 struct ie_nv {
-	char *data;
-	int len;
+	struct buffer *buffer;
 	struct ie_base b;
 };
 
 struct ie_d {
-	char *data;
-	int len;
+	struct buffer *buffer;
 	struct ie_base b;
 };
 

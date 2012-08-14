@@ -35,8 +35,7 @@ static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 	data->type = ME_PAXOS_PROMISE;
 	data->me_paxos_msg_data_u.promise.i = r->iid;
 	data->me_paxos_msg_data_u.promise.b = r->b;
-	data->me_paxos_msg_data_u.promise.v.v_val = r->v;
-	data->me_paxos_msg_data_u.promise.v.v_len = r->v_size;
+	buf_share(&data->me_paxos_msg_data_u.promise.v, &r->v);
 	data->me_paxos_msg_data_u.promise.vb = r->vb;
 	msg_send_to(ME_A_ &msg, to->index);
 }
@@ -49,8 +48,7 @@ static void send_learn(ME_P_ struct acc_instance_record *r)
 	data->type = ME_PAXOS_LEARN;
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->b;
-	data->me_paxos_msg_data_u.learn.v.v_val = r->v;
-	data->me_paxos_msg_data_u.learn.v.v_len = r->v_size;
+	buf_share(&data->me_paxos_msg_data_u.learn.v, &r->v);
 	msg_send_all(ME_A_ &msg);
 }
 
@@ -82,6 +80,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 	struct acc_instance_record *r;
 	struct me_paxos_accept_data *data;
+	char *ptr;
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	HASH_FIND_IID(mctx->pxs.acc.records, &data->i, r);
@@ -94,9 +93,9 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		return;
 	}
 	r->b = data->b;
-	r->v = malloc(data->v.v_len);
-	memcpy(r->v, data->v.v_val, data->v.v_len);
-	r->v_size = data->v.v_len;
+	ptr = malloc(data->v.size1);
+	buf_init(&r->v, ptr, data->v.size1);
+	buf_copy(&r->v, &data->v);
 	printf("[ACCEPTOR] Accepted instance #%ld\n", data->i);
 	send_learn(ME_A_ r);
 }

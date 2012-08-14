@@ -21,6 +21,7 @@
 
 #include <ev.h>
 #include <err.h>
+#include <assert.h>
 
 #include <mersenne/proposer.h>
 #include <mersenne/proposer_prv.h>
@@ -45,32 +46,26 @@ static is_func_t * const state_table[IS_MAX] = {
 
 static int veql(struct pro_instance *instance)
 {
-	if(instance->p1.v_size != instance->p2.v_size)
-		return 0;
-	if(memcmp(instance->p1.v, instance->p2.v, instance->p1.v_size))
+	if(buf_cmp(&instance->p1.v, &instance->p2.v))
 		return 0;
 	return 1;
 }
 
-static int v2_eql_to(struct pro_instance *instance, char *data, int len)
+static int v2_eql_to(struct pro_instance *instance, struct buffer *buf)
 {
-	if(instance->p2.v_size != len)
-		return 0;
-	if(memcmp(instance->p2.v, data, len))
+	if(buf_cmp(&instance->p2.v, buf))
 		return 0;
 	return 1;
 }
 
 static void v1_to_v2(struct pro_instance *instance)
 {
-	memcpy(instance->p2.v, instance->p1.v, instance->p1.v_size);
-	instance->p2.v_size = instance->p1.v_size;
+	buf_copy(&instance->p2.v, &instance->p1.v);
 }
 
-static void set_client_v2(struct pro_instance *instance, char *data, int len)
+static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 {
-	memcpy(instance->p2.v, data, len);
-	instance->p2.v_size = len;
+	buf_copy(&instance->p2.v, buffer);
 	instance->client_value = 1;
 }
 
@@ -103,6 +98,8 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	ev_timer timer = instance->timer;
 	memset(instance, 0, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
+	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN);
+	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN);
 	instance->p1.acks = mask;
 	instance->timer = timer;
 	instance->iid = mctx->pxs.pro.max_iid++;
@@ -153,8 +150,7 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->type = ME_PAXOS_ACCEPT;
 	data->me_paxos_msg_data_u.accept.i = instance->iid;
 	data->me_paxos_msg_data_u.accept.b = instance->b;
-	data->me_paxos_msg_data_u.accept.v.v_len = instance->p2.v_size;
-	data->me_paxos_msg_data_u.accept.v.v_val = instance->p2.v;
+	buf_share(&data->me_paxos_msg_data_u.accept.v, &instance->p2.v);
 	printf("[PROPOSER] Sending accepts for instance %ld\n", instance->iid);
 	pxs_send_acceptors(ME_A_ &msg);
 }
@@ -171,8 +167,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	int b;
 	struct ie_p *p;
 	struct ie_base new_base;
-	int p_num;
-	int acc_maj;
+	int num;
 	switch(base->type) {
 		case IE_S:
 			instance->b = encode_ballot(ME_A_ 0);
@@ -183,17 +178,13 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
-			if(p->data->vb > instance->p1.vb) {
-				instance->p1.v_size = p->data->v.v_len;
-				memcpy(instance->p1.v, p->data->v.v_val,
-						p->data->v.v_len);
-			}
-			p_num = bm_hweight(instance->p1.acks);
+			if(p->data->vb > instance->p1.vb)
+				buf_copy(&instance->p1.v, &p->data->v);
+			num = bm_hweight(instance->p1.acks);
 			//puts("[PROPOSER] Got promise!");
-			acc_maj = pxs_acceptors_count(ME_A) / 2 + 1;
-			if(p_num >= acc_maj) {
+			if(pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
-				if(instance->p1.v_size) {
+				if(!instance->p1.v.empty) {
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_WITH_VALUE,
@@ -228,7 +219,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(instance->p2.v_size) {
+			if(!instance->p2.v.empty) {
 				new_base.type = IE_A;
 				switch_instance(ME_A_ instance,
 						IS_P1_READY_WITH_VALUE,
@@ -237,7 +228,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 			break;
 		case IE_NV:
 			nv = container_of(base, struct ie_nv, b);
-			set_client_v2(instance, nv->data, nv->len);
+			set_client_v2(instance, nv->buffer);
 			new_base.type = IE_A;
 			switch_instance(ME_A_ instance,
 					IS_P1_READY_WITH_VALUE,
@@ -256,7 +247,7 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 	struct ie_base new_base;
 	switch(base->type) {
 		case IE_R1:
-			if(0 == instance->p2.v_size) {
+			if(instance->p2.v.empty) {
 				v1_to_v2(instance);
 				instance->client_value = 0;
 			} else if(veql(instance)) {
@@ -317,7 +308,7 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_D:
 			d = container_of(base, struct ie_d, b);
 			if(instance->client_value) {
-				if(v2_eql_to(instance, d->data, d->len)) {
+				if(v2_eql_to(instance, d->buffer)) {
 					//TODO: Client value delivered,
 					//TODO: inform it about this
 				} else {
@@ -381,6 +372,8 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	int nbits = peer_count(ME_A);
 	instance->p1.acks = fbr_alloc(ME_A_ bm_size(nbits));
 	bm_init(instance->p1.acks, nbits);
+	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN);
+	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN);
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = ME_A;
 	//ev_timer_start(mctx->loop, &instance->timer);
@@ -430,15 +423,14 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 }
 
-static void do_client_value(ME_P_ char *data, int len)
+static void do_client_value(ME_P_ struct buffer *buf)
 {
 	struct ie_nv nv;
 	struct pro_instance *instance;
 	int i, j;
 	int start = mctx->pxs.pro.lowest_non_closed;
 	nv.b.type = IE_NV;
-	nv.data = data;
-	nv.len = len;
+	nv.buffer = buf;
 	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
@@ -450,13 +442,12 @@ static void do_client_value(ME_P_ char *data, int len)
 	//TODO: add value to pending queue here
 }
 
-static void do_delivered_value(ME_P_ uint64_t iid, char *data, int len)
+static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 {
 	struct ie_d d;
 	struct pro_instance *instance;
 	d.b.type = IE_D;
-	d.data = data;
-	d.len = len;
+	d.buffer = buffer;
 	instance = mctx->pxs.pro.instances + (iid % PRO_INSTANCE_WINDOW);
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
 }
@@ -466,8 +457,7 @@ void pro_fiber(ME_P)
 	struct me_message *msg;
 	struct me_peer *from;
 	struct fbr_call_info *info;
-	char *data;
-	int len;
+	struct buffer *buf;
 	uint64_t iid;
 
 	fbr_next_call_info(ME_A_ NULL);
@@ -480,23 +470,24 @@ start:
 
 		switch(info->argv[0].i) {
 			case FAT_ME_MESSAGE:
+				fbr_assert(3 == info->argc);
 				msg = info->argv[1].v;
 				from = info->argv[2].v;
 
 				do_message(ME_A_ msg, from);
 				break;
 			case FAT_PXS_CLIENT_VALUE:
-				data = info->argv[1].v;
-				len = info->argv[2].i;
+				fbr_assert(2 == info->argc);
+				buf = info->argv[1].v;
 
-				do_client_value(ME_A_ data, len);
+				do_client_value(ME_A_ buf);
 				break;
 			case FAT_PXS_DELIVERED_VALUE:
+				fbr_assert(3 == info->argc);
 				iid = info->argv[1].i;
-				data = info->argv[2].v;
-				len = info->argv[3].i;
+				buf = info->argv[2].v;
 
-				do_delivered_value(ME_A_ iid, data, len);
+				do_delivered_value(ME_A_ iid, buf);
 				break;
 			case FAT_QUIT:
 				goto fiber_exit;

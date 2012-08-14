@@ -32,8 +32,8 @@
 struct lea_instance {
 	uint64_t iid;
 	uint64_t b;
-	char v[ME_MAX_XDR_MESSAGE_LEN];
-	uint32_t v_size;
+	struct buffer v;
+	char v_data[ME_MAX_XDR_MESSAGE_LEN];
 	struct bm_mask *acks;
 	int closed;
 };

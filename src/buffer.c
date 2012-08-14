@@ -1,4 +1,3 @@
-
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -20,16 +19,33 @@
 
  ********************************************************************/
 
-#ifndef _XDR_H_
-#define _XDR_H_
-
-#include <mersenne/bitmask.h>
+#include <assert.h>
 #include <mersenne/buffer.h>
 
-typedef struct bm_mask * bm_mask_ptr;
+void buf_init(struct buffer *buf, char *ptr, size_t size)
+{
+	buf->ptr = ptr;
+	buf->size1 = size;
+	buf->empty = 1;
+}
 
-bool_t xdr_timeval(XDR *xdrs, struct timeval *tv);
-bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr);
-bool_t xdr_buffer(XDR *xdrs, struct buffer *buf);
+void buf_copy(struct buffer *to, struct buffer *from)
+{
+	to->size1 = from->size1;
+	memcpy(to->ptr, from->ptr, from->size1);
+	to->empty = 0;
+}
 
-#endif
+void buf_share(struct buffer *to, struct buffer *from)
+{
+	to->size1 = from->size1;
+	to->ptr = from->ptr;
+	to->empty = 0;
+}
+
+int buf_cmp(struct buffer *a, struct buffer *b)
+{
+	if(a->size1 != b->size1)
+		return a->size1 - b->size1;
+	return(memcmp(a->ptr, b->ptr, b->size1));
+}

@@ -33,14 +33,13 @@ static void do_deliver(ME_P_ struct lea_instance *instance)
 {
 	char buf[1000];
 
-	snprintf(buf, instance->v_size + 1, "%s", instance->v);
+	snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
 	fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n", instance->iid, instance->b, buf);
 	if(ldr_is_leader(ME_A))
 		fbr_call(ME_A_ mctx->fiber_proposer, 3,
 				fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 				fbr_arg_i(instance->iid),
-				fbr_arg_v(instance->v),
-				fbr_arg_i(instance->v_size)
+				fbr_arg_v(&instance->v)
 			);
 }
 
@@ -56,10 +55,10 @@ static void try_deliver(ME_P)
 		do_deliver(ME_A_ instance);
 		mctx->pxs.lea.first_non_delivered = i + 1;
 
-		instance->v_size = 0;
+		instance->v.empty = 1;
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
-
+		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
 	}
 }
 
@@ -80,17 +79,15 @@ static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	instance = mctx->pxs.lea.instances + (data->i % LEA_INSTANCE_WINDOW);
 	if(instance->closed)
 		return;
-	if(!instance->v_size) {
+	if(instance->v.empty) {
 		instance->iid = data->i;
 		instance->b = data->b;
-		memcpy(instance->v, data->v.v_val, data->v.v_len);
-		instance->v_size = data->v.v_len;
+		buf_copy(&instance->v, &data->v);
 	} else {
 		//TODO: Wrap in some debug #ifdef?
 		assert(instance->iid == data->i);
 		assert(instance->b == data->b);
-		assert(instance->v_size == data->v.v_len);
-		assert(0 == memcmp(instance->v, data->v.v_val, data->v.v_len));
+		assert(0 == buf_cmp(&instance->v, &data->v));
 	}
 	bm_set_bit(instance->acks, from->index, 1);
 	num = bm_hweight(instance->acks);
@@ -116,6 +113,7 @@ void lea_fiber(ME_P)
 		instance = mctx->pxs.lea.instances + i;
 		instance->acks = fbr_alloc(ME_A_ bm_size(nbits));
 		bm_init(instance->acks, nbits);
+		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
 	}
 
 start:

@@ -22,6 +22,7 @@
 
 #include <rpc/xdr.h>
 #include <mersenne/xdr.h>
+#include <mersenne/me_protocol.h>
 
 bool_t xdr_timeval(XDR *xdrs, struct timeval *tv)
 {
@@ -48,4 +49,9 @@ bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr)
 	if(!xdr_opaque(xdrs, (caddr_t)(*pptr)->mask, (*pptr)->size * sizeof(unsigned long)))
 		return FALSE;
 	return TRUE;
+}
+
+bool_t xdr_buffer(XDR *xdrs, struct buffer *buf)
+{
+	return xdr_bytes(xdrs, &buf->ptr, &buf->size1, ME_MAX_XDR_MESSAGE_LEN);
 }

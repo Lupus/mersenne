@@ -25,6 +25,7 @@
 #include <uthash.h>
 
 #include <mersenne/context_fwd.h>
+#include <mersenne/buffer.h>
 
 struct me_peer;
 struct me_message;
@@ -32,8 +33,7 @@ struct me_message;
 struct acc_instance_record {
 	uint64_t iid;
 	uint64_t b;
-	char *v;
-	uint32_t v_size;
+	struct buffer v;
 	uint64_t vb;
 
 	UT_hash_handle hh;
