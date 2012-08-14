@@ -86,7 +86,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 void pxs_fiber_init(ME_P)
 {
 	mctx->fiber_acceptor = fbr_create(ME_A_ "acceptor", acc_fiber);
-	mctx->fiber_proposer = fbr_create(ME_A_ "proposer", pro_fiber);
+	mctx->fiber_proposer = NULL;
 	mctx->fiber_learner = fbr_create(ME_A_ "learner", lea_fiber);
 
 	fbr_call(ME_A_ mctx->fiber_acceptor, 0);

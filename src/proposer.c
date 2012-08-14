@@ -502,11 +502,15 @@ fiber_exit:
 
 void pro_start(ME_P)
 {
-	fbr_reset(ME_A_ mctx->fiber_proposer);
+	fbr_assert(NULL == mctx->fiber_proposer);
+	mctx->fiber_proposer = fbr_create(ME_A_ "proposer", pro_fiber);
 	fbr_call(ME_A_ mctx->fiber_proposer, 0);
 }
 
 void pro_stop(ME_P)
 {
+	fbr_assert(NULL != mctx->fiber_proposer);
 	fbr_call(ME_A_ mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
+	fbr_reclaim(ME_A_ mctx->fiber_proposer);
+	mctx->fiber_proposer = NULL;
 }

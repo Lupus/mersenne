@@ -76,7 +76,6 @@ struct fbr_fiber {
 	char *stack;
 	struct fbr_call_info *call_list;
 	struct obstack obstack;
-	struct obstack args_obstack;
 	ev_io w_io;
 	ev_timer w_timer;
 	int reclaimed;
@@ -108,8 +107,8 @@ struct fbr_context {
 
 void fbr_init(ME_P);
 struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P));
-void fbr_reset(ME_P_ struct fbr_fiber *fiber);
 void fbr_reclaim(ME_P_ struct fbr_fiber *fiber);
+int fbr_is_reclaimed(ME_P_ struct fbr_fiber *fiber);
 struct fbr_fiber_arg fbr_arg_i(int i);
 struct fbr_fiber_arg fbr_arg_v(void *v);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
