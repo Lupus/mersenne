@@ -94,7 +94,6 @@ static void fiber_prepare(ME_P_ struct fbr_fiber *fiber)
 	obstack_init(&fiber->obstack);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
-	fiber->call_list = NULL;
 	fiber->w_io.data = ME_A;
 	fiber->w_timer.data = ME_A;
 	fiber->reclaimed = 0;
@@ -376,6 +375,7 @@ struct fbr_fiber * fbr_create(ME_P_ const char *name, void (*func) (ME_P))
 	}
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, ME_A, fiber->stack,
 			FBR_STACK_SIZE);
+	fiber->call_list = NULL;
 	fiber->name = name;
 	fiber->func = func;
 	return fiber;
