@@ -29,6 +29,7 @@
 #include <obstack.h>
 #include <ev.h>
 #include <coro.h>
+#include <uthash.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/util.h>
 
@@ -62,6 +63,12 @@ struct fbr_fiber_arg {
 	};
 };
 
+struct fbr_multicall {
+	struct fbr_fiber *fibers;
+	int mid;
+	UT_hash_handle hh;
+};
+
 struct fbr_call_info {
 	int argc;
 	struct fbr_fiber_arg argv[FBR_MAX_ARG_NUM];
@@ -80,7 +87,7 @@ struct fbr_fiber {
 	ev_timer w_timer;
 	int reclaimed;
 
-	struct fbr_fiber *next;
+	struct fbr_fiber *next, *prev;
 };
 
 struct fbr_stack_item {
@@ -93,6 +100,7 @@ struct fbr_context {
 	struct fbr_stack_item *sp;
 	struct fbr_fiber root;
 	struct fbr_fiber *reclaimed;
+	struct fbr_multicall *multicalls;
 };
 
 #define FBR_CONTEXT_INITIALIZER { \
@@ -103,6 +111,7 @@ struct fbr_context {
 		.name = "root", \
 	}, \
 	.reclaimed = NULL, \
+	.multicalls = NULL, \
 }
 
 void fbr_init(ME_P);
@@ -111,7 +120,11 @@ void fbr_reclaim(ME_P_ struct fbr_fiber *fiber);
 int fbr_is_reclaimed(ME_P_ struct fbr_fiber *fiber);
 struct fbr_fiber_arg fbr_arg_i(int i);
 struct fbr_fiber_arg fbr_arg_v(void *v);
+void fbr_subscribe(ME_P_ int mid);
+void fbr_unsubscribe(ME_P_ int mid);
+void fbr_unsubscribe_all(ME_P);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
+void fbr_multicall(ME_P_ int mid, int argnum, ...);
 void fbr_yield(ME_P);
 void * fbr_alloc(ME_P_ size_t size);
 void fbr_destroy(ME_P_ struct fbr_fiber *fiber);
