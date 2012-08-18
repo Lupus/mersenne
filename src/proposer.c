@@ -400,7 +400,7 @@ static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 static void init_instance(ME_P_ struct pro_instance *instance)
 {
 	int nbits = peer_count(ME_A);
-	instance->p1.acks = fbr_alloc(ME_A_ bm_size(nbits));
+	instance->p1.acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 	bm_init(instance->p1.acks, nbits);
 	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN);
 	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN);
@@ -423,7 +423,7 @@ static void proposer_init(ME_P)
 	size_t size = sizeof(struct pro_instance) * PRO_INSTANCE_WINDOW;
 	base.type = IE_I;
 	mctx->pxs.pro.max_iid = 0;
-	mctx->pxs.pro.instances = fbr_alloc(ME_A_ size);
+	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
 	memset(mctx->pxs.pro.instances, 0, size);
 	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
@@ -481,8 +481,9 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
 }
 
-void pro_fiber(ME_P)
+void pro_fiber(struct fbr_context *fiber_context)
 {
+	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
 	struct fbr_call_info *info;
@@ -490,33 +491,34 @@ void pro_fiber(ME_P)
 	struct buffer *buf;
 	uint64_t iid;
 
-	fbr_next_call_info(ME_A_ NULL);
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_next_call_info(&mctx->fbr, NULL);
 
 	proposer_init(ME_A);
 
-	learner = fbr_create(ME_A_ "proposer/learner", lea_fiber);
-	fbr_call(ME_A_ learner, 1, fbr_arg_i(0));
+	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber);
+	fbr_call(&mctx->fbr, learner, 1, fbr_arg_i(0));
 
 start:
-	fbr_yield(ME_A);
-	while(fbr_next_call_info(ME_A_ &info)) {
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
 
 		switch(info->argv[0].i) {
 			case FAT_ME_MESSAGE:
-				fbr_assert(3 == info->argc);
+				fbr_assert(&mctx->fbr, 3 == info->argc);
 				msg = info->argv[1].v;
 				from = info->argv[2].v;
 
 				do_message(ME_A_ msg, from);
 				break;
 			case FAT_PXS_CLIENT_VALUE:
-				fbr_assert(2 == info->argc);
+				fbr_assert(&mctx->fbr, 2 == info->argc);
 				buf = info->argv[1].v;
 
 				do_client_value(ME_A_ buf);
 				break;
 			case FAT_PXS_DELIVERED_VALUE:
-				fbr_assert(3 == info->argc);
+				fbr_assert(&mctx->fbr, 3 == info->argc);
 				iid = info->argv[1].i;
 				buf = info->argv[2].v;
 
@@ -526,24 +528,24 @@ start:
 				goto fiber_exit;
 		}
 
-		fbr_free_call_info(ME_A_ info);
+		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;
 fiber_exit:
 	proposer_shutdown(ME_A);
-	fbr_reclaim(ME_A_ learner);
+	fbr_reclaim(&mctx->fbr, learner);
 }
 
 void pro_start(ME_P)
 {
-	fbr_assert(NULL == mctx->fiber_proposer);
-	mctx->fiber_proposer = fbr_create(ME_A_ "proposer", pro_fiber);
-	fbr_call(ME_A_ mctx->fiber_proposer, 0);
+	fbr_assert(&mctx->fbr, NULL == mctx->fiber_proposer);
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber);
+	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
 }
 
 void pro_stop(ME_P)
 {
-	fbr_assert(NULL != mctx->fiber_proposer);
-	fbr_call(ME_A_ mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
+	fbr_assert(&mctx->fbr, NULL != mctx->fiber_proposer);
+	fbr_call(&mctx->fbr, mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
 	mctx->fiber_proposer = NULL;
 }

@@ -22,12 +22,12 @@
 #include <err.h>
 
 #include <mersenne/learner.h>
-#include <mersenne/fiber.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
 #include <mersenne/message.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/fiber_args.h>
+#include <mersenne/util.h>
 
 #define LEA_INSTANCE_WINDOW 5
 
@@ -53,7 +53,7 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 	snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
 	fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n",
 			instance->iid, instance->b, buf);
-	fbr_call(ME_A_ context->owner, 3,
+	fbr_call(&mctx->fbr, context->owner, 3,
 			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 			fbr_arg_i(instance->iid),
 			fbr_arg_v(&instance->v)
@@ -115,45 +115,48 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 }
 
 
-void lea_fiber(ME_P)
+void lea_fiber(struct fbr_context *fiber_context)
 {
+	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
 	struct me_paxos_message *pmsg;
 	struct fbr_call_info *info;
 	int i;
 	struct lea_instance *instance;
-	int nbits = peer_count(ME_A);
+	int nbits;
 	struct learner_context context;
 
-	fbr_next_call_info(ME_A_ &info);
-	fbr_assert(1 == info->argc);
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	nbits = peer_count(ME_A);
+	fbr_next_call_info(&mctx->fbr, &info);
+	fbr_assert(&mctx->fbr, 1 == info->argc);
 	context.first_non_delivered = info->argv[0].i;
 	context.owner = info->caller;
-	fbr_free_call_info(ME_A_ info);
+	fbr_free_call_info(&mctx->fbr, info);
 
-	fbr_subscribe(ME_A_ FMT_LEARNER);
+	fbr_subscribe(&mctx->fbr, FMT_LEARNER);
 
-	context.instances = fbr_alloc(ME_A_ LEA_INSTANCE_WINDOW * sizeof(struct lea_instance));
+	context.instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW * sizeof(struct lea_instance));
 
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
 		instance = context.instances + i;
-		instance->acks = fbr_alloc(ME_A_ bm_size(nbits));
+		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 		bm_init(instance->acks, nbits);
 		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
 	}
 
 start:
-	fbr_yield(ME_A);
-	while(fbr_next_call_info(ME_A_ &info)) {
-		fbr_assert(FAT_ME_MESSAGE == info->argv[0].i);
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
+		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[2].v;
 
 		pmsg = &msg->me_message_u.paxos_message;
-		fbr_assert(ME_PAXOS_LEARN == pmsg->data.type);
+		fbr_assert(&mctx->fbr, ME_PAXOS_LEARN == pmsg->data.type);
 		do_learn(ME_A_ &context, pmsg, from);
-		fbr_free_call_info(ME_A_ info);
+		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;
 }

@@ -25,8 +25,8 @@
 #include <mersenne/util.h>
 #include <mersenne/message.h>
 #include <mersenne/peers.h>
+#include <mersenne/leader.h>
 #include <mersenne/proposer.h>
-#include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
 
 
@@ -59,14 +59,14 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		case ME_PAXOS_PREPARE:
 		case ME_PAXOS_ACCEPT:
 			if(mctx->me->pxs.is_acceptor)
-				fbr_call(ME_A_ mctx->fiber_acceptor, 3,
+				fbr_call(&mctx->fbr, mctx->fiber_acceptor, 3,
 						fbr_arg_i(FAT_ME_MESSAGE),
 						fbr_arg_v(msg),
 						fbr_arg_v(from)
 					);
 			break;
 		case ME_PAXOS_LEARN:
-			fbr_multicall(ME_A_ FMT_LEARNER, 3,
+			fbr_multicall(&mctx->fbr, FMT_LEARNER, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(msg),
 					fbr_arg_v(from)
@@ -74,7 +74,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			/* Falltrhough */
 		case ME_PAXOS_PROMISE:
 			if(ldr_is_leader(ME_A))
-				fbr_call(ME_A_ mctx->fiber_proposer, 3,
+				fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,
 						fbr_arg_i(FAT_ME_MESSAGE),
 						fbr_arg_v(msg),
 						fbr_arg_v(from)
@@ -85,8 +85,8 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 
 void pxs_fiber_init(ME_P)
 {
-	mctx->fiber_acceptor = fbr_create(ME_A_ "acceptor", acc_fiber);
+	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber);
 	mctx->fiber_proposer = NULL;
 
-	fbr_call(ME_A_ mctx->fiber_acceptor, 0);
+	fbr_call(&mctx->fbr, mctx->fiber_acceptor, 0);
 }

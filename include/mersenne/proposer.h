@@ -23,6 +23,7 @@
 #define _PROPOSER_H_
 
 #include <stdint.h>
+#include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
 
@@ -44,7 +45,7 @@ struct pro_context {
 	.pending_size = 0, \
 }
 
-void pro_fiber(ME_P);
+void pro_fiber(struct fbr_context *fiber_context);
 void pro_start(ME_P);
 void pro_stop(ME_P);
 

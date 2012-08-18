@@ -25,6 +25,7 @@
 #include <mersenne/context.h>
 #include <mersenne/message.h>
 #include <mersenne/fiber_args.h>
+#include <mersenne/util.h>
 
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)
@@ -100,18 +101,20 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	send_learn(ME_A_ r);
 }
 
-void acc_fiber(ME_P)
+void acc_fiber(struct fbr_context *fiber_context)
 {
+	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
 	struct me_paxos_message *pmsg;
 	struct fbr_call_info *info;
 
-	fbr_next_call_info(ME_A_ NULL);
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_next_call_info(&mctx->fbr, NULL);
 
 start:
-	fbr_yield(ME_A);
-	while(fbr_next_call_info(ME_A_ &info)) {
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
 		assert(FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[2].v;

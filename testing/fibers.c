@@ -21,22 +21,21 @@
 
 #include <stdio.h>
 #include <assert.h>
-#include <mersenne/fiber.h>
-#include <mersenne/context.h>
+#include <evfibers/fiber.h>
 
-void coro_io_test(ME_P)
+void coro_io_test(FBR_P)
 {
 	char buf[11] = {0};
 	int fd = STDIN_FILENO;
 	for(;;) {
-		fbr_read_all(ME_A_ fd, buf, 10, NULL);
-		fbr_write(ME_A_ STDOUT_FILENO, "read: ", 6, NULL);
-		fbr_write(ME_A_ STDOUT_FILENO, buf, 10, NULL);
-		fbr_write(ME_A_ STDOUT_FILENO, "\n", 1, NULL);
+		fbr_read_all(FBR_A_ fd, buf, 10, NULL);
+		fbr_write(FBR_A_ STDOUT_FILENO, "read: ", 6, NULL);
+		fbr_write(FBR_A_ STDOUT_FILENO, buf, 10, NULL);
+		fbr_write(FBR_A_ STDOUT_FILENO, "\n", 1, NULL);
 	}
 }
 
-void coro_timer_test(ME_P)
+void coro_timer_test(FBR_P)
 {
 	int i = 0;
 	struct fbr_call_info *info = NULL;
@@ -45,18 +44,18 @@ void coro_timer_test(ME_P)
 	const int buf_size = 256;
 	char buf[buf_size];
 
-	assert(1 == fbr_next_call_info(ME_A_ &info));
+	assert(1 == fbr_next_call_info(FBR_A_ &info));
 	assert(1 == info->argc);
 	timer_interval = *(ev_tstamp *)info->argv[0].v;
 	printer = info->caller;
 	for(;;) {
 		snprintf(buf, buf_size, "Timer #%d\n", i++);
-		fbr_call(ME_A_ printer, 1, fbr_arg_v(buf));
-		fbr_sleep(ME_A_ timer_interval);
+		fbr_call(FBR_A_ printer, 1, fbr_arg_v(buf));
+		fbr_sleep(FBR_A_ timer_interval);
 	}
 }
 
-void coro_test(ME_P)
+void coro_test(FBR_P)
 {
 	int i;
 	struct fbr_fiber *io_fiber;
@@ -64,36 +63,35 @@ void coro_test(ME_P)
 	struct fbr_call_info *info;
 	ev_tstamp timer_interval = 5.5;
 
-	io_fiber = fbr_create(ME_A_ "io_test", coro_io_test);
-	fbr_call(ME_A_ io_fiber, 0);
-
-	timer_fiber = fbr_create(ME_A_ "timer_test", coro_timer_test);
-	fbr_call(ME_A_ timer_fiber, 1, fbr_arg_v(&timer_interval));
+	io_fiber = fbr_create(FBR_A_ "io_test", coro_io_test);
+	fbr_call(FBR_A_ io_fiber, 0);
+	
+	timer_fiber = fbr_create(FBR_A_ "timer_test", coro_timer_test);
+	fbr_call(FBR_A_ timer_fiber, 1, fbr_arg_v(&timer_interval));
 
 	for(i = 0;;i++) {
-		while(fbr_next_call_info(ME_A_ &info)) {
+		while(fbr_next_call_info(FBR_A_ &info)) {
 			printf("%d: %s\n", i++, (char *)info->argv[0].v);
-			fbr_yield(ME_A);
+			fbr_yield(FBR_A);
 		}
 	}
 }
 
 int main(int argc, char *argv[]) {
-	struct me_context context = ME_CONTEXT_INITIALIZER;
-	struct me_context *mctx = &context;
+	struct fbr_context context;
+	struct fbr_context *fctx = &context;
 	struct fbr_fiber *fiber;
+	context._opaque_context_data_[0] = 'x';
 
-	context.loop = EV_DEFAULT;
+	fbr_init(FBR_A_ EV_DEFAULT);
+	fiber = fbr_create(FBR_A_ "coro_test", coro_test);
 
-	fbr_init(ME_A);
-	fiber = fbr_create(ME_A_ "coro_test", coro_test);
-
-	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));
-	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Hello, you fucker!"));
-	fbr_call(ME_A_ fiber, 1, fbr_arg_v("Blah, blah, blah!"));
+	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));
+	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Hello, you fucker!"));
+	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Blah, blah, blah!"));
 
 
-	ev_loop(context.loop, 0);
+	ev_loop(EV_DEFAULT, 0);
 
 	return 0;
 }

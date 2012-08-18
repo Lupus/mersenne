@@ -18,19 +18,61 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
-#ifndef _UTIL_H_
-#define _UTIL_H_
+
+#ifndef _FIBER_PRIVATE_H_
+#define _FIBER_PRIVATE_H_
+
+#define _FBR_NO_CTX_STUB
+#include <evfibers/fiber.h>
+#include <evfibers_private/trace.h>
+#include <coro.h>
+#include <uthash.h>
+#include <obstack.h>
+
+#define obstack_chunk_alloc malloc
+#define obstack_chunk_free free
+
+#define FBR_CALL_STACK_SIZE 16
+#define FBR_STACK_SIZE 64 * 1024 // 64 KB
+#define FBR_MAX_ARG_NUM 10
 
 #define container_of(ptr, type, member) ({            \
  const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
  (type *)( (char *)__mptr - offsetof(type,member) );})
 
+struct fbr_multicall {
+	struct fbr_fiber *fibers;
+	int mid;
+	UT_hash_handle hh;
+};
 
-#define max(a,b) \
-   ({ __typeof__ (a) _a = (a); \
-       __typeof__ (b) _b = (b); \
-     _a > _b ? _a : _b; })
+struct fbr_fiber {
+	const char *name;
+	fbr_fiber_func_t func;
+	coro_context ctx;
+	char *stack;
+	struct fbr_call_info *call_list;
+	struct obstack obstack;
+	ev_io w_io;
+	ev_timer w_timer;
+	int reclaimed;
 
-void make_socket_non_blocking(int fd);
+	struct fbr_fiber *next, *prev;
+};
+
+struct fbr_stack_item {
+	struct fbr_fiber *fiber;
+	struct trace_info tinfo;
+};
+
+struct fbr_context {
+	struct fbr_stack_item stack[FBR_CALL_STACK_SIZE];
+	struct fbr_stack_item *sp;
+	struct fbr_fiber root;
+	struct fbr_fiber *reclaimed;
+	struct fbr_multicall *multicalls;
+	struct ev_loop *loop;
+};
 
 #endif
+

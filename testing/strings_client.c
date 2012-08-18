@@ -60,7 +60,6 @@ int main(int argc, char *argv[]) {
 		xdrrec_create(&xdrs, 0, 0, (char *)&fd, NULL, writeit);
 		xdrs.x_op = XDR_ENCODE;
 		buf_init(&msg.value, buf2, strlen(buf2) - 1);
-		printf("size: %u\n", msg.value.size1);
 		if(!xdr_cl_message(&xdrs, &msg))
 			err(EXIT_FAILURE, "unable to encode a client message");
 		xdrrec_endofrecord(&xdrs, TRUE);

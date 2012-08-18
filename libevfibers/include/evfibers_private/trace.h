@@ -19,13 +19,19 @@
 
  ********************************************************************/
 
-#ifndef _CLIENT_H_
-#define _CLIENT_H_
+#ifndef _TRACE_PRIVATE_H_
+#define _TRACE_PRIVATE_H_
 
-#include <evfibers/fiber.h>
-#include <mersenne/context_fwd.h>
+#define TRACE_SIZE 16
 
-void clt_fiber(struct fbr_context *fiber_context);
+struct trace_info {
+       void *array[TRACE_SIZE];
+       size_t size;
+};
+
+void fill_trace_info(struct trace_info *info);
+void print_trace_info(struct trace_info *info);
 
 #endif
+
 

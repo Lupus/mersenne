@@ -18,14 +18,21 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#include <stdlib.h>
+#include <stdio.h>
+#include <execinfo.h>
+#include <evfibers_private/trace.h>
 
-#ifndef _CLIENT_H_
-#define _CLIENT_H_
+void fill_trace_info(struct trace_info *info)
+{
+	info->size = backtrace(info->array, TRACE_SIZE);
+}
 
-#include <evfibers/fiber.h>
-#include <mersenne/context_fwd.h>
-
-void clt_fiber(struct fbr_context *fiber_context);
-
-#endif
-
+void print_trace_info(struct trace_info *info)
+{
+	size_t i;
+	char **strings = backtrace_symbols(info->array, info->size);
+	for (i = 0; i < info->size; i++)
+		fprintf(stderr, "%s\n", strings[i]);
+	free(strings);
+}

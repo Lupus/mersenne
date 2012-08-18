@@ -22,8 +22,9 @@
 #ifndef _LEARNER_H_
 #define _LEARNER_H_
 
+#include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 
-void lea_fiber(ME_P);
+void lea_fiber(struct fbr_context *fiber_context);
 
 #endif

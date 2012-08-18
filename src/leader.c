@@ -24,12 +24,12 @@
 #include <err.h>
 #include <assert.h>
 
+#include <evfibers/fiber.h>
 #include <mersenne/leader.h>
 #include <mersenne/context.h>
 #include <mersenne/proposer.h>
 #include <mersenne/vars.h>
 #include <mersenne/util.h>
-#include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/fiber_args.strenum.h>
 
@@ -358,13 +358,15 @@ int ldr_is_leader(ME_P)
 	return mctx->ldr.leader == mctx->me->index;
 }
 
-void ldr_fiber(ME_P)
+void ldr_fiber(struct fbr_context *fiber_context)
 {
+	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
 	struct fbr_call_info *info;
 	
-	fbr_next_call_info(ME_A_ NULL);
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_next_call_info(&mctx->fbr, NULL);
 
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
 			TIME_DELTA / 1000.);
@@ -374,9 +376,9 @@ void ldr_fiber(ME_P)
 	start_round(ME_A_ 0);
 
 start:
-	fbr_yield(ME_A);
-	while(fbr_next_call_info(ME_A_ &info)) {
-		fbr_assert(FAT_ME_MESSAGE == info->argv[0].i);
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
+		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[1].v;
 

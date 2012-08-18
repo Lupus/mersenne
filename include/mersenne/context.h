@@ -24,9 +24,9 @@
 
 #include <ev.h>
 
+#include <evfibers/fiber.h>
 #include <mersenne/leader.h>
 #include <mersenne/paxos.h>
-#include <mersenne/fiber.h>
 #include <mersenne/context_fwd.h>
 
 struct me_peer;
@@ -56,7 +56,6 @@ struct me_context {
 	.me = NULL, \
 	.ldr = LDR_CONTEXT_INITIALIZER, \
 	.pxs = PXS_CONTEXT_INITIALIZER, \
-	.fbr = FBR_CONTEXT_INITIALIZER, \
 	.fiber_main = NULL, \
 	.fiber_leader = NULL, \
 	.fiber_proposer = NULL, \

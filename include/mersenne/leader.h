@@ -22,6 +22,7 @@
 #ifndef _LEADER_H_
 #define _LEADER_H_
 
+#include <evfibers/fiber.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/peers.h>
@@ -40,7 +41,7 @@ struct ldr_context {
 	.delta_count = 0, \
 }
 
-void ldr_fiber(ME_P);
+void ldr_fiber(struct fbr_context *fiber_context);
 int ldr_is_leader(ME_P);
 
 #endif

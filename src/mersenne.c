@@ -40,7 +40,6 @@
 #include <mersenne/vars.h>
 #include <mersenne/paxos.h>
 #include <mersenne/util.h>
-#include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/client.h>
 
@@ -70,7 +69,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		err(EXIT_FAILURE, "unable to decode a message");
 	switch(msg.super_type) {
 		case ME_LEADER:
-			fbr_call(ME_A_ mctx->fiber_leader, 3,
+			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(&msg),
 					fbr_arg_v(p)
@@ -83,15 +82,17 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
 }
 
-static void fiber_main(ME_P)
+static void fiber_main(struct fbr_context *fiber_context)
 {
+	struct me_context *mctx;
 	int nbytes;
 	struct sockaddr client_addr;
 	socklen_t client_addrlen = sizeof(client_addr);
 	char msgbuf[MSGBUFSIZE];
 	
+	mctx = container_of(fiber_context, struct me_context, fbr);
 	for(;;) {
-		nbytes = fbr_recvfrom(ME_A_ mctx->fd, msgbuf, MSGBUFSIZE, 0,
+		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf, MSGBUFSIZE, 0,
 				&client_addr, &client_addrlen);
 		if (nbytes < 0 && errno != EINTR)
 				err(1, "recvfrom");
@@ -165,16 +166,16 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
 
-	fbr_init(ME_A);
+	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);
 
-	mctx->fiber_main = fbr_create(ME_A_ "main", fiber_main);
-	mctx->fiber_leader = fbr_create(ME_A_ "leader", ldr_fiber);
-	mctx->fiber_client = fbr_create(ME_A_ "client", clt_fiber);
+	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main);
+	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber);
+	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber);
 
-	fbr_call(ME_A_ mctx->fiber_main, 0);
-	fbr_call(ME_A_ mctx->fiber_leader, 0);
-	fbr_call(ME_A_ mctx->fiber_client, 0);
+	fbr_call(&mctx->fbr, mctx->fiber_main, 0);
+	fbr_call(&mctx->fbr, mctx->fiber_leader, 0);
+	fbr_call(&mctx->fbr, mctx->fiber_client, 0);
 
 	// now wait for events to arrive
 	printf("Starting main loop\n");

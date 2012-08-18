@@ -24,6 +24,7 @@
 
 #include <uthash.h>
 
+#include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
 
@@ -47,6 +48,6 @@ struct acc_context {
 	.records = NULL, \
 }
 
-void acc_fiber(ME_P);
+void acc_fiber(struct fbr_context *fiber_context);
 
 #endif
