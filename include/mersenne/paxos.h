@@ -45,13 +45,11 @@ struct pxs_peer_info {
 struct pxs_context {
 	struct acc_context acc;
 	struct pro_context pro;
-	struct lea_context lea;
 };
 
 #define PXS_CONTEXT_INITIALIZER { \
 	.acc = ACC_CONTEXT_INITIALIZER, \
 	.pro = PRO_CONTEXT_INITIALIZER, \
-	.lea = LEA_CONTEXT_INITIALIZER, \
 }
 
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from);

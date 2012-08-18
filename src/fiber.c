@@ -62,10 +62,27 @@ static void ev_wakeup_timer(EV_P_ ev_timer *w, int event)
 	fbr_call(ME_A_ fiber, 0);
 }
 
+static inline int ptrcmp(void *p1, void *p2)
+{
+	return !(p1 == p2);
+}
+
+static void unsubscribe_all(ME_P_ struct fbr_fiber *fiber)
+{
+	struct fbr_multicall *call;
+	struct fbr_fiber *tmp;
+	for(call=mctx->fbr.multicalls; call != NULL; call=call->hh.next) {
+		DL_SEARCH(call->fibers, tmp, fiber, ptrcmp);
+		if(tmp == fiber)
+			DL_DELETE(call->fibers, fiber);
+	}
+}
+
 static void fiber_cleanup(ME_P_ struct fbr_fiber *fiber)
 {
 	struct fbr_call_info *elt, *tmp;
 	//coro_destroy(&fiber->ctx);
+	unsubscribe_all(ME_A_ fiber);
 	ev_io_stop(mctx->loop, &fiber->w_io);
 	ev_timer_stop(mctx->loop, &fiber->w_timer);
 	obstack_free(&fiber->obstack, NULL);
@@ -130,6 +147,8 @@ static struct fbr_multicall * get_multicall(ME_P_ int mid)
 	HASH_FIND_INT(mctx->fbr.multicalls, &mid, call);
 	if(NULL == call) {
 		call = malloc(sizeof(struct fbr_multicall));
+		call->fibers = NULL;
+		call->mid = mid;
 		HASH_ADD_INT(mctx->fbr.multicalls, mid, call);
 	}
 	return call;
@@ -144,22 +163,21 @@ void fbr_subscribe(ME_P_ int mid)
 void fbr_unsubscribe(ME_P_ int mid)
 {
 	struct fbr_multicall *call = get_multicall(ME_A_ mid);
-	DL_DELETE(call->fibers, CURRENT_FIBER);
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	struct fbr_fiber *tmp;
+	DL_SEARCH(call->fibers, tmp, fiber, ptrcmp);
+	if(tmp == fiber)
+		DL_DELETE(call->fibers, fiber);
 }
 
 void fbr_unsubscribe_all(ME_P)
 {
-    struct fbr_multicall *call;
-
-    for(call=mctx->fbr.multicalls; call != NULL; call=call->hh.next) {
-	DL_DELETE(call->fibers, CURRENT_FIBER);
-    }
+	unsubscribe_all(ME_A_ CURRENT_FIBER);
 }
 
-void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
+void fbr_vcall(ME_P_ struct fbr_fiber *callee, int argnum, va_list ap)
 {
 	struct fbr_fiber *caller = mctx->fbr.sp->fiber;
-	va_list ap;
 	int i;
 	struct fbr_call_info *info;
 	
@@ -173,14 +191,20 @@ void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
 	info = malloc(sizeof(struct fbr_call_info));
 	info->caller = caller;
 	info->argc = argnum;
-	va_start(ap, argnum);
 	for(i = 0; i < argnum; i++)
 		info->argv[i] = va_arg(ap, struct fbr_fiber_arg);
-	va_end(ap);
 
 	DL_APPEND(callee->call_list, info);
 
 	coro_transfer(&caller->ctx, &callee->ctx);
+}
+
+void fbr_call(ME_P_ struct fbr_fiber *callee, int argnum, ...)
+{
+	va_list ap;
+	va_start(ap, argnum);
+	fbr_vcall(ME_A_ callee, argnum, ap);
+	va_end(ap);
 }
 
 void fbr_multicall(ME_P_ int mid, int argnum, ...)
@@ -190,7 +214,7 @@ void fbr_multicall(ME_P_ int mid, int argnum, ...)
 	va_list ap;
 	va_start(ap, argnum);
 	DL_FOREACH(call->fibers,fiber)
-		fbr_call(ME_A_ fiber, argnum, ap);
+		fbr_vcall(ME_A_ fiber, argnum, ap);
 	va_end(ap);
 }
 

@@ -66,7 +66,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 					);
 			break;
 		case ME_PAXOS_LEARN:
-			fbr_call(ME_A_ mctx->fiber_learner, 3,
+			fbr_multicall(ME_A_ FMT_LEARNER, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(msg),
 					fbr_arg_v(from)
@@ -87,8 +87,6 @@ void pxs_fiber_init(ME_P)
 {
 	mctx->fiber_acceptor = fbr_create(ME_A_ "acceptor", acc_fiber);
 	mctx->fiber_proposer = NULL;
-	mctx->fiber_learner = fbr_create(ME_A_ "learner", lea_fiber);
 
 	fbr_call(ME_A_ mctx->fiber_acceptor, 0);
-	fbr_call(ME_A_ mctx->fiber_learner, 0);
 }

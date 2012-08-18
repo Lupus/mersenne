@@ -486,12 +486,16 @@ void pro_fiber(ME_P)
 	struct me_message *msg;
 	struct me_peer *from;
 	struct fbr_call_info *info;
+	struct fbr_fiber *learner;
 	struct buffer *buf;
 	uint64_t iid;
 
 	fbr_next_call_info(ME_A_ NULL);
 
 	proposer_init(ME_A);
+
+	learner = fbr_create(ME_A_ "proposer/learner", lea_fiber);
+	fbr_call(ME_A_ learner, 1, fbr_arg_i(0));
 
 start:
 	fbr_yield(ME_A);
@@ -527,6 +531,7 @@ start:
 	goto start;
 fiber_exit:
 	proposer_shutdown(ME_A);
+	fbr_reclaim(ME_A_ learner);
 }
 
 void pro_start(ME_P)
@@ -540,6 +545,5 @@ void pro_stop(ME_P)
 {
 	fbr_assert(NULL != mctx->fiber_proposer);
 	fbr_call(ME_A_ mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
-	fbr_reclaim(ME_A_ mctx->fiber_proposer);
 	mctx->fiber_proposer = NULL;
 }

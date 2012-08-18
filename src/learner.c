@@ -29,31 +29,48 @@
 #include <mersenne/me_protocol.h>
 #include <mersenne/fiber_args.h>
 
-static void do_deliver(ME_P_ struct lea_instance *instance)
+#define LEA_INSTANCE_WINDOW 5
+
+struct lea_instance {
+	uint64_t iid;
+	uint64_t b;
+	struct buffer v;
+	char v_data[ME_MAX_XDR_MESSAGE_LEN];
+	struct bm_mask *acks;
+	int closed;
+};
+
+struct learner_context {
+	uint64_t first_non_delivered;
+	struct lea_instance *instances;
+	struct fbr_fiber *owner;
+};
+
+static void do_deliver(ME_P_ struct learner_context *context, struct lea_instance *instance)
 {
 	char buf[1000];
 
 	snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
-	fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n", instance->iid, instance->b, buf);
-	if(ldr_is_leader(ME_A))
-		fbr_call(ME_A_ mctx->fiber_proposer, 3,
-				fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
-				fbr_arg_i(instance->iid),
-				fbr_arg_v(&instance->v)
-			);
+	fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n",
+			instance->iid, instance->b, buf);
+	fbr_call(ME_A_ context->owner, 3,
+			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
+			fbr_arg_i(instance->iid),
+			fbr_arg_v(&instance->v)
+		);
 }
 
-static void try_deliver(ME_P)
+static void try_deliver(ME_P_ struct learner_context *context)
 {
 	int i, j;
-	int start = mctx->pxs.lea.first_non_delivered;
+	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for(j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
-		instance = mctx->pxs.lea.instances + (i % LEA_INSTANCE_WINDOW);
+		instance = context->instances + (i % LEA_INSTANCE_WINDOW);
 		if(!instance->closed)
 			return;
-		do_deliver(ME_A_ instance);
-		mctx->pxs.lea.first_non_delivered = i + 1;
+		do_deliver(ME_A_ context, instance);
+		context->first_non_delivered = i + 1;
 
 		instance->v.empty = 1;
 		instance->closed = 0;
@@ -62,21 +79,21 @@ static void try_deliver(ME_P)
 	}
 }
 
-static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
-		*from)
+static void do_learn(ME_P_ struct learner_context *context, struct
+		me_paxos_message *pmsg, struct me_peer *from)
 {
 	struct lea_instance *instance;
 	struct me_paxos_learn_data *data;
 	int num;
 
 	data = &pmsg->data.me_paxos_msg_data_u.learn;
-	if(data->i < mctx->pxs.lea.first_non_delivered)
+	if(data->i < context->first_non_delivered)
 		return;
-	if(data->i > mctx->pxs.lea.first_non_delivered + LEA_INSTANCE_WINDOW) {
+	if(data->i > context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		warnx("instance windows is full, discarding next record");
 		return;
 	}
-	instance = mctx->pxs.lea.instances + (data->i % LEA_INSTANCE_WINDOW);
+	instance = context->instances + (data->i % LEA_INSTANCE_WINDOW);
 	if(instance->closed)
 		return;
 	if(instance->v.empty) {
@@ -93,7 +110,7 @@ static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	num = bm_hweight(instance->acks);
 	if(pxs_is_acc_majority(ME_A_ num)) {
 		instance->closed = 1;
-		try_deliver(ME_A);
+		try_deliver(ME_A_ context);
 	}
 }
 
@@ -107,10 +124,20 @@ void lea_fiber(ME_P)
 	int i;
 	struct lea_instance *instance;
 	int nbits = peer_count(ME_A);
+	struct learner_context context;
 
-	fbr_next_call_info(ME_A_ NULL);
+	fbr_next_call_info(ME_A_ &info);
+	fbr_assert(1 == info->argc);
+	context.first_non_delivered = info->argv[0].i;
+	context.owner = info->caller;
+	fbr_free_call_info(ME_A_ info);
+
+	fbr_subscribe(ME_A_ FMT_LEARNER);
+
+	context.instances = fbr_alloc(ME_A_ LEA_INSTANCE_WINDOW * sizeof(struct lea_instance));
+
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
-		instance = mctx->pxs.lea.instances + i;
+		instance = context.instances + i;
 		instance->acks = fbr_alloc(ME_A_ bm_size(nbits));
 		bm_init(instance->acks, nbits);
 		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
@@ -119,13 +146,14 @@ void lea_fiber(ME_P)
 start:
 	fbr_yield(ME_A);
 	while(fbr_next_call_info(ME_A_ &info)) {
-		assert(FAT_ME_MESSAGE == info->argv[0].i);
+		fbr_assert(FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[2].v;
 
 		pmsg = &msg->me_message_u.paxos_message;
-		assert(ME_PAXOS_LEARN == pmsg->data.type);
-		do_learn(ME_A_ pmsg, from);
+		fbr_assert(ME_PAXOS_LEARN == pmsg->data.type);
+		do_learn(ME_A_ &context, pmsg, from);
+		fbr_free_call_info(ME_A_ info);
 	}
 	goto start;
 }

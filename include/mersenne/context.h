@@ -46,7 +46,6 @@ struct me_context {
 	struct fbr_fiber *fiber_leader;
 	struct fbr_fiber *fiber_acceptor;
 	struct fbr_fiber *fiber_proposer;
-	struct fbr_fiber *fiber_learner;
 	struct fbr_fiber *fiber_client;
 };
 
@@ -61,7 +60,6 @@ struct me_context {
 	.fiber_main = NULL, \
 	.fiber_leader = NULL, \
 	.fiber_proposer = NULL, \
-	.fiber_learner = NULL, \
 }
 
 #define ME_P struct me_context *mctx

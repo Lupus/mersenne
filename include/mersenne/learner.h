@@ -22,34 +22,7 @@
 #ifndef _LEARNER_H_
 #define _LEARNER_H_
 
-#include <stdint.h>
 #include <mersenne/context_fwd.h>
-#include <mersenne/bitmask.h>
-#include <mersenne/me_protocol.h>
-
-#define LEA_INSTANCE_WINDOW 5
-
-struct lea_instance {
-	uint64_t iid;
-	uint64_t b;
-	struct buffer v;
-	char v_data[ME_MAX_XDR_MESSAGE_LEN];
-	struct bm_mask *acks;
-	int closed;
-};
-
-struct me_peer;
-struct me_message;
-
-struct lea_context {
-	uint64_t first_non_delivered;
-	struct lea_instance instances[LEA_INSTANCE_WINDOW];
-};
-
-#define LEA_CONTEXT_INITIALIZER { \
-	.first_non_delivered = 0, \
-	.instances = {{0}}, \
-}
 
 void lea_fiber(ME_P);
 

@@ -31,6 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber.h>
 #include <mersenne/fiber_args.h>
+#include <mersenne/fiber_args.strenum.h>
 
 struct bm_mask * get_trust(ME_P)
 {
@@ -375,7 +376,7 @@ void ldr_fiber(ME_P)
 start:
 	fbr_yield(ME_A);
 	while(fbr_next_call_info(ME_A_ &info)) {
-		assert(FAT_ME_MESSAGE == info->argv[0].i);
+		fbr_assert(FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[1].v;
 

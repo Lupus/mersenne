@@ -123,6 +123,7 @@ struct fbr_fiber_arg fbr_arg_v(void *v);
 void fbr_subscribe(ME_P_ int mid);
 void fbr_unsubscribe(ME_P_ int mid);
 void fbr_unsubscribe_all(ME_P);
+void fbr_vcall(ME_P_ struct fbr_fiber *callee, int argnum, va_list ap);
 void fbr_call(ME_P_ struct fbr_fiber *fiber, int argnum, ...);
 void fbr_multicall(ME_P_ int mid, int argnum, ...);
 void fbr_yield(ME_P);

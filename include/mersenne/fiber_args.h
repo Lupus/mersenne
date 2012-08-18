@@ -29,4 +29,8 @@ enum fiber_args_type {
 	FAT_QUIT,
 };
 
+enum fiber_multicall_type {
+	FMT_LEARNER = 1,
+};
+
 #endif
