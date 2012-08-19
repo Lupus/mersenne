@@ -219,10 +219,11 @@ void fbr_multicall(FBR_P_ int mid, int argnum, ...)
 	struct fbr_multicall *call = get_multicall(FBR_A_ mid);
 	struct fbr_fiber *fiber;
 	va_list ap;
-	va_start(ap, argnum);
-	DL_FOREACH(call->fibers,fiber)
+	DL_FOREACH(call->fibers,fiber) {
+		va_start(ap, argnum);
 		fbr_vcall(FBR_A_ fiber, argnum, ap);
-	va_end(ap);
+		va_end(ap);
+	}
 }
 
 int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr)
@@ -320,6 +321,51 @@ next:
 error:
 	ev_io_stop(fctx->loop, &fiber->w_io);
 	return -1;
+}
+
+ssize_t fbr_readline(FBR_P_ int fd, void *buffer, size_t n)
+{
+    ssize_t num_read;                    /* # of bytes fetched by last read() */
+    size_t total_read;                     /* Total bytes read so far */
+    char *buf;
+    char ch;
+
+    if (n <= 0 || buffer == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    buf = buffer;                       /* No pointer arithmetic on "void *" */
+
+    total_read = 0;
+    for (;;) {
+        num_read = fbr_read(FBR_A_ fd, &ch, 1);
+
+        if (num_read == -1) {
+            if (errno == EINTR)         /* Interrupted --> restart read() */
+                continue;
+            else
+                return -1;              /* Some other error */
+
+        } else if (num_read == 0) {      /* EOF */
+            if (total_read == 0)           /* No bytes read; return 0 */
+                return 0;
+            else                        /* Some bytes read; add '\0' */
+                break;
+
+        } else {                        /* 'numRead' must be 1 if we get here */
+            if (total_read < n - 1) {      /* Discard > (n - 1) bytes */
+                total_read++;
+                *buf++ = ch;
+            }
+
+            if (ch == '\n')
+                break;
+        }
+    }
+
+    *buf = '\0';
+    return total_read;
 }
 
 ssize_t fbr_write(FBR_P_ int fd, const void *buf, size_t count, ssize_t *done)

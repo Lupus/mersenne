@@ -13,3 +13,4 @@ add_executable(strings_client
 	../src/buffer.c
 	../src/bitmask.c
 	)
+target_link_libraries(strings_client evfibers ev)

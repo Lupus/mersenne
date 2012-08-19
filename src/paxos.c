@@ -71,7 +71,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 					fbr_arg_v(msg),
 					fbr_arg_v(from)
 				);
-			/* Falltrhough */
+			break;
 		case ME_PAXOS_PROMISE:
 			if(ldr_is_leader(ME_A))
 				fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,

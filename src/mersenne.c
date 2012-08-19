@@ -31,7 +31,6 @@
 #include <sys/epoll.h>
 #include <err.h>
 #include <errno.h>
-#include <bitmask.h>
 #include <ev.h>
 
 #include <mersenne/me_protocol.h>

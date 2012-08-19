@@ -27,6 +27,7 @@
 #include <mersenne/message.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/fiber_args.h>
+#include <mersenne/fiber_args.strenum.h>
 #include <mersenne/util.h>
 
 #define LEA_INSTANCE_WINDOW 5
@@ -91,6 +92,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		return;
 	if(data->i > context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		warnx("instance windows is full, discarding next record");
+		warnx("data->i == %lu while context->first_non_delivered == %lu", data->i, context->first_non_delivered);
 		return;
 	}
 	instance = context->instances + (data->i % LEA_INSTANCE_WINDOW);
@@ -149,6 +151,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 start:
 	fbr_yield(&mctx->fbr);
 	while(fbr_next_call_info(&mctx->fbr, &info)) {
+		printf("call type: %s\n", strval_fiber_args_type(info->argv[0].i));
 		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[2].v;

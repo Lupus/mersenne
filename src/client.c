@@ -27,14 +27,14 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 
-struct read_context {
+struct socket_context {
 	int fd;
 	struct me_context *mctx;
 };
 
 static int readit(char *ptr, char *buf, int size)
 {
-	struct read_context *context = (struct read_context *)ptr;
+	struct socket_context *context = (struct socket_context *)ptr;
 	struct me_context *mctx = context->mctx;
 	int retval;
 	retval = fbr_read(&mctx->fbr, context->fd, buf, size);
@@ -46,29 +46,100 @@ static int readit(char *ptr, char *buf, int size)
 	return retval;
 }
 
+static int writeit(char *ptr, char *buf, int size)
+{
+	struct socket_context *context = (struct socket_context *)ptr;
+	struct me_context *mctx = context->mctx;
+	return fbr_write(&mctx->fbr, context->fd, buf, size, NULL);
+}
+
+static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
+{
+	XDR xdrs;
+	struct cl_message msg;
+	struct socket_context context;
+	
+	context.fd = fd;
+	context.mctx = mctx;
+
+	xdrrec_create(&xdrs, 0, 0, (char *)&context, NULL, writeit);
+	xdrs.x_op = XDR_ENCODE;
+	buf_init(&msg.value, NULL, 0);
+	buf_share(&msg.value, buf);
+	if(!xdr_cl_message(&xdrs, &msg))
+		err(EXIT_FAILURE, "unable to encode a client message");
+	xdrrec_endofrecord(&xdrs, TRUE);
+	xdr_destroy(&xdrs);
+}
+
+void client_informer_fiber(struct fbr_context *fiber_context)
+{
+	struct me_context *mctx;
+	struct fbr_call_info *info;
+	struct fbr_fiber *learner;
+	int fd;
+	struct buffer *buf;
+	uint64_t iid;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
+	fbr_assert(&mctx->fbr, 1 == info->argc);
+	fd = info->argv[0].i;
+
+	learner = fbr_create(&mctx->fbr, "client/informer/learner", lea_fiber);
+	fbr_call(&mctx->fbr, learner, 1, fbr_arg_i(0));
+
+start:
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
+
+		switch(info->argv[0].i) {
+			case FAT_PXS_DELIVERED_VALUE:
+				fbr_assert(&mctx->fbr, 3 == info->argc);
+				iid = info->argv[1].i;
+				buf = info->argv[2].v;
+
+				inform_client(ME_A_ fd, iid, buf);
+				break;
+			case FAT_QUIT:
+				goto quit;
+		}
+
+		fbr_free_call_info(&mctx->fbr, info);
+	}
+	goto start;
+quit:
+	fbr_reclaim(&mctx->fbr, learner);
+}
+
 static void connection_fiber(struct fbr_context *fiber_context)
 {
 	struct me_context *mctx;
 	int fd;
 	struct fbr_call_info *info = NULL;
 	XDR xdrs;
-	struct read_context context;
+	struct socket_context context;
 	struct cl_message msg;
 	char buf[1000];
+	struct fbr_fiber *informer;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
+	
 	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
 	fbr_assert(&mctx->fbr, 1 == info->argc);
 	fd = info->argv[0].i;
 	context.fd = fd;
 	context.mctx = mctx;
+	
+	informer = fbr_create(&mctx->fbr, "client/informer", client_informer_fiber);
+	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(fd));
+
 	puts("[CLIENT] Connection fiber has started");
 	for(;;) {
 		xdrrec_create(&xdrs, 0, 0, (char *)&context, readit, NULL);
 		xdrs.x_op = XDR_DECODE;
 		if (!xdrrec_skiprecord(&xdrs))
 			errx(EXIT_FAILURE, "unable to skip initial record");
-		//do {
 		for(;;) {
 			memset(&msg, 0, sizeof(msg));
 			if(!xdr_cl_message(&xdrs, &msg)) {
@@ -82,7 +153,6 @@ static void connection_fiber(struct fbr_context *fiber_context)
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
 					fbr_arg_v(&msg.value)
 				);
-			//} while(!xdrrec_eof(&xdrs));
 		}
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
@@ -90,6 +160,8 @@ static void connection_fiber(struct fbr_context *fiber_context)
 conn_finish:
 	puts("[CLIENT] Connection fiber has finished");
 	close(fd);
+	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(FAT_QUIT));
+	fbr_reclaim(&mctx->fbr, informer);
 }
 
 void clt_fiber(struct fbr_context *fiber_context)
