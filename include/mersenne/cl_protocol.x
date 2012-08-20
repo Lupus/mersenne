@@ -22,7 +22,26 @@
 %#include <mersenne/buffer.h>
 %#include <mersenne/xdr.h>
 
-struct cl_message {
+enum cl_message_type {
+	CL_NEW_VALUE,
+	CL_LEARNED_VALUE
+};
+
+struct cl_new_value_data {
 	struct buffer value;
 };
 
+struct cl_learned_value_data {
+	uint64_t i;
+	struct buffer value;
+};
+
+union cl_message switch(cl_message_type type) {
+	case CL_NEW_VALUE:
+	struct cl_new_value_data new_value;
+	case CL_LEARNED_VALUE:
+	struct cl_learned_value_data learned_value;
+
+	default:
+	void;
+};

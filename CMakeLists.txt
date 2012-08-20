@@ -9,7 +9,7 @@ include(FindPkgConfig)
 
 add_subdirectory(tools) 
 
-MACRO(GENSTRENUM INFILE DEPS)
+MACRO(GENSTRENUM INDIR INFILE DEPS)
 	GET_FILENAME_COMPONENT(SRCPATH "${INFILE}" PATH)
 	GET_FILENAME_COMPONENT(SRCBASE "${INFILE}" NAME_WE)
 	SET(OUTFILE1 "${CMAKE_CURRENT_BINARY_DIR}/${SRCPATH}/${SRCBASE}.strenum.h")
@@ -20,11 +20,12 @@ MACRO(GENSTRENUM INFILE DEPS)
 		ARGS
 			-I "${CMAKE_CURRENT_SOURCE_DIR}/include"
 			-I "${CMAKE_CURRENT_BINARY_DIR}/include"
-			"${CMAKE_CURRENT_SOURCE_DIR}/${INFILE}"
-		DEPENDS ${INFILE}
+			-I "${CMAKE_CURRENT_SOURCE_DIR}/libevfibers/include"
+			-I "${CMAKE_CURRENT_BINARY_DIR}/libevfibers/include"
+			"${INDIR}/${INFILE}"
 		WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${SRCPATH}"
 		COMMENT "Generating strval_* functions from ${INFILE}"
-		DEPENDS genstrenum ${DEPS}
+		DEPENDS "${INDIR}/${INFILE}" genstrenum ${DEPS}
 		)
 ENDMACRO(GENSTRENUM)
 
@@ -40,8 +41,8 @@ include_directories(
 
 set(CMAKE_C_FLAGS "-Wall -Werror")
 
-GENSTRENUM("include/mersenne/proposer_prv.h" "include/mersenne/me_protocol.h")
-GENSTRENUM("include/mersenne/fiber_args.h" "")
+GENSTRENUM(${CMAKE_CURRENT_SOURCE_DIR} "/include/mersenne/proposer_prv.h" "include/mersenne/me_protocol.h")
+GENSTRENUM(${CMAKE_CURRENT_SOURCE_DIR} "/include/mersenne/fiber_args.h" "")
 RPCGEN_CREATE_XDR("include/mersenne/me_protocol.x")
 RPCGEN_CREATE_XDR("include/mersenne/cl_protocol.x")
 set_source_files_properties("include/mersenne/me_protocol.c"
@@ -50,6 +51,7 @@ set_source_files_properties("include/mersenne/me_protocol.c"
 set_source_files_properties("include/mersenne/cl_protocol.c"
 	PROPERTIES COMPILE_FLAGS "-Wno-unused"
 	)
+GENSTRENUM(${CMAKE_CURRENT_BINARY_DIR} "/include/mersenne/me_protocol.h" "")
 
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/src" MERSENNE_SOURCES)
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/include/mersenne" MERSENNE_HEADERS)
@@ -62,6 +64,8 @@ set(MERSENNE_GEN_SOURCES
 	"include/mersenne/proposer_prv.strenum.c"
 	"include/mersenne/fiber_args.strenum.h"
 	"include/mersenne/fiber_args.strenum.c"
+	"include/mersenne/me_protocol.strenum.h"
+	"include/mersenne/me_protocol.strenum.c"
 	)
 
 add_executable(mersenne

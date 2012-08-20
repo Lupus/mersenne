@@ -62,16 +62,19 @@ void fiber_linefeed(struct fbr_context *fiber_context)
 	char buf2[1200];
 	XDR xdrs;
 	struct cl_message msg;
+	struct buffer *value;
 	int i = 0;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 	fbr_next_call_info(&cc->fbr, NULL);
 
+	msg.type = CL_NEW_VALUE;
+	value = &msg.cl_message_u.new_value.value;
 	while(fbr_readline(&cc->fbr, STDIN_FILENO, buf, 1000)) {
 		snprintf(buf2, 1200, "%03d:%s", i++, buf);
 		xdrrec_create(&xdrs, 0, 0, (char *)cc, NULL, writeit);
 		xdrs.x_op = XDR_ENCODE;
-		buf_init(&msg.value, buf2, strlen(buf2) - 1);
+		buf_init(value, buf2, strlen(buf2) - 1);
 		if(!xdr_cl_message(&xdrs, &msg))
 			err(EXIT_FAILURE, "unable to encode a client message");
 		xdrrec_endofrecord(&xdrs, TRUE);
@@ -84,6 +87,7 @@ void fiber_reader(struct fbr_context *fiber_context)
 	struct client_context *cc;
 	XDR xdrs;
 	struct cl_message msg;
+	struct buffer *value;
 	char buf[1000];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
@@ -101,8 +105,12 @@ void fiber_reader(struct fbr_context *fiber_context)
 					goto conn_finish;
 				continue;
 			}
-			snprintf(buf, msg.value.size1 + 1, "%s", msg.value.ptr);
-			printf("Mersenne has closed an instance with value: ``%s''\n", buf);
+			if(CL_LEARNED_VALUE != msg.type)
+				errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
+			value = &msg.cl_message_u.learned_value.value;
+			snprintf(buf, value->size1 + 1, "%s", value->ptr);
+			printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
+					msg.cl_message_u.learned_value.i, buf);
 		}
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);

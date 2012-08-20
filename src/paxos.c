@@ -58,6 +58,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 		case ME_PAXOS_ACCEPT:
+		case ME_PAXOS_RETRANSMIT:
 			if(mctx->me->pxs.is_acceptor)
 				fbr_call(&mctx->fbr, mctx->fiber_acceptor, 3,
 						fbr_arg_i(FAT_ME_MESSAGE),
@@ -66,6 +67,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 					);
 			break;
 		case ME_PAXOS_LEARN:
+		case ME_PAXOS_LAST_ACCEPTED:
 			fbr_multicall(&mctx->fbr, FMT_LEARNER, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(msg),

@@ -29,6 +29,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/fiber_args.strenum.h>
 #include <mersenne/util.h>
+#include <mersenne/me_protocol.strenum.h>
 
 #define LEA_INSTANCE_WINDOW 5
 
@@ -103,7 +104,6 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		instance->b = data->b;
 		buf_copy(&instance->v, &data->v);
 	} else {
-		//TODO: Wrap in some debug #ifdef?
 		assert(instance->iid == data->i);
 		assert(instance->b == data->b);
 		assert(0 == buf_cmp(&instance->v, &data->v));
@@ -116,6 +116,31 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	}
 }
 
+static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_RETRANSMIT;
+	data->me_paxos_msg_data_u.retransmit.from = from;
+	data->me_paxos_msg_data_u.retransmit.to = to;
+	pxs_send_acceptors(ME_A_ &msg);
+}
+
+static void do_last_accepted(ME_P_ struct learner_context *context, struct
+		me_paxos_message *pmsg, struct me_peer *from)
+{
+	struct me_paxos_last_accepted_data *data;
+
+	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
+	if(data->i < context->first_non_delivered)
+		return;
+	if(data->i > context->first_non_delivered + LEA_INSTANCE_WINDOW) {
+		send_retransmit(ME_A_ context->first_non_delivered, data->i);
+		warnx("requesting retransmits from %lu to %lu", context->first_non_delivered, data->i);
+		return;
+	}
+}
 
 void lea_fiber(struct fbr_context *fiber_context)
 {
@@ -151,14 +176,23 @@ void lea_fiber(struct fbr_context *fiber_context)
 start:
 	fbr_yield(&mctx->fbr);
 	while(fbr_next_call_info(&mctx->fbr, &info)) {
-		printf("call type: %s\n", strval_fiber_args_type(info->argv[0].i));
 		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
 		msg = info->argv[1].v;
 		from = info->argv[2].v;
 
 		pmsg = &msg->me_message_u.paxos_message;
-		fbr_assert(&mctx->fbr, ME_PAXOS_LEARN == pmsg->data.type);
-		do_learn(ME_A_ &context, pmsg, from);
+		switch(pmsg->data.type) {
+			case ME_PAXOS_LEARN:
+				do_learn(ME_A_ &context, pmsg, from);
+				break;
+			case ME_PAXOS_LAST_ACCEPTED:
+				do_last_accepted(ME_A_ &context, pmsg, from);
+				break;
+			default:
+				errx(EXIT_FAILURE,
+						"wrong message type for learner: %s",
+						strval_me_paxos_message_type(pmsg->data.type));
+		}
 		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;

@@ -42,10 +42,12 @@ struct acc_instance_record {
 
 struct acc_context {
 	struct acc_instance_record *records;
+	uint64_t highest_accepted;
 };
 
 #define ACC_CONTEXT_INITIALIZER { \
 	.records = NULL, \
+	.highest_accepted = 0, \
 }
 
 void acc_fiber(struct fbr_context *fiber_context);

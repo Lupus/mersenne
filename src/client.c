@@ -61,11 +61,14 @@ static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
 	
 	context.fd = fd;
 	context.mctx = mctx;
-
+	
+	msg.type = CL_LEARNED_VALUE;
+	msg.cl_message_u.learned_value.i = iid;
+	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0);
+	buf_share(&msg.cl_message_u.learned_value.value, buf);
+	
 	xdrrec_create(&xdrs, 0, 0, (char *)&context, NULL, writeit);
 	xdrs.x_op = XDR_ENCODE;
-	buf_init(&msg.value, NULL, 0);
-	buf_share(&msg.value, buf);
 	if(!xdr_cl_message(&xdrs, &msg))
 		err(EXIT_FAILURE, "unable to encode a client message");
 	xdrrec_endofrecord(&xdrs, TRUE);
@@ -121,6 +124,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	struct socket_context context;
 	struct cl_message msg;
 	char buf[1000];
+	struct buffer *value;
 	struct fbr_fiber *informer;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -147,11 +151,14 @@ static void connection_fiber(struct fbr_context *fiber_context)
 					goto conn_finish;
 				continue;
 			}
-			snprintf(buf, msg.value.size1 + 1, "%s", msg.value.ptr);
+			if(CL_NEW_VALUE != msg.type)
+				goto conn_finish;
+			value = &msg.cl_message_u.new_value.value;
+			snprintf(buf, value->size1 + 1, "%s", value->ptr);
 			printf("[CLIENT] Got value: ``%s''\n", buf);
 			fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
-					fbr_arg_v(&msg.value)
+					fbr_arg_v(value)
 				);
 		}
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
