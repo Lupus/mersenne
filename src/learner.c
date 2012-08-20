@@ -44,9 +44,16 @@ struct lea_instance {
 
 struct learner_context {
 	uint64_t first_non_delivered;
+	uint64_t highest_seen;
+	uint64_t next_retransmit;
 	struct lea_instance *instances;
 	struct fbr_fiber *owner;
 };
+
+static inline struct lea_instance * get_instance(struct learner_context *context, uint64_t iid)
+{
+	return context->instances + (iid % LEA_INSTANCE_WINDOW);
+}
 
 static void do_deliver(ME_P_ struct learner_context *context, struct lea_instance *instance)
 {
@@ -62,13 +69,32 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 		);
 }
 
+static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_RETRANSMIT;
+	data->me_paxos_msg_data_u.retransmit.from = from;
+	data->me_paxos_msg_data_u.retransmit.to = to;
+	pxs_send_acceptors(ME_A_ &msg);
+}
+
+static void retransmit_next_window(ME_P_ struct learner_context *context)
+{
+	context->next_retransmit = context->first_non_delivered + LEA_INSTANCE_WINDOW - 1;
+	send_retransmit(ME_A_ context->first_non_delivered,
+			min(context->highest_seen, context->next_retransmit));
+	warnx("requesting retransmits from %lu to %lu", context->first_non_delivered, context->next_retransmit);
+}
+
 static void try_deliver(ME_P_ struct learner_context *context)
 {
 	int i, j;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for(j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
-		instance = context->instances + (i % LEA_INSTANCE_WINDOW);
+		instance = get_instance(context, i);
 		if(!instance->closed)
 			return;
 		do_deliver(ME_A_ context, instance);
@@ -78,6 +104,8 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
 		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
+		if(context->first_non_delivered == context->next_retransmit)
+			retransmit_next_window(ME_A_ context);
 	}
 }
 
@@ -91,20 +119,23 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	data = &pmsg->data.me_paxos_msg_data_u.learn;
 	if(data->i < context->first_non_delivered)
 		return;
-	if(data->i > context->first_non_delivered + LEA_INSTANCE_WINDOW) {
+	if(data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		warnx("instance windows is full, discarding next record");
 		warnx("data->i == %lu while context->first_non_delivered == %lu", data->i, context->first_non_delivered);
 		return;
 	}
-	instance = context->instances + (data->i % LEA_INSTANCE_WINDOW);
+	instance = get_instance(context, data->i);
 	if(instance->closed)
 		return;
 	if(instance->v.empty) {
 		instance->iid = data->i;
 		instance->b = data->b;
 		buf_copy(&instance->v, &data->v);
+		fprintf(stderr, "initialized instance %lx to iid %lu ballot %lu\n", (unsigned long)instance, instance->iid, instance->b);
 	} else {
+		fprintf(stderr, "instance %lx assert iid(%lu == %lu);\n", (unsigned long)instance, instance->iid, data->i);
 		assert(instance->iid == data->i);
+		fprintf(stderr, "instance %lx assert b(%lu == %lu);\n", (unsigned long)instance, instance->b, data->b);
 		assert(instance->b == data->b);
 		assert(0 == buf_cmp(&instance->v, &data->v));
 	}
@@ -116,17 +147,6 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	}
 }
 
-static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
-{
-	struct me_message msg;
-	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
-	msg.super_type = ME_PAXOS;
-	data->type = ME_PAXOS_RETRANSMIT;
-	data->me_paxos_msg_data_u.retransmit.from = from;
-	data->me_paxos_msg_data_u.retransmit.to = to;
-	pxs_send_acceptors(ME_A_ &msg);
-}
-
 static void do_last_accepted(ME_P_ struct learner_context *context, struct
 		me_paxos_message *pmsg, struct me_peer *from)
 {
@@ -135,10 +155,10 @@ static void do_last_accepted(ME_P_ struct learner_context *context, struct
 	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
 	if(data->i < context->first_non_delivered)
 		return;
-	if(data->i > context->first_non_delivered + LEA_INSTANCE_WINDOW) {
-		send_retransmit(ME_A_ context->first_non_delivered, data->i);
-		warnx("requesting retransmits from %lu to %lu", context->first_non_delivered, data->i);
-		return;
+	if(data->i > context->first_non_delivered) {
+		if(data->i > context->highest_seen)
+			context->highest_seen = data->i;
+		retransmit_next_window(ME_A_ context);
 	}
 }
 
@@ -165,6 +185,8 @@ void lea_fiber(struct fbr_context *fiber_context)
 	fbr_subscribe(&mctx->fbr, FMT_LEARNER);
 
 	context.instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW * sizeof(struct lea_instance));
+	context.highest_seen = context.first_non_delivered;
+	context.next_retransmit = ~0UL; // "infinity"
 
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
 		instance = context.instances + i;

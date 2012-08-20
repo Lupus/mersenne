@@ -67,7 +67,6 @@ static void send_highest_accepted(ME_P)
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LAST_ACCEPTED;
 	data->me_paxos_msg_data_u.last_accepted.i = mctx->pxs.acc.highest_accepted;
-	printf("Sent highest accepted number == %lu\n", mctx->pxs.acc.highest_accepted);
 	msg_send_all(ME_A_ &msg);
 }
 

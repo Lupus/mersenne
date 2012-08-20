@@ -43,5 +43,6 @@ struct ldr_context {
 
 void ldr_fiber(struct fbr_context *fiber_context);
 int ldr_is_leader(ME_P);
+int ldr_round_length(ME_P);
 
 #endif

@@ -358,6 +358,11 @@ int ldr_is_leader(ME_P)
 	return mctx->ldr.leader == mctx->me->index;
 }
 
+int ldr_round_length(ME_P)
+{
+	return TIME_DELTA / 1000.;
+}
+
 void ldr_fiber(struct fbr_context *fiber_context)
 {
 	struct me_context *mctx;
