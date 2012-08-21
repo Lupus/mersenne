@@ -97,7 +97,6 @@ void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
 void fbr_destroy(FBR_P_ struct fbr_fiber *fiber);
 int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr);
-void fbr_free_call_info(FBR_P_ struct fbr_call_info *info);
 ssize_t fbr_read(FBR_P_ int fd, void *buf, size_t count);
 ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count, ssize_t *done);
 ssize_t fbr_readline(FBR_P_ int fd, void *buffer, size_t n);

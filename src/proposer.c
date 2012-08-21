@@ -473,7 +473,7 @@ void pro_fiber(struct fbr_context *fiber_context)
 	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	struct fbr_fiber *learner;
 	struct buffer *buf;
 	uint64_t iid;
@@ -514,8 +514,6 @@ start:
 			case FAT_QUIT:
 				goto fiber_exit;
 		}
-
-		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;
 fiber_exit:

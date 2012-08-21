@@ -78,7 +78,7 @@ static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
 void client_informer_fiber(struct fbr_context *fiber_context)
 {
 	struct me_context *mctx;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	struct fbr_fiber *learner;
 	int fd;
 	struct buffer *buf;
@@ -107,8 +107,6 @@ start:
 			case FAT_QUIT:
 				goto quit;
 		}
-
-		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;
 quit:

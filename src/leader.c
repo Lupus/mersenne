@@ -368,7 +368,7 @@ void ldr_fiber(struct fbr_context *fiber_context)
 	struct me_context *mctx;
 	struct me_message *msg;
 	struct me_peer *from;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_next_call_info(&mctx->fbr, NULL);

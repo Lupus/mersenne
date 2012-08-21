@@ -175,7 +175,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 	struct me_message *msg;
 	struct me_peer *from;
 	struct me_paxos_message *pmsg;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	int i;
 	struct lea_instance *instance;
 	int nbits;
@@ -187,7 +187,6 @@ void lea_fiber(struct fbr_context *fiber_context)
 	fbr_assert(&mctx->fbr, 1 == info->argc);
 	context.first_non_delivered = info->argv[0].i;
 	context.owner = info->caller;
-	fbr_free_call_info(&mctx->fbr, info);
 
 	fbr_subscribe(&mctx->fbr, FMT_LEARNER);
 
@@ -222,7 +221,6 @@ start:
 						"wrong message type for learner: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
-		fbr_free_call_info(&mctx->fbr, info);
 	}
 	goto start;
 }

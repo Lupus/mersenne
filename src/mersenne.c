@@ -90,6 +90,7 @@ static void fiber_main(struct fbr_context *fiber_context)
 	char msgbuf[MSGBUFSIZE];
 	
 	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_next_call_info(&mctx->fbr, NULL);
 	for(;;) {
 		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf, MSGBUFSIZE, 0,
 				&client_addr, &client_addrlen);

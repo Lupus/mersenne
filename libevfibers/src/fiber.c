@@ -96,7 +96,7 @@ static void fiber_cleanup(FBR_P_ struct fbr_fiber *fiber)
 	obstack_free(&fiber->obstack, NULL);
 	DL_FOREACH_SAFE(fiber->call_list, elt, tmp) {
 		DL_DELETE(fiber->call_list, elt);
-		fbr_free_call_info(FBR_A_ elt);
+		free(elt);
 	}
 }
 
@@ -237,15 +237,13 @@ int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr)
 	tmp = fiber->call_list;
 	DL_DELETE(fiber->call_list, fiber->call_list);
 	if(NULL == info_ptr)
-		fbr_free_call_info(FBR_A_ tmp);
-	else
+		free(tmp);
+	else {
+		if(NULL != *info_ptr)
+			free(*info_ptr);
 		*info_ptr = tmp;
+	}
 	return 1;
-}
-
-void fbr_free_call_info(FBR_P_ struct fbr_call_info *info)
-{
-	free(info);
 }
 
 void fbr_yield(FBR_P)

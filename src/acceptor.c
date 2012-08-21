@@ -166,7 +166,7 @@ void acc_fiber(struct fbr_context *fiber_context)
 	struct me_message *msg;
 	struct me_peer *from;
 	struct me_paxos_message *pmsg;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	struct fbr_fiber *repeater;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
