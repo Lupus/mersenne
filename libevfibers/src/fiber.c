@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <utlist.h>
 #include <stdio.h>
+#include <valgrind/valgrind.h>
 
 #include <evfibers_private/fiber.h>
 
@@ -492,6 +493,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	} else {
 		fiber = malloc(sizeof(struct fbr_fiber));
 		fiber->stack = malloc(FBR_STACK_SIZE);
+		(void)VALGRIND_STACK_REGISTER(fiber->stack, fiber->stack + FBR_STACK_SIZE);
 	}
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, FBR_A, fiber->stack,
 			FBR_STACK_SIZE);
