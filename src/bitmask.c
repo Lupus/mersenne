@@ -58,7 +58,8 @@ void bm_init(struct bm_mask *mask, unsigned int nbits)
 
 unsigned int bm_get_bit(const struct bm_mask *mask, unsigned int n)
 {
-	assert(n < mask->nbits);
+	if(n >= mask->nbits)
+		return 0;
 	return (mask->mask[n/BITS_PER_LONG] >> (n % BITS_PER_LONG)) & 1;
 }
 
