@@ -49,6 +49,9 @@ static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+
+	assert(r->v.size1 > 0);
+
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LEARN;
 	data->me_paxos_msg_data_u.learn.i = r->iid;
@@ -82,6 +85,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r = calloc(sizeof(struct acc_instance_record), 1);
 		r->iid = data->i;
 		r->b = data->b;
+		buf_init(&r->v, NULL, 0);
 		HASH_ADD_IID(mctx->pxs.acc.records, iid, r);
 	}
 	if(data->b < r->b) {
@@ -96,7 +100,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		*from)
 {
-	struct acc_instance_record *r;
+	struct acc_instance_record *r = NULL;
 	struct me_paxos_accept_data *data;
 	char *ptr;
 
@@ -110,13 +114,17 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		//TODO: Add REJECT message here for speedup
 		return;
 	}
+	if(!r->v.empty)
+		assert(0 == buf_cmp(&r->v, &data->v));
 	r->b = data->b;
 	ptr = malloc(data->v.size1);
 	buf_init(&r->v, ptr, data->v.size1);
 	buf_copy(&r->v, &data->v);
+	assert(r->v.size1 > 0);
 	if(r->iid > mctx->pxs.acc.highest_accepted)
 		 mctx->pxs.acc.highest_accepted = r->iid;
-	printf("[ACCEPTOR] Accepted instance #%ld\n", data->i);
+	printf("[ACCEPTOR] Accepted instance #%lu at ballot #%lu, bound to "
+			"0x%lx\n", data->i, data->b, (unsigned long)r);
 	send_learn(ME_A_ r, NULL);
 }
 
@@ -124,13 +132,16 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		*from)
 {
 	uint64_t iid;
-	struct acc_instance_record *r;
+	struct acc_instance_record *r = NULL;
 	struct me_paxos_retransmit_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
 	for(iid = data->from; iid <= data->to; iid++) {
 		HASH_FIND_IID(mctx->pxs.acc.records, &iid, r);
 		if(NULL == r)
+			continue;
+		if(r->v.empty)
+			//FIXME: Not absolutely sure about this...
 			continue;
 		send_learn(ME_A_ r, from);
 	}

@@ -180,7 +180,7 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.i = instance->iid;
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	buf_share(&data->me_paxos_msg_data_u.accept.v, &instance->p2.v);
-	printf("[PROPOSER] Sending accepts for instance %ld\n", instance->iid);
+	printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
@@ -348,7 +348,6 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			ev_timer_stop(mctx->loop, &instance->timer);
 			adjust_window(ME_A);
 			break;
-			fprintf(stderr, "Adjusted window!\n");
 		default:
 			errx(EXIT_FAILURE, "inappropriate transition %s for "
 					"state %s",
@@ -364,25 +363,16 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_promise_data *data;
 	struct ie_p p;
 	data = &pmsg->data.me_paxos_msg_data_u.promise;
+	if(data->i < mctx->pxs.pro.lowest_non_closed)
+		return;
 	p.b.type = IE_P;
 	p.from = from;
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
-	if(instance->b == data->b && IS_P1_PENDING == instance->state)
-		run_instance(ME_A_ instance, &p.b);
-}
-
-static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct me_peer
-		*from)
-{
-	struct pro_instance *instance;
-	struct me_paxos_promise_data *data;
-	struct ie_p p;
-	data = &pmsg->data.me_paxos_msg_data_u.promise;
-	p.b.type = IE_P;
-	p.from = from;
-	p.data = data;
-	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
+	//FIXME: This one fails...
+	assert(instance->iid == data->i);
+	//FIXME: This one fails as well:
+	//assert(instance->b== data->b);
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }
@@ -446,11 +436,8 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 
 	pmsg = &msg->me_message_u.paxos_message;
 
-	if(ME_PAXOS_PROMISE == pmsg->data.type) {
-		do_promise(ME_A_ pmsg, from);
-	} else if(ME_PAXOS_LEARN == pmsg->data.type) {
-		do_learn(ME_A_ pmsg, from);
-	}
+	assert(ME_PAXOS_PROMISE == pmsg->data.type);
+	do_promise(ME_A_ pmsg, from);
 }
 
 static void do_client_value(ME_P_ struct buffer *buf)
