@@ -52,7 +52,7 @@ static int readit(char *ptr, char *buf, int size)
 static int writeit(char *ptr, char *buf, int size)
 {
 	struct client_context *cc = (struct client_context *)ptr;
-	return fbr_write(&cc->fbr, cc->fd, buf, size, NULL);
+	return fbr_write_all(&cc->fbr, cc->fd, buf, size);
 }
 
 void fiber_linefeed(struct fbr_context *fiber_context)

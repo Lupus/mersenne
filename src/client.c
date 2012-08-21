@@ -42,15 +42,18 @@ static int readit(char *ptr, char *buf, int size)
 		err(EXIT_FAILURE, "fbr_read failed");
 	if(0 == retval)
 		return -1;
-	//fprintf(stderr, "retval = %d\n", retval);
+	fprintf(stderr, "readit retval = %d\n", retval);
 	return retval;
 }
 
 static int writeit(char *ptr, char *buf, int size)
 {
+	int retval;
 	struct socket_context *context = (struct socket_context *)ptr;
 	struct me_context *mctx = context->mctx;
-	return fbr_write(&mctx->fbr, context->fd, buf, size, NULL);
+	retval = fbr_write(&mctx->fbr, context->fd, buf, size);
+	fprintf(stderr, "writeit retval = %d\n", retval);
+	return retval;
 }
 
 static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)

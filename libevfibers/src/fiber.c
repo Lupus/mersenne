@@ -275,28 +275,21 @@ finish:
 		return r;
 }
 
-ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count, ssize_t *done)
+ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ssize_t r;
-	ssize_t local_done = 0;
-	int uninterruptable = (NULL == done);
-	if(uninterruptable) done = &local_done;
+	ssize_t done = 0;
 
 	ev_io_set(&fiber->w_io, fd, EV_READ);
 	ev_io_start(fctx->loop, &fiber->w_io);
-	while (count != *done) {
+	while (count != done) {
 next:
 		fbr_yield(FBR_A);
-		if(!CALLED_BY_ROOT) {
-			if(uninterruptable)
-				continue;
-			ev_io_stop(fctx->loop, &fiber->w_io);
-			errno = EINTR;
-			return -1;
-		}
+		if(!CALLED_BY_ROOT)
+			continue;
 		for(;;) {
-			r = read(fd, buf + *done, count - *done);
+			r = read(fd, buf + done, count - done);
 			if (-1 == r) {
 				switch(errno) {
 					case EINTR:
@@ -311,11 +304,11 @@ next:
 		}
 		if(0 == r)
 			break;
-		*done += r;
+		done += r;
 	}
 	ev_io_stop(fctx->loop, &fiber->w_io);
 
-	return *done;
+	return done;
 
 error:
 	ev_io_stop(fctx->loop, &fiber->w_io);
@@ -367,28 +360,43 @@ ssize_t fbr_readline(FBR_P_ int fd, void *buffer, size_t n)
     return total_read;
 }
 
-ssize_t fbr_write(FBR_P_ int fd, const void *buf, size_t count, ssize_t *done)
+ssize_t fbr_write(FBR_P_ int fd, const void *buf, size_t count)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ssize_t r;
-	ssize_t local_done = 0;
-	int uninterruptable = (NULL == done);
-	if(uninterruptable) done = &local_done;
 
 	ev_io_set(&fiber->w_io, fd, EV_WRITE);
 	ev_io_start(fctx->loop, &fiber->w_io);
-	while (count != *done) {
+	fbr_yield(FBR_A);
+	if(!CALLED_BY_ROOT) {
+		errno = EINTR;
+		r = -1;
+		goto finish;
+	}
+	do {		
+		r = write(fd, buf, count);
+	} while(-1 == r && EINTR == errno);
+
+finish:
+	ev_io_stop(fctx->loop, &fiber->w_io);
+	return r;
+}
+
+ssize_t fbr_write_all(FBR_P_ int fd, const void *buf, size_t count)
+{
+	struct fbr_fiber *fiber = CURRENT_FIBER;
+	ssize_t r;
+	ssize_t done = 0;
+
+	ev_io_set(&fiber->w_io, fd, EV_WRITE);
+	ev_io_start(fctx->loop, &fiber->w_io);
+	while (count != done) {
 next:
 		fbr_yield(FBR_A);
-		if(!CALLED_BY_ROOT) {
-			if(uninterruptable)
-				continue;
-			ev_io_stop(fctx->loop, &fiber->w_io);
-			errno = EINTR;
-			return -1;
-		}
+		if(!CALLED_BY_ROOT)
+			continue;
 		for(;;) {
-			r = write(fd, buf + *done, count - *done);
+			r = write(fd, buf + done, count - done);
 			if (-1 == r) {
 				switch(errno) {
 					case EINTR:
@@ -401,11 +409,11 @@ next:
 			}
 			break;
 		}
-		*done += r;
+		done += r;
 	}
 	ev_io_stop(fctx->loop, &fiber->w_io);
 
-	return *done;
+	return done;
 
 error:
 	ev_io_stop(fctx->loop, &fiber->w_io);

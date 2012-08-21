@@ -28,10 +28,10 @@ void coro_io_test(FBR_P)
 	char buf[11] = {0};
 	int fd = STDIN_FILENO;
 	for(;;) {
-		fbr_read_all(FBR_A_ fd, buf, 10, NULL);
-		fbr_write(FBR_A_ STDOUT_FILENO, "read: ", 6, NULL);
-		fbr_write(FBR_A_ STDOUT_FILENO, buf, 10, NULL);
-		fbr_write(FBR_A_ STDOUT_FILENO, "\n", 1, NULL);
+		fbr_read_all(FBR_A_ fd, buf, 10);
+		fbr_write_all(FBR_A_ STDOUT_FILENO, "read: ", 6);
+		fbr_write_all(FBR_A_ STDOUT_FILENO, buf, 10);
+		fbr_write_all(FBR_A_ STDOUT_FILENO, "\n", 1);
 	}
 }
 
@@ -60,7 +60,7 @@ void coro_test(FBR_P)
 	int i;
 	struct fbr_fiber *io_fiber;
 	struct fbr_fiber *timer_fiber;
-	struct fbr_call_info *info;
+	struct fbr_call_info *info = NULL;
 	ev_tstamp timer_interval = 5.5;
 
 	io_fiber = fbr_create(FBR_A_ "io_test", coro_io_test);
