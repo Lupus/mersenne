@@ -151,7 +151,8 @@ static void connection_fiber(struct fbr_context *fiber_context)
 			if(CL_NEW_VALUE != msg.type)
 				goto conn_finish;
 			value = &msg.cl_message_u.new_value.value;
-			snprintf(buf, value->size1 + 1, "%s", value->ptr);
+			memcpy(buf, value->ptr, value->size1);
+			buf[value->size1] = '\0';
 			printf("[CLIENT] Got value: ``%s''\n", buf);
 			fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),

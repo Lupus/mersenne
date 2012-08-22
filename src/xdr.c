@@ -44,10 +44,10 @@ bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr)
 		if(!xdr_u_int(xdrs, &((*pptr)->nbits)))
 			return FALSE;
 	}
-	if(XDR_FREE == xdrs->x_op)
-		free(*pptr);
 	if(!xdr_opaque(xdrs, (caddr_t)(*pptr)->mask, (*pptr)->size * sizeof(unsigned long)))
 		return FALSE;
+	if(XDR_FREE == xdrs->x_op)
+		free(*pptr);
 	return TRUE;
 }
 

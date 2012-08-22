@@ -197,8 +197,10 @@ void lea_fiber(struct fbr_context *fiber_context)
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
 		instance = context.instances + i;
 		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
+		instance->closed = 0;
 		bm_init(instance->acks, nbits);
 		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
+		memset(instance->v_data, 0x00, ME_MAX_XDR_MESSAGE_LEN);
 	}
 
 start:
