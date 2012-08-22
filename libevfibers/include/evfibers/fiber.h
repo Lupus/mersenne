@@ -28,6 +28,7 @@
 #include <sys/socket.h>
 #include <assert.h>
 #include <ev.h>
+#include <err.h>
 #ifndef _FBR_NO_CTX_STUB
 #include <evfibers/context_size.h>
 #endif
@@ -63,6 +64,16 @@ struct fbr_fiber;
 #define FBR_A_ FBR_A,
 
 
+#ifndef _FBR_NO_CTX_STUB
+#define fbr_init(ctx, loop) \
+	do { \
+		if(FBR_CONTEXT_SIZE != fbr_context_size()) \
+			errx(666, "libevfibers: FBR_CONTEXT_SIZE differs from " \
+				"fbr_context_size(), ensure that library header " \
+				"files match it's binary distribution"); \
+		fbr_init(ctx,loop); \
+	} while(0);
+#endif
 
 typedef void (*fbr_fiber_func_t)(FBR_P);
 
@@ -81,7 +92,7 @@ struct fbr_call_info {
 };
 
 int fbr_context_size();
-void fbr_init(FBR_P_ struct ev_loop *loop);
+void (fbr_init)(FBR_P_ struct ev_loop *loop);
 struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P));
 void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber);
 int fbr_is_reclaimed(FBR_P_ struct fbr_fiber *fiber);
