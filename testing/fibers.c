@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
 	struct fbr_fiber *fiber;
 	context._opaque_context_data_[0] = 'x';
 
-	fbr_init(FBR_A_ EV_DEFAULT);
+	fbr_init(FBR_A, EV_DEFAULT);
 	fiber = fbr_create(FBR_A_ "coro_test", coro_test);
 
 	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));

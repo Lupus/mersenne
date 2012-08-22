@@ -54,7 +54,11 @@ struct fbr_fiber {
 	struct fbr_call_info *call_list;
 	struct obstack obstack;
 	ev_io w_io;
+	int w_io_expected;
+	struct trace_info w_io_tinfo;
 	ev_timer w_timer;
+	struct trace_info w_timer_tinfo;
+	int w_timer_expected;
 	int reclaimed;
 
 	struct fbr_fiber *next, *prev;

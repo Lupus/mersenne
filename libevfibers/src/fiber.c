@@ -54,6 +54,17 @@ static void ev_wakeup_io(EV_P_ ev_io *w, int event)
 	fctx = (struct fbr_context *)w->data;
 
 	ENSURE_ROOT_FIBER;
+	if(1 != fiber->w_io_expected) {
+		fprintf(stderr, "libevfibers: fiber ``%s'' is about to be woken "
+				"up by an io event but it does not expect "
+				"this.\n", fiber->name);
+		fprintf(stderr, "libevfibers: last registered io request for "
+				"this fiber was:\n");
+		fprintf(stderr, "--- begin trace ---\n");
+		print_trace_info(&fiber->w_io_tinfo);
+		fprintf(stderr, "--- end trace ---\n");
+		abort();
+	}
 
 	fbr_call(FBR_A_ fiber, 0);
 }
@@ -66,6 +77,17 @@ static void ev_wakeup_timer(EV_P_ ev_timer *w, int event)
 	fctx = (struct fbr_context *)w->data;
 
 	ENSURE_ROOT_FIBER;
+	if(1 != fiber->w_timer_expected) {
+		fprintf(stderr, "libevfibers: fiber ``%s'' is about to be woken "
+				"up by a timer event but it does not expect "
+				"this.\n", fiber->name);
+		fprintf(stderr, "libevfibers: last registered timer request for "
+				"this fiber was:\n");
+		fprintf(stderr, "--- begin trace ---\n");
+		print_trace_info(&fiber->w_timer_tinfo);
+		fprintf(stderr, "--- end trace ---\n");
+		abort();
+	}
 
 	fbr_call(FBR_A_ fiber, 0);
 }
@@ -232,10 +254,15 @@ int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr)
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	struct fbr_call_info *tmp;
 
+again:
 	if(NULL == fiber->call_list)
 		return 0;
 	tmp = fiber->call_list;
 	DL_DELETE(fiber->call_list, fiber->call_list);
+	if(tmp->caller == &fctx->root) {
+		free(tmp);
+		goto again;
+	}
 	if(NULL == info_ptr)
 		free(tmp);
 	else {
@@ -253,26 +280,41 @@ void fbr_yield(FBR_P)
 	coro_transfer(&callee->ctx, &caller->ctx);
 }
 
+static void io_start(FBR_P_ struct fbr_fiber *fiber, int fd, int events)
+{
+	ev_io_set(&fiber->w_io, fd, events);
+	ev_io_start(fctx->loop, &fiber->w_io);
+	assert(0 == fiber->w_io_expected);
+	fiber->w_io_expected = 1;
+	fill_trace_info(&fiber->w_io_tinfo);
+}
+
+static void io_stop(FBR_P_ struct fbr_fiber *fiber)
+{
+	assert(1 == fiber->w_io_expected);
+	fiber->w_io_expected = 0;
+	ev_io_stop(fctx->loop, &fiber->w_io);
+}
+
 ssize_t fbr_read(FBR_P_ int fd, void *buf, size_t count)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ssize_t r;
 
-	ev_io_set(&fiber->w_io, fd, EV_READ);
-	ev_io_start(fctx->loop, &fiber->w_io);
-		fbr_yield(FBR_A);
-		if(!CALLED_BY_ROOT) {
-			errno = EINTR;
-			r = -1;
-			goto finish;
-		}
-		do {
-			r = read(fd, buf, count);
-		} while(-1 == r && EINTR == errno);
+	io_start(FBR_A_ fiber, fd, EV_READ);
+	fbr_yield(FBR_A);
+	if(!CALLED_BY_ROOT) {
+		errno = EINTR;
+		r = -1;
+		goto finish;
+	}
+	do {
+		r = read(fd, buf, count);
+	} while(-1 == r && EINTR == errno);
 
 finish:
-		ev_io_stop(fctx->loop, &fiber->w_io);
-		return r;
+	io_stop(FBR_A_ fiber);
+	return r;
 }
 
 ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count)
@@ -281,8 +323,7 @@ ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count)
 	ssize_t r;
 	ssize_t done = 0;
 
-	ev_io_set(&fiber->w_io, fd, EV_READ);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, fd, EV_READ);
 	while (count != done) {
 next:
 		fbr_yield(FBR_A);
@@ -306,12 +347,11 @@ next:
 			break;
 		done += r;
 	}
-	ev_io_stop(fctx->loop, &fiber->w_io);
-
+	io_stop(FBR_A_ fiber);
 	return done;
 
 error:
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	io_stop(FBR_A_ fiber);
 	return -1;
 }
 
@@ -365,8 +405,7 @@ ssize_t fbr_write(FBR_P_ int fd, const void *buf, size_t count)
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ssize_t r;
 
-	ev_io_set(&fiber->w_io, fd, EV_WRITE);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, fd, EV_WRITE);
 	fbr_yield(FBR_A);
 	if(!CALLED_BY_ROOT) {
 		errno = EINTR;
@@ -378,7 +417,7 @@ ssize_t fbr_write(FBR_P_ int fd, const void *buf, size_t count)
 	} while(-1 == r && EINTR == errno);
 
 finish:
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	io_stop(FBR_A_ fiber);
 	return r;
 }
 
@@ -388,8 +427,7 @@ ssize_t fbr_write_all(FBR_P_ int fd, const void *buf, size_t count)
 	ssize_t r;
 	ssize_t done = 0;
 
-	ev_io_set(&fiber->w_io, fd, EV_WRITE);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, fd, EV_WRITE);
 	while (count != done) {
 next:
 		fbr_yield(FBR_A);
@@ -411,12 +449,11 @@ next:
 		}
 		done += r;
 	}
-	ev_io_stop(fctx->loop, &fiber->w_io);
-
+	io_stop(FBR_A_ fiber);
 	return done;
 
 error:
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	io_stop(FBR_A_ fiber);
 	return -1;
 }
 
@@ -426,10 +463,9 @@ ssize_t fbr_recvfrom(FBR_P_ int sockfd, void *buf, size_t len, int flags, struct
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	int nbytes;
 
-	ev_io_set(&fiber->w_io, sockfd, EV_READ);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, sockfd, EV_READ);
 	fbr_yield(FBR_A);
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	io_stop(FBR_A_ fiber);
 	if(CALLED_BY_ROOT) {
 		nbytes = recvfrom(sockfd, buf, len, flags, src_addr, addrlen);
 		return nbytes;
@@ -444,10 +480,9 @@ ssize_t fbr_sendto(FBR_P_ int sockfd, const void *buf, size_t len, int flags, co
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	int nbytes;
 
-	ev_io_set(&fiber->w_io, sockfd, EV_WRITE);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, sockfd, EV_WRITE);
 	fbr_yield(FBR_A);
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	io_stop(FBR_A_ fiber);
 	if(CALLED_BY_ROOT) {
 		nbytes = sendto(sockfd, buf, len, flags, dest_addr, addrlen);
 		return nbytes;
@@ -461,30 +496,44 @@ int fbr_accept(FBR_P_ int sockfd, struct sockaddr *addr, socklen_t *addrlen)
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	int r;
 
-	ev_io_set(&fiber->w_io, sockfd, EV_READ);
-	ev_io_start(fctx->loop, &fiber->w_io);
+	io_start(FBR_A_ fiber, sockfd, EV_READ);
 	fbr_yield(FBR_A);
 	if(!CALLED_BY_ROOT) {
-		ev_io_stop(fctx->loop, &fiber->w_io);
+		io_stop(FBR_A_ fiber);
 		errno = EINTR;
 		return -1;
 	}
 	do {
 		r = accept(sockfd, addr, addrlen);
 	} while(-1 == r && EINTR == errno);
-	ev_io_stop(fctx->loop, &fiber->w_io);
+	
+	io_stop(FBR_A_ fiber);
 
 	return r;
+}
+
+static void timer_start(FBR_P_ struct fbr_fiber *fiber, ev_tstamp timeout,
+		ev_tstamp repeat)
+{
+	ev_timer_set(&fiber->w_timer, timeout, repeat);
+	ev_timer_start(fctx->loop, &fiber->w_timer);
+	fiber->w_timer_expected = 1;
+	fill_trace_info(&fiber->w_timer_tinfo);
+}
+
+static void timer_stop(FBR_P_ struct fbr_fiber *fiber)
+{
+	fiber->w_timer_expected = 0;
+	ev_timer_stop(fctx->loop, &fiber->w_timer);
 }
 
 ev_tstamp fbr_sleep(FBR_P_ ev_tstamp seconds)
 {
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	ev_tstamp expected = ev_now(fctx->loop) + seconds;
-	ev_timer_set(&fiber->w_timer, seconds, 0.);
-	ev_timer_start(fctx->loop, &fiber->w_timer);
+	timer_start(FBR_A_ fiber, seconds, 0.);
 	fbr_yield(FBR_A);
-	ev_timer_stop(fctx->loop, &fiber->w_timer);
+	timer_stop(FBR_A_ fiber);
 	if(CALLED_BY_ROOT)
 		return 0.;
 	return expected - ev_now(fctx->loop);
@@ -503,6 +552,8 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	}
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, FBR_A, fiber->stack,
 			FBR_STACK_SIZE);
+	fiber->w_io_expected = 0;
+	fiber->w_timer_expected = 0;
 	fiber->call_list = NULL;
 	fiber->name = name;
 	fiber->func = func;
