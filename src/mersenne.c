@@ -65,7 +65,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	memset(&msg, 0, sizeof(msg));
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
 	if(!xdr_me_message(&xdrs, &msg))
-		err(EXIT_FAILURE, "unable to decode a message");
+		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a message");
 	switch(msg.super_type) {
 		case ME_LEADER:
 			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
@@ -87,13 +87,14 @@ static void fiber_main(struct fbr_context *fiber_context)
 	int nbytes;
 	struct sockaddr client_addr;
 	socklen_t client_addrlen = sizeof(client_addr);
-	char msgbuf[MSGBUFSIZE];
+	char msgbuf[ME_MAX_XDR_MESSAGE_LEN];
 	
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_next_call_info(&mctx->fbr, NULL);
 	for(;;) {
-		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf, MSGBUFSIZE, 0,
-				&client_addr, &client_addrlen);
+		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf,
+				ME_MAX_XDR_MESSAGE_LEN, 0, &client_addr,
+				&client_addrlen);
 		if (nbytes < 0 && errno != EINTR)
 				err(1, "recvfrom");
 		process_message(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);

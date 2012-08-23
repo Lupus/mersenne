@@ -46,20 +46,24 @@ void msg_send_all(ME_P_ struct me_message *msg)
 void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
 	struct me_peer *p;
 	int size;
+	int retval;
 	XDR xdrs;
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_me_message(&xdrs, msg))
-		err(EXIT_FAILURE, "failed to encode a message");
+		errx(EXIT_FAILURE, "xdr_me_message: failed to encode a message");
 	size = xdr_getpos(&xdrs);
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(!predicate(p, context))
 			continue;
 		//printf("Sending predicated msg to %d\n", p->index);
-		if (sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr)) < 0)
+		retval = sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr));
+		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
+		if (retval < size)
+			warnx("message got truncated from %d to %d while sending", size, retval);
 	}
 	xdr_destroy(&xdrs);
 }

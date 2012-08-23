@@ -23,7 +23,6 @@
 #define _VARS_H_
 
 #define MERSENNE_PORT		6377
-#define MSGBUFSIZE		256
 #define SEND_BUFFER_SIZE	MSGBUFSIZE * 50
 #define TIME_DELTA		5100
 #define TIME_EPSILON		0
