@@ -28,10 +28,12 @@
 #include <mersenne/leader.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context_fwd.h>
+#include <mersenne/cmdline.h>
 
 struct me_peer;
 
 struct me_context {
+	struct gengetopt_args_info args_info;
 	struct ev_loop *loop;
 	int counter;
 	ev_io socket_watcher;

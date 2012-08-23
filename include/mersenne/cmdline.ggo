@@ -1,0 +1,11 @@
+package "mersenne"
+version "1.0.0"
+
+# Options
+option "peer-number" p "Index of current instance in peers config" int required
+option "client-socket" s "Location of client unix socket" string typestr="unix socket" default="/var/run/mersenne.sock" optional
+option "leader-delta" - "Leader election round delta" double default="0.1" optional
+option "leader-epsilon" - "Leader election round epsilon" double default="0.0" optional
+option "proposer-instance-window" - "Instance window size for proposer" int default="100" optional
+option "learner-instance-window" - "Instance window size for learner" int default="100" optional
+option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional

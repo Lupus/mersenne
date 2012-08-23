@@ -31,6 +31,7 @@ ENDMACRO(GENSTRENUM)
 
 find_package(LibEV REQUIRED)
 find_package(RpcGen REQUIRED)
+find_package(GenGetOpt REQUIRED)
 
 include_directories(
 	"${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -53,6 +54,9 @@ set_source_files_properties("include/mersenne/cl_protocol.c"
 	)
 GENSTRENUM(${CMAKE_CURRENT_BINARY_DIR} "/include/mersenne/me_protocol.h" "")
 
+set(GENGETOPT_SOURCES "include/mersenne/cmdline.ggo")
+ADD_GENGETOPT_FILES(${GENGETOPT_SOURCES} GGO_GEN_SOURCES)
+
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/src" MERSENNE_SOURCES)
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/include/mersenne" MERSENNE_HEADERS)
 set(MERSENNE_GEN_SOURCES
@@ -72,6 +76,8 @@ add_executable(mersenne
 	${MERSENNE_SOURCES}
 	${MERSENNE_HEADERS}
 	${MERSENNE_GEN_SOURCES}
+	${GENGETOPT_SOURCES}
+	${GGO_GEN_SOURCES}
 	${LIBCORO_SOURCES}
 	)
 target_link_libraries(mersenne evfibers ${LIBEV_LDFLAGS} crypto)

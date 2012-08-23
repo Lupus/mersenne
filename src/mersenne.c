@@ -41,6 +41,7 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/client.h>
+#include <mersenne/cmdline.h>
 
 #define LISTEN_BACKLOG 50
 
@@ -122,7 +123,7 @@ static void set_up_udp_socket(ME_P)
 static void set_up_client_socket(ME_P)
 {
 	struct sockaddr_un addr;
-	char *rendezvous = getenv("UNIX_SOCKET");
+	char *rendezvous = mctx->args_info.client_socket_arg;
 
 	if ((mctx->client_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
 		err(EXIT_FAILURE, "failed to create a client socket");
@@ -139,27 +140,17 @@ static void set_up_client_socket(ME_P)
                err(EXIT_FAILURE, "client socket listen failed");
 }
 
-static void check_config()
-{
-	if(NULL == getenv("UNIX_SOCKET"))
-		errx(EXIT_FAILURE, "UNIX_SOCKET is not set in env");
-}
-
 int main(int argc, char *argv[])
 {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 
-	if(argc != 2) {
-		puts("Please enter peer number!");
-		abort();
-	}
-
-	check_config();
+	if(0 != cmdline_parser(argc, argv, &mctx->args_info))
+		exit(EXIT_FAILURE + 1);
 
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
-	load_peer_list(ME_A_ atoi(argv[1]));
+	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
 
 	set_up_udp_socket(ME_A);
 	set_up_client_socket(ME_A);
