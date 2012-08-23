@@ -37,7 +37,7 @@
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield.ptr,(add)->bufferfield.size1,add)
 
 #define VALUE_TO 10.0
-#define VALUE_SIZE 64
+#define VALUE_SIZE 1024
 
 struct my_value {
 	struct buffer v;
@@ -159,7 +159,7 @@ void fiber_reader(struct fbr_context *fiber_context)
 	XDR xdrs;
 	struct cl_message msg;
 	struct buffer *value;
-	char buf[1000];
+	char buf[2000];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 	fbr_next_call_info(&cc->fbr, NULL);
@@ -180,8 +180,8 @@ void fiber_reader(struct fbr_context *fiber_context)
 				errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
 			value = &msg.cl_message_u.learned_value.value;
 			snprintf(buf, value->size1 + 1, "%s", value->ptr);
-			//printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
-			//		msg.cl_message_u.learned_value.i, buf);
+			printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
+					msg.cl_message_u.learned_value.i, buf);
 			next_value(cc, value);
 			xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		}

@@ -57,9 +57,9 @@ static inline struct lea_instance * get_instance(struct learner_context *context
 
 static void do_deliver(ME_P_ struct learner_context *context, struct lea_instance *instance)
 {
-	char buf[1000];
+	//char buf[ME_MAX_XDR_MESSAGE_LEN];
 
-	snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
+	//snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
 	//fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n",
 	//		instance->iid, instance->b, buf);
 	fbr_call(&mctx->fbr, context->owner, 3,
@@ -125,6 +125,8 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	if(data->i < context->first_non_delivered)
 		return;
 	if(data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
+		if(data->i > context->highest_seen)
+			context->highest_seen = data->i;
 		warnx("[LEARNER] value out of instance windows, discarding");
 		warnx("[LEARNER] data->i == %lu while "
 				"context->first_non_delivered == %lu", data->i,
