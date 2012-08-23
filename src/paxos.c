@@ -21,7 +21,6 @@
 
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
-#include <mersenne/vars.h>
 #include <mersenne/util.h>
 #include <mersenne/message.h>
 #include <mersenne/peers.h>

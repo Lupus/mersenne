@@ -31,7 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
 
-#define LEA_INSTANCE_WINDOW 5
+#define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 
 struct lea_instance {
 	uint64_t iid;
@@ -48,10 +48,12 @@ struct learner_context {
 	uint64_t next_retransmit;
 	struct lea_instance *instances;
 	struct fbr_fiber *owner;
+	struct me_context *mctx;
 };
 
 static inline struct lea_instance * get_instance(struct learner_context *context, uint64_t iid)
 {
+	struct me_context *mctx = context->mctx;
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
 }
 
@@ -189,6 +191,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 	fbr_assert(&mctx->fbr, 1 == info->argc);
 	context.first_non_delivered = info->argv[0].i;
 	context.owner = info->caller;
+	context.mctx = mctx;
 
 	fbr_subscribe(&mctx->fbr, FMT_LEARNER);
 

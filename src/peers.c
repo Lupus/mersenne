@@ -25,7 +25,6 @@
 
 #include <mersenne/peers.h>
 #include <mersenne/context.h>
-#include <mersenne/vars.h>
 
 void add_peer(ME_P_ struct me_peer *p)
 {
@@ -95,7 +94,7 @@ void load_peer_list(ME_P_ int my_index)
 		p->addr.sin_family = AF_INET;
 		if(0 == inet_aton(addr, &p->addr.sin_addr))
 			errx(EXIT_FAILURE, "invalid address: %s", line_buf);
-		p->addr.sin_port = htons(MERSENNE_PORT);
+		p->addr.sin_port = htons(mctx->args_info.port_num_arg);
 		if('a' == flag[0])
 			p->pxs.is_acceptor = 1;
 		if(i == my_index) {

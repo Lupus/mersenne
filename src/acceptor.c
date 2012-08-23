@@ -29,8 +29,6 @@
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
 
-#define REPEAT_INTERVAL 1.
-
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)
 {
@@ -157,7 +155,7 @@ static void repeater_fiber(struct fbr_context *fiber_context)
 
 	for(;;) {
 		send_highest_accepted(ME_A);
-		fbr_sleep(&mctx->fbr, REPEAT_INTERVAL);
+		fbr_sleep(&mctx->fbr, mctx->args_info.acceptor_repeat_interval_arg);
 	}
 }
 

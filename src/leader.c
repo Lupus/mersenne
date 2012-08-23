@@ -28,10 +28,12 @@
 #include <mersenne/leader.h>
 #include <mersenne/context.h>
 #include <mersenne/proposer.h>
-#include <mersenne/vars.h>
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/fiber_args.strenum.h>
+
+#define TIME_DELTA mctx->args_info.leader_delta_arg
+#define TIME_EPSILON mctx->args_info.leader_epsilon_arg
 
 struct bm_mask * get_trust(ME_P)
 {
@@ -81,7 +83,7 @@ void message_init(ME_P_ struct me_message *msg)
 	gettimeofday(&hdr->sent, NULL);
 }
 
-int is_expired(struct me_message *msg)
+int is_expired(ME_P_ struct me_message *msg)
 {
 	struct timeval now;
 	struct me_leader_msg_header *hdr;
@@ -385,7 +387,7 @@ start:
 		msg = info->argv[1].v;
 		from = info->argv[1].v;
 
-		if(is_expired(msg)) {
+		if(is_expired(ME_A_ msg)) {
 			warnx("got expired message");
 			continue;
 		}

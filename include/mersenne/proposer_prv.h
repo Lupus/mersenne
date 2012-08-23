@@ -29,8 +29,7 @@
 #include <mersenne/bitmask.h>
 #include <mersenne/buffer.h>
 
-#define PRO_INSTANCE_WINDOW 5
-#define MAX_PROC 100
+#define PRO_INSTANCE_WINDOW mctx->args_info.proposer_instance_window_arg
 #define TO1 0.1
 #define TO2 0.1
 

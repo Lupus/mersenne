@@ -36,7 +36,6 @@
 #include <mersenne/me_protocol.h>
 #include <mersenne/context.h>
 #include <mersenne/peers.h>
-#include <mersenne/vars.h>
 #include <mersenne/paxos.h>
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>

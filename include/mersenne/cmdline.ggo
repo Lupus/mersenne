@@ -4,8 +4,10 @@ version "1.0.0"
 # Options
 option "peer-number" p "Index of current instance in peers config" int required
 option "client-socket" s "Location of client unix socket" string typestr="unix socket" default="/var/run/mersenne.sock" optional
-option "leader-delta" - "Leader election round delta" double default="0.1" optional
-option "leader-epsilon" - "Leader election round epsilon" double default="0.0" optional
-option "proposer-instance-window" - "Instance window size for proposer" int default="100" optional
-option "learner-instance-window" - "Instance window size for learner" int default="100" optional
+option "port-num" P "UDP port number" int default="6377" optional
+option "max-instances" - "Max mersenne instances (should be power of 10)" int default="100" optional
+option "leader-delta" - "Leader election round delta (ms)" int default="100" optional
+option "leader-epsilon" - "Leader election round epsilon (ms)" int default="0" optional
+option "proposer-instance-window" - "Instance window size for proposer" int default="5" optional
+option "learner-instance-window" - "Instance window size for learner" int default="5" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
