@@ -9,5 +9,7 @@ option "max-instances" - "Max mersenne instances (should be power of 10)" int de
 option "leader-delta" - "Leader election round delta (ms)" int default="100" optional
 option "leader-epsilon" - "Leader election round epsilon (ms)" int default="0" optional
 option "proposer-instance-window" - "Instance window size for proposer" int default="5" optional
+option "proposer-timeout-1" - "Timeout for phase 1 (s)" double default="0.1" optional
+option "proposer-timeout-2" - "Timeout for phase 2 (s)" double default="0.1" optional
 option "learner-instance-window" - "Instance window size for learner" int default="5" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional

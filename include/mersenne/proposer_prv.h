@@ -30,8 +30,8 @@
 #include <mersenne/buffer.h>
 
 #define PRO_INSTANCE_WINDOW mctx->args_info.proposer_instance_window_arg
-#define TO1 0.1
-#define TO2 0.1
+#define TO1 mctx->args_info.proposer_timeout_1_arg
+#define TO2 mctx->args_info.proposer_timeout_2_arg
 
 enum instance_state {
     IS_EMPTY = 0,
