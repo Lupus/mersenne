@@ -24,17 +24,42 @@
 #include <err.h>
 #include <unistd.h>
 #include <ev.h>
+#include <uthash.h>
+#include <time.h>
 
 #include <evfibers/fiber.h>
 #include <mersenne/cl_protocol.h>
 #include <mersenne/util.h>
+
+#define HASH_FIND_BUFFER(head,buffer,out) \
+	HASH_FIND(hh,head,(buffer)->ptr,(buffer)->size1,out)
+#define HASH_ADD_BUFFER(head,bufferfield,add) \
+	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield.ptr,(add)->bufferfield.size1,add)
+
+#define VALUE_TO 10.0
+#define VALUE_SIZE 64
+
+struct my_value {
+	struct buffer v;
+	struct ev_timer timer;
+	UT_hash_handle hh;
+};
 
 struct client_context {
 	int fd;
 	struct fbr_context fbr;
 	struct ev_loop *loop;
 	struct fbr_fiber *mersenne_read;
-	struct fbr_fiber *line_feed;
+	struct fbr_fiber *main;
+	struct my_value *values;
+	int concurrency;
+	struct {
+		int total;
+		int received;
+		int timeouts;
+		int other;
+		time_t started;
+	} stats;
 };
 
 static int readit(char *ptr, char *buf, int size)
@@ -55,31 +80,77 @@ static int writeit(char *ptr, char *buf, int size)
 	return fbr_write_all(&cc->fbr, cc->fd, buf, size);
 }
 
-void fiber_linefeed(struct fbr_context *fiber_context)
+static void randomize_buffer(struct buffer *buffer)
 {
-	struct client_context *cc;
-	char buf[1000];
-	char buf2[1200];
+	unsigned int i;
+
+
+	for (i = 0; i < buffer->size1; i++) {
+		/* ASCII characters 33 to 126 */
+		buffer->ptr[i] = rand() % (126 - 33 + 1) + 33;
+	}
+}
+
+static void submit_value(struct client_context *cc, struct my_value *value)
+{
 	XDR xdrs;
 	struct cl_message msg;
-	struct buffer *value;
-	int i = 0;
-
-	cc = container_of(fiber_context, struct client_context, fbr);
-	fbr_next_call_info(&cc->fbr, NULL);
+	struct buffer *msg_value;
 
 	msg.type = CL_NEW_VALUE;
-	value = &msg.cl_message_u.new_value.value;
-	while(fbr_readline(&cc->fbr, STDIN_FILENO, buf, 1000)) {
-		snprintf(buf2, 1200, "%03d:%s", i++, buf);
-		xdrrec_create(&xdrs, 0, 0, (char *)cc, NULL, writeit);
-		xdrs.x_op = XDR_ENCODE;
-		buf_init(value, buf2, strlen(buf2) - 1);
-		if(!xdr_cl_message(&xdrs, &msg))
-			err(EXIT_FAILURE, "unable to encode a client message");
-		xdrrec_endofrecord(&xdrs, TRUE);
-		xdr_destroy(&xdrs);
+	msg_value = &msg.cl_message_u.new_value.value;
+	xdrrec_create(&xdrs, 0, 0, (char *)cc, NULL, writeit);
+	xdrs.x_op = XDR_ENCODE;
+	buf_init(msg_value, NULL, 0);
+	buf_share(msg_value, &value->v);
+	if(!xdr_cl_message(&xdrs, &msg))
+		err(EXIT_FAILURE, "unable to encode a client message");
+	xdrrec_endofrecord(&xdrs, TRUE);
+	xdr_destroy(&xdrs);
+	ev_timer_start(cc->loop, &value->timer);
+}
+
+static void client_finished(struct client_context *cc)
+{
+	time_t run_time = time(NULL) - cc->stats.started;
+	printf("Run statistics:\n");
+	printf("==========================================\n");
+	printf("Total run time: %ld\n", run_time);
+	printf("Value size (bytes): %d\n", VALUE_SIZE);
+	printf("Value timeout (seconds): %f\n", VALUE_TO);
+	printf("Value concurrency: %d\n", cc->concurrency);
+	printf("Values received: %d\n", cc->stats.received);
+	printf("Values timed out: %d\n", cc->stats.timeouts);
+	printf("Other values received: %d\n", cc->stats.other);
+	printf("Average throughput (bytes/second): %.2f\n", (float)VALUE_SIZE * cc->stats.received / run_time);
+	printf("==========================================\n");
+	exit(0);
+}
+
+static void next_value(struct client_context *cc, struct buffer *buf)
+{
+	struct my_value *value = NULL;
+	HASH_FIND_BUFFER(cc->values, buf, value);
+	if(NULL == value) {
+		cc->stats.other++;
+		return;
 	}
+	ev_timer_stop(cc->loop, &value->timer);
+	HASH_DEL(cc->values, value);
+	cc->stats.received++;
+	if(cc->stats.received == cc->stats.total)
+		client_finished(cc);
+	randomize_buffer(&value->v);
+	HASH_ADD_BUFFER(cc->values, v, value);
+	submit_value(cc, value);
+}
+
+static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
+{
+	struct client_context *cc = (struct client_context *)w->data;
+	struct my_value *value;
+	value = container_of(w, struct my_value, timer);
+	fbr_call(&cc->fbr, cc->main, 1, fbr_arg_v(value));
 }
 
 void fiber_reader(struct fbr_context *fiber_context)
@@ -109,10 +180,11 @@ void fiber_reader(struct fbr_context *fiber_context)
 				errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
 			value = &msg.cl_message_u.learned_value.value;
 			snprintf(buf, value->size1 + 1, "%s", value->ptr);
-			printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
-					msg.cl_message_u.learned_value.i, buf);
+			//printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
+			//		msg.cl_message_u.learned_value.i, buf);
+			next_value(cc, value);
+			xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		}
-		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
 	}
 conn_finish:
@@ -136,20 +208,63 @@ void set_up_socket(struct client_context *cc)
 		err(EXIT_FAILURE, "connect to unix socket failed");
 }
 
+static void init_values(struct client_context *cc)
+{
+	int i;
+	struct my_value *values = calloc(sizeof(struct my_value), cc->concurrency);
+	cc->values = NULL;
+	cc->stats.started = time(NULL);
+	for(i = 0; i < cc->concurrency; i++) {
+		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, 0.);
+		values[i].timer.data = cc;
+		buf_init(&values[i].v, malloc(VALUE_SIZE), VALUE_SIZE);
+		randomize_buffer(&values[i].v);
+		HASH_ADD_BUFFER(cc->values, v, values + i);
+		submit_value(cc, values + i);
+	}
+}
+
+
+void fiber_main(struct fbr_context *fiber_context)
+{
+	struct client_context *cc;
+	struct fbr_call_info *info = NULL;
+	struct my_value *value;
+
+	cc = container_of(fiber_context, struct client_context, fbr);
+	set_up_socket(cc);
+	init_values(cc);
+	cc->mersenne_read = fbr_create(&cc->fbr, "mersenne_read", fiber_reader);
+	fbr_call(&cc->fbr, cc->mersenne_read, 0);
+	
+	fbr_next_call_info(&cc->fbr, NULL);
+
+	for(;;) {
+		fbr_yield(&cc->fbr);
+		while(fbr_next_call_info(&cc->fbr, &info)) {
+			value = info->argv[0].v;
+			cc->stats.timeouts++;
+			submit_value(cc, value);
+		}
+	}
+}
+
 int main(int argc, char *argv[]) {
 	struct client_context cc;
 
+	srand((unsigned int) time(NULL));  
 	cc.loop = EV_DEFAULT;
-
-	set_up_socket(&cc);
-
 	fbr_init(&cc.fbr, cc.loop);
 
-	cc.mersenne_read = fbr_create(&cc.fbr, "mersenne_read", fiber_reader);
-	cc.line_feed = fbr_create(&cc.fbr, "linefeed", fiber_linefeed);
-
-	fbr_call(&cc.fbr, cc.line_feed, 0);
-	fbr_call(&cc.fbr, cc.mersenne_read, 0);
+	assert(3 == argc);
+	cc.concurrency = atoi(argv[1]);
+	cc.stats.total = atoi(argv[2]);
+	cc.stats.received = 0;
+	cc.stats.timeouts = 0;
+	cc.stats.other = 0;
+	
+	cc.main = fbr_create(&cc.fbr, "main", fiber_main);
+	fbr_call(&cc.fbr, cc.main, 0);
 	
 	ev_loop(cc.loop, 0);
 

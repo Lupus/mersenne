@@ -39,7 +39,7 @@ static int readit(char *ptr, char *buf, int size)
 	int retval;
 	retval = fbr_read(&mctx->fbr, context->fd, buf, size);
 	if(-1 == retval)
-		err(EXIT_FAILURE, "fbr_read failed");
+		warn("fbr_read failed");
 	if(0 == retval)
 		return -1;
 	return retval;
@@ -49,7 +49,11 @@ static int writeit(char *ptr, char *buf, int size)
 {
 	struct socket_context *context = (struct socket_context *)ptr;
 	struct me_context *mctx = context->mctx;
-	return fbr_write(&mctx->fbr, context->fd, buf, size);
+	int retval;
+	retval = fbr_write(&mctx->fbr, context->fd, buf, size);
+	if(-1 == retval)
+		warn("fbr_write failed");
+	return retval;
 }
 
 static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
