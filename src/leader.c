@@ -48,14 +48,11 @@ struct bm_mask * get_trust(ME_P)
 	return bmp;
 }
 
-void get_config_checksum(ME_P_ char **buf, int *size)
+void get_config_checksum(ME_P_ char *buf, int *size)
 {
 	EVP_MD_CTX mdctx;
 	const EVP_MD *md = EVP_md4();
 	struct me_peer *p;
-
-	if(NULL == *buf)
-		*buf = malloc(EVP_MAX_MD_SIZE);
 
 	EVP_MD_CTX_init(&mdctx);
 	EVP_DigestInit_ex(&mdctx, md, NULL);
@@ -66,7 +63,7 @@ void get_config_checksum(ME_P_ char **buf, int *size)
 				sizeof(in_addr_t));
 	}
 
-	EVP_DigestFinal_ex(&mdctx, (unsigned char *)*buf, (unsigned int *)size);
+	EVP_DigestFinal_ex(&mdctx, (unsigned char *)buf, (unsigned int *)size);
 	EVP_MD_CTX_cleanup(&mdctx);
 }
 
@@ -75,11 +72,12 @@ void message_init(ME_P_ struct me_message *msg)
 	struct me_leader_msg_header *hdr;
 	char *ptr;
 
+	memset(msg, 0x00, sizeof(struct me_message));
 	msg->super_type = ME_LEADER;
 	hdr = &msg->me_message_u.leader_message.header;
 	hdr->count = mctx->counter++;
 	ptr = hdr->config_checksum;
-	get_config_checksum(ME_A_ (char **)&ptr, NULL);
+	get_config_checksum(ME_A_ ptr, NULL);
 	gettimeofday(&hdr->sent, NULL);
 }
 
@@ -102,10 +100,10 @@ int is_expired(struct me_message *msg)
 int config_match(ME_P_ struct me_message *msg)
 {
 	struct me_leader_msg_header *hdr;
-	char *checksum = NULL;
+	char checksum[EVP_MAX_MD_SIZE];
 	int cs_size;
 
-	get_config_checksum(ME_A_ &checksum, &cs_size);
+	get_config_checksum(ME_A_ checksum, &cs_size);
 	hdr = &msg->me_message_u.leader_message.header;
 
 	if(strncmp(checksum, hdr->config_checksum, cs_size))

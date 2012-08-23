@@ -114,13 +114,14 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		//TODO: Add REJECT message here for speedup
 		return;
 	}
-	if(!r->v.empty)
-		assert(0 == buf_cmp(&r->v, &data->v));
 	r->b = data->b;
-	ptr = malloc(data->v.size1);
-	buf_init(&r->v, ptr, data->v.size1);
-	buf_copy(&r->v, &data->v);
-	assert(r->v.size1 > 0);
+	if(r->v.empty) {
+		ptr = malloc(data->v.size1);
+		buf_init(&r->v, ptr, data->v.size1);
+		buf_copy(&r->v, &data->v);
+		assert(r->v.size1 > 0);
+	} else
+		assert(0 == buf_cmp(&r->v, &data->v));
 	if(r->iid > mctx->pxs.acc.highest_accepted)
 		 mctx->pxs.acc.highest_accepted = r->iid;
 	printf("[ACCEPTOR] Accepted instance #%lu at ballot #%lu, bound to "

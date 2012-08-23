@@ -41,12 +41,12 @@ unsigned int bm_size(unsigned int n)
 
 void bm_set_all(struct bm_mask *mask)
 {
-	memset(&mask->mask, 0xff, LONGS_PER_BITS(mask->size));
+	memset(&mask->mask, 0xff, LONGS_PER_BITS(mask->size) * sizeof(unsigned long));
 }
 
 void bm_clear_all(struct bm_mask *mask)
 {
-	memset(&mask->mask, 0x00, LONGS_PER_BITS(mask->size));
+	memset(&mask->mask, 0x00, LONGS_PER_BITS(mask->size) * sizeof(unsigned long));
 }
 
 void bm_init(struct bm_mask *mask, unsigned int nbits)

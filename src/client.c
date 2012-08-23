@@ -158,8 +158,8 @@ static void connection_fiber(struct fbr_context *fiber_context)
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
 					fbr_arg_v(value)
 				);
+			xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		}
-		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
 	}
 conn_finish:

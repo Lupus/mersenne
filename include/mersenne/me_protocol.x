@@ -26,6 +26,7 @@
 #define __MAX_XDR_MESSAGE_LEN (__MTU - __UDP_HEADER_SIZE - 8)
 %#define ME_MAX_XDR_MESSAGE_LEN __MAX_XDR_MESSAGE_LEN
 
+%#include <openssl/evp.h>
 %#include <mersenne/xdr.h>
 
 enum me_message_supertype {
@@ -42,7 +43,7 @@ enum me_leader_message_type {
 struct me_leader_msg_header {
 	int count;
 	struct timeval sent;
-	opaque config_checksum[36];
+	opaque config_checksum[EVP_MAX_MD_SIZE];
 };
 
 struct me_leader_msg_ok_data {
