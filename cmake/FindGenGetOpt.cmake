@@ -31,7 +31,8 @@ IF(GENGETOPT_FOUND)
 				OUTPUT ${OUT} ${HEADER}
 				COMMAND ${GENGETOPT_EXECUTABLE}
 				ARGS
-				--input=${INFILE}
+					-C
+					--input=${INFILE}
 				DEPENDS ${CURRENT_FILE}
 				WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${SRCPATH}"
 				COMMENT "Generating gengetopt parser from ${CURRENT_FILE}"

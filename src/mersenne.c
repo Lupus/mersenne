@@ -139,14 +139,42 @@ static void set_up_client_socket(ME_P)
                err(EXIT_FAILURE, "client socket listen failed");
 }
 
+static int does_file_exists(const char *filename)
+{
+	struct stat st;
+	int retval = stat(filename, &st);
+	if(-1 == retval) {
+		if(ENOENT == errno)
+			return 0;
+		else
+			err(EXIT_FAILURE, "stat on %s failed", filename);
+	}
+	return 1;
+}
+
 int main(int argc, char *argv[])
 {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
+	struct cmdline_parser_params *params;
 
-	if(0 != cmdline_parser(argc, argv, &mctx->args_info))
+	params = cmdline_parser_params_create();
+
+	params->initialize = 1;
+	params->print_errors = 1;
+	params->check_required = 0;
+
+	if(does_file_exists("mersenne.conf"))
+		if (0 != cmdline_parser_config_file("mersenne.conf",
+					&mctx->args_info, params))
+			exit(EXIT_FAILURE + 1);
+
+	params->initialize = 0;
+	params->check_required = 1;
+	if(0 != cmdline_parser_ext(argc, argv, &mctx->args_info, params))
 		exit(EXIT_FAILURE + 1);
 
+	cmdline_parser_dump(stdout, &mctx->args_info);
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
@@ -173,6 +201,8 @@ int main(int argc, char *argv[])
 	ev_loop(context.loop, 0);
 	printf("Exiting\n");
 
-	// break was called, so exit
+	cmdline_parser_free(&mctx->args_info);
+	free(params);
+
 	return 0;
 }
