@@ -109,12 +109,12 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
-			instance->iid,
-			instance->b,
-			strval_instance_state(instance->state),
-			strval_instance_state(state),
-			strval_instance_event_type(base->type));
+	//printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
+	//		instance->iid,
+	//		instance->b,
+	//		strval_instance_state(instance->state),
+	//		strval_instance_state(state),
+	//		strval_instance_event_type(base->type));
 	instance->state = state;
 	run_instance(ME_A_ instance, base);
 }
@@ -180,7 +180,7 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.i = instance->iid;
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	buf_share(&data->me_paxos_msg_data_u.accept.v, &instance->p2.v);
-	printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
+	//printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
 

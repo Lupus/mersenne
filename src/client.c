@@ -50,7 +50,7 @@ static int writeit(char *ptr, char *buf, int size)
 	struct socket_context *context = (struct socket_context *)ptr;
 	struct me_context *mctx = context->mctx;
 	int retval;
-	retval = fbr_write(&mctx->fbr, context->fd, buf, size);
+	retval = fbr_write_all(&mctx->fbr, context->fd, buf, size);
 	if(-1 == retval)
 		warn("fbr_write failed");
 	return retval;
@@ -124,7 +124,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	XDR xdrs;
 	struct socket_context context;
 	struct cl_message msg;
-	char buf[1000];
+	//char buf[1000];
 	struct buffer *value;
 	struct fbr_fiber *informer;
 
@@ -155,9 +155,9 @@ static void connection_fiber(struct fbr_context *fiber_context)
 			if(CL_NEW_VALUE != msg.type)
 				goto conn_finish;
 			value = &msg.cl_message_u.new_value.value;
-			memcpy(buf, value->ptr, value->size1);
-			buf[value->size1] = '\0';
-			printf("[CLIENT] Got value: ``%s''\n", buf);
+			//memcpy(buf, value->ptr, value->size1);
+			//buf[value->size1] = '\0';
+			//printf("[CLIENT] Got value: ``%s''\n", buf);
 			fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
 					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
 					fbr_arg_v(value)

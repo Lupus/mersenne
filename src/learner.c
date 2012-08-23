@@ -60,8 +60,8 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 	char buf[1000];
 
 	snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
-	fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n",
-			instance->iid, instance->b, buf);
+	//fprintf(stderr, "[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s''\n",
+	//		instance->iid, instance->b, buf);
 	fbr_call(&mctx->fbr, context->owner, 3,
 			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 			fbr_arg_i(instance->iid),

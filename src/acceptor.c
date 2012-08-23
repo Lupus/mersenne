@@ -124,8 +124,8 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		assert(0 == buf_cmp(&r->v, &data->v));
 	if(r->iid > mctx->pxs.acc.highest_accepted)
 		 mctx->pxs.acc.highest_accepted = r->iid;
-	printf("[ACCEPTOR] Accepted instance #%lu at ballot #%lu, bound to "
-			"0x%lx\n", data->i, data->b, (unsigned long)r);
+	//printf("[ACCEPTOR] Accepted instance #%lu at ballot #%lu, bound to "
+	//		"0x%lx\n", data->i, data->b, (unsigned long)r);
 	send_learn(ME_A_ r, NULL);
 }
 
