@@ -83,4 +83,5 @@ add_executable(mersenne
 target_link_libraries(mersenne evfibers ${LIBEV_LDFLAGS} crypto)
 
 subdirs(libevfibers)
+subdirs(modules)
 subdirs(testing)

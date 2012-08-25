@@ -67,7 +67,7 @@ static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
 	
 	msg.type = CL_LEARNED_VALUE;
 	msg.cl_message_u.learned_value.i = iid;
-	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0);
+	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0, BS_EMPTY);
 	buf_share(&msg.cl_message_u.learned_value.value, buf);
 	
 	xdrrec_create(&xdrs, 0, 0, (char *)&context, NULL, writeit);

@@ -53,5 +53,6 @@ bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr)
 
 bool_t xdr_buffer(XDR *xdrs, struct buffer *buf)
 {
-	return xdr_bytes(xdrs, &buf->ptr, &buf->size1, ME_MAX_XDR_MESSAGE_LEN);
+	return xdr_enum(xdrs, (enum_t *)&buf->state) &&
+		xdr_bytes(xdrs, &buf->ptr, &buf->size1, ME_MAX_XDR_MESSAGE_LEN);
 }

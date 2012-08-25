@@ -73,7 +73,7 @@ static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 static void pending_append(ME_P_ struct buffer *from)
 {
 	struct buffer *buf = malloc(sizeof(struct buffer));
-	buf_init(buf, malloc(from->size1), from->size1);
+	buf_init(buf, malloc(from->size1), from->size1, BS_EMPTY);
 	buf_copy(buf, from);
 	DL_APPEND(mctx->pxs.pro.pending, buf);
 }
@@ -93,7 +93,7 @@ static int pending_shift(ME_P_ struct buffer *to)
 static void pending_unshift(ME_P_ struct buffer *from)
 {
 	struct buffer *buf = malloc(sizeof(struct buffer));
-	buf_init(buf, malloc(from->size1), from->size1);
+	buf_init(buf, malloc(from->size1), from->size1, BS_EMPTY);
 	buf_copy(buf, from);
 	DL_PREPEND(mctx->pxs.pro.pending, buf);
 }
@@ -127,8 +127,8 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	ev_timer timer = instance->timer;
 	memset(instance, 0, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
-	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN);
-	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN);
+	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
+	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
 	instance->p1.acks = mask;
 	instance->timer = timer;
 	instance->iid = mctx->pxs.pro.max_iid++;
@@ -180,6 +180,7 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.i = instance->iid;
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	buf_share(&data->me_paxos_msg_data_u.accept.v, &instance->p2.v);
+	assert(data->me_paxos_msg_data_u.accept.v.size1 > 0);
 	//printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
@@ -213,7 +214,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			//puts("[PROPOSER] Got promise!");
 			if(pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
-				if(!instance->p1.v.empty) {
+				if(BS_FULL == instance->p1.v.state) {
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_WITH_VALUE,
@@ -248,7 +249,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(instance->p2.v.empty) {
+			if(BS_EMPTY == instance->p2.v.state) {
 				if(!pending_shift(ME_A_ &instance->p2.v))
 					break;
 				instance->client_value = 1;
@@ -279,7 +280,7 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 	struct ie_base new_base;
 	switch(base->type) {
 		case IE_R1:
-			if(instance->p2.v.empty) {
+			if(BS_EMPTY == instance->p2.v.state) {
 				v1_to_v2(instance);
 				instance->client_value = 0;
 			} else if(veql(instance)) {
@@ -392,8 +393,8 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	int nbits = peer_count(ME_A);
 	instance->p1.acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 	bm_init(instance->p1.acks, nbits);
-	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN);
-	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN);
+	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
+	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = ME_A;
 	//ev_timer_start(mctx->loop, &instance->timer);

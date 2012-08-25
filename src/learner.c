@@ -106,10 +106,9 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		do_deliver(ME_A_ context, instance);
 		context->first_non_delivered = i + 1;
 
-		instance->v.empty = 1;
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
-		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
+		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
 		if(context->first_non_delivered == context->next_retransmit)
 			retransmit_next_window(ME_A_ context);
 	}
@@ -139,7 +138,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	instance = get_instance(context, data->i);
 	if(instance->closed)
 		return;
-	if(instance->v.empty) {
+	if(BS_EMPTY == instance->v.state) {
 		instance->iid = data->i;
 		instance->b = data->b;
 		assert(data->v.size1 > 0);
@@ -204,7 +203,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 		instance->closed = 0;
 		bm_init(instance->acks, nbits);
-		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN);
+		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
 		memset(instance->v_data, 0x00, ME_MAX_XDR_MESSAGE_LEN);
 	}
 

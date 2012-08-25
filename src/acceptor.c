@@ -20,6 +20,7 @@
  ********************************************************************/
 #include <assert.h>
 #include <err.h>
+#include <dlfcn.h>
 
 #include <mersenne/acceptor.h>
 #include <mersenne/paxos.h>
@@ -28,6 +29,8 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
+
+#define DL_CALL(func,...) (*mctx->pxs.acc.func)(mctx->pxs.acc.context, ##__VA_ARGS__)
 
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)
@@ -65,34 +68,36 @@ static void send_highest_accepted(ME_P)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	uint64_t iid;
+	iid = DL_CALL(get_highest_accepted_func);
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LAST_ACCEPTED;
-	data->me_paxos_msg_data_u.last_accepted.i = mctx->pxs.acc.highest_accepted;
+	data->me_paxos_msg_data_u.last_accepted.i = iid;
 	msg_send_all(ME_A_ &msg);
 }
 
 static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		*from)
 {
-	struct acc_instance_record *r;
+	struct acc_instance_record *r = NULL;
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	HASH_FIND_IID(mctx->pxs.acc.records, &data->i, r);
-	if(NULL == r) {
-		r = calloc(sizeof(struct acc_instance_record), 1);
+	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
-		buf_init(&r->v, NULL, 0);
-		HASH_ADD_IID(mctx->pxs.acc.records, iid, r);
+		buf_init(&r->v, NULL, 0, BS_EMPTY);
+		DL_CALL(store_record_func, r);
 	}
 	if(data->b < r->b) {
 		//TODO: Add REJECT message here for speedup
-		return;
+		goto cleanup;
 	}
 	r->b = data->b;
 	//printf("[ACCEPTOR] Promised to not accept ballots lower that %ld\n", data->b);
 	send_promise(ME_A_ r, from);
+cleanup:
+	DL_CALL(free_record_func, r);
 }
 
 static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -103,28 +108,31 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	char *ptr;
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
-	HASH_FIND_IID(mctx->pxs.acc.records, &data->i, r);
-	if(NULL == r) {
-		//TODO: Add support for automatic accept of ballot 1
+	assert(data->v.size1 > 0);
+	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_JUST_FIND)) {
+		//TODO: Add automatic accept of ballot 0
 		return;
 	}
 	if(data->b < r->b) {
 		//TODO: Add REJECT message here for speedup
-		return;
+		goto cleanup;
 	}
 	r->b = data->b;
-	if(r->v.empty) {
+	if(BS_EMPTY == r->v.state) {
 		ptr = malloc(data->v.size1);
-		buf_init(&r->v, ptr, data->v.size1);
+		buf_init(&r->v, ptr, data->v.size1, BS_EMPTY);
 		buf_copy(&r->v, &data->v);
 		assert(r->v.size1 > 0);
 	} else
 		assert(0 == buf_cmp(&r->v, &data->v));
-	if(r->iid > mctx->pxs.acc.highest_accepted)
-		 mctx->pxs.acc.highest_accepted = r->iid;
+	if(r->iid > DL_CALL(get_highest_accepted_func))
+		 DL_CALL(set_highest_accepted_func, r->iid);
+	DL_CALL(store_record_func, r);
 	//printf("[ACCEPTOR] Accepted instance #%lu at ballot #%lu, bound to "
 	//		"0x%lx\n", data->i, data->b, (unsigned long)r);
 	send_learn(ME_A_ r, NULL);
+cleanup:
+	DL_CALL(free_record_func, r);
 }
 
 static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -136,10 +144,9 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
 	for(iid = data->from; iid <= data->to; iid++) {
-		HASH_FIND_IID(mctx->pxs.acc.records, &iid, r);
-		if(NULL == r)
+		if(0 == DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
 			continue;
-		if(r->v.empty)
+		if(BS_EMPTY == r->v.state)
 			//FIXME: Not absolutely sure about this...
 			continue;
 		send_learn(ME_A_ r, from);
@@ -200,3 +207,56 @@ start:
 	goto start;
 }
 
+static void attach_symbol(ME_P_ void **vptr, const char *symbol)
+{
+	char *error;
+	*vptr = dlsym(mctx->pxs.acc.handle, symbol);
+	if (NULL != (error = dlerror()))
+		errx(EXIT_FAILURE, "dlsym: %s", error);
+}
+
+/*static void selftest(ME_P)
+{
+	struct acc_instance_record *r = NULL;
+
+	assert(0 == DL_CALL(find_record_func, &r, 0, ACS_FM_CREATE));
+	assert(NULL != r);
+	r->iid = 0;
+	buf_init(&r->v, NULL, 0);
+	r->b = 0;
+	DL_CALL(store_record_func, r);
+	DL_CALL(free_record_func, r);
+	assert(1 == DL_CALL(find_record_func, &r, 0, ACS_FM_JUST_FIND));
+	assert(NULL != r);
+	assert(0 == r->iid);
+	assert(0 == r->b);
+	r->b = 100500;
+	r->v.ptr = "blablabla";
+	r->v.size1 = strlen("blablabla");
+	DL_CALL(store_record_func, r);
+	DL_CALL(free_record_func, r);
+	assert(1 == DL_CALL(find_record_func, &r, 0, ACS_FM_JUST_FIND));
+	assert(NULL != r);
+	assert(0 == r->iid);
+	assert(100500 == r->b);
+	assert(0 == strcmp(r->v.ptr, "blablabla"));
+	DL_CALL(free_record_func, r);
+	printf("Selftest has passed!\n");
+}*/
+
+void acc_init_storage(ME_P)
+{
+	mctx->pxs.acc.handle = dlopen(mctx->args_info.acceptor_storage_module_arg, RTLD_NOW);
+	if (!mctx->pxs.acc.handle)
+               errx(EXIT_FAILURE, "dlopen: %s", dlerror());
+	dlerror();
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.destroy_func, "destroy");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.find_record_func, "find_record");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func, "get_highest_accepted");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func, "initialize");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func, "set_highest_accepted");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func, "store_record");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func, "free_record");
+	mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)();
+	//selftest(ME_A);
+}

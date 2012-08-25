@@ -89,6 +89,7 @@ static void randomize_buffer(struct buffer *buffer)
 		/* ASCII characters 33 to 126 */
 		buffer->ptr[i] = rand() % (126 - 33 + 1) + 33;
 	}
+	buffer->state = BS_FULL;
 }
 
 static void submit_value(struct client_context *cc, struct my_value *value)
@@ -101,7 +102,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	msg_value = &msg.cl_message_u.new_value.value;
 	xdrrec_create(&xdrs, 0, 0, (char *)cc, NULL, writeit);
 	xdrs.x_op = XDR_ENCODE;
-	buf_init(msg_value, NULL, 0);
+	buf_init(msg_value, NULL, 0, BS_EMPTY);
 	buf_share(msg_value, &value->v);
 	if(!xdr_cl_message(&xdrs, &msg))
 		err(EXIT_FAILURE, "unable to encode a client message");
@@ -217,7 +218,7 @@ static void init_values(struct client_context *cc)
 	for(i = 0; i < cc->concurrency; i++) {
 		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, 0.);
 		values[i].timer.data = cc;
-		buf_init(&values[i].v, malloc(VALUE_SIZE), VALUE_SIZE);
+		buf_init(&values[i].v, malloc(VALUE_SIZE), VALUE_SIZE, BS_EMPTY);
 		randomize_buffer(&values[i].v);
 		HASH_ADD_BUFFER(cc->values, v, values + i);
 		submit_value(cc, values + i);

@@ -25,31 +25,38 @@
 #include <uthash.h>
 
 #include <evfibers/fiber.h>
+#include <mersenne/acc_storage.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
 
 struct me_peer;
 struct me_message;
 
-struct acc_instance_record {
-	uint64_t iid;
-	uint64_t b;
-	struct buffer v;
-	uint64_t vb;
-
-	UT_hash_handle hh;
-};
-
 struct acc_context {
-	struct acc_instance_record *records;
-	uint64_t highest_accepted;
+	void *handle;
+	void *context;
+	acs_initialize_func initialize_func;
+	acs_get_highest_accepted_func get_highest_accepted_func;
+	acs_set_highest_accepted_func set_highest_accepted_func;
+	acs_find_record_func find_record_func;
+	acs_store_record_func store_record_func;
+	acs_free_record_func free_record_func;
+	acs_destroy_func destroy_func;
 };
 
 #define ACC_CONTEXT_INITIALIZER { \
-	.records = NULL, \
-	.highest_accepted = 0, \
+	.handle = NULL, \
+	.context = NULL, \
+	.initialize_func = NULL, \
+	.get_highest_accepted_func = NULL, \
+	.set_highest_accepted_func = NULL, \
+	.find_record_func = NULL, \
+	.store_record_func = NULL, \
+	.free_record_func = NULL, \
+	.destroy_func = NULL, \
 }
 
 void acc_fiber(struct fbr_context *fiber_context);
+void acc_init_storage(ME_P);
 
 #endif
