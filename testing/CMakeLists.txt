@@ -15,3 +15,5 @@ add_executable(strings_client
 	../src/bitmask.c
 	)
 target_link_libraries(strings_client evfibers ev)
+add_executable(acceptor_dump acceptor_dump.c)
+target_link_libraries(acceptor_dump dl hiredis)

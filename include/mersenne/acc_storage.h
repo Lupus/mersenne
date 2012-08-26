@@ -22,6 +22,7 @@
 #ifndef _ACC_STORAGE_H_
 #define _ACC_STORAGE_H_
 
+#include <stdint.h>
 #include <mersenne/buffer.h>
 
 struct acc_instance_record {

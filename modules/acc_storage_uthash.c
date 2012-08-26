@@ -41,7 +41,7 @@ struct context {
 	uint64_t highest_accepted;
 };
 
-void * initialize()
+void * initialize(int argc, char *argv[])
 {
 	struct context *ctx = malloc(sizeof(struct context));
 	ctx->instances = NULL;

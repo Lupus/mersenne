@@ -21,6 +21,7 @@
 #include <assert.h>
 #include <err.h>
 #include <dlfcn.h>
+#include <wordexp.h>
 
 #include <mersenne/acceptor.h>
 #include <mersenne/paxos.h>
@@ -215,37 +216,11 @@ static void attach_symbol(ME_P_ void **vptr, const char *symbol)
 		errx(EXIT_FAILURE, "dlsym: %s", error);
 }
 
-/*static void selftest(ME_P)
-{
-	struct acc_instance_record *r = NULL;
-
-	assert(0 == DL_CALL(find_record_func, &r, 0, ACS_FM_CREATE));
-	assert(NULL != r);
-	r->iid = 0;
-	buf_init(&r->v, NULL, 0);
-	r->b = 0;
-	DL_CALL(store_record_func, r);
-	DL_CALL(free_record_func, r);
-	assert(1 == DL_CALL(find_record_func, &r, 0, ACS_FM_JUST_FIND));
-	assert(NULL != r);
-	assert(0 == r->iid);
-	assert(0 == r->b);
-	r->b = 100500;
-	r->v.ptr = "blablabla";
-	r->v.size1 = strlen("blablabla");
-	DL_CALL(store_record_func, r);
-	DL_CALL(free_record_func, r);
-	assert(1 == DL_CALL(find_record_func, &r, 0, ACS_FM_JUST_FIND));
-	assert(NULL != r);
-	assert(0 == r->iid);
-	assert(100500 == r->b);
-	assert(0 == strcmp(r->v.ptr, "blablabla"));
-	DL_CALL(free_record_func, r);
-	printf("Selftest has passed!\n");
-}*/
-
 void acc_init_storage(ME_P)
 {
+	wordexp_t we;
+	const int buf_size = 1024;
+	char buf[buf_size];
 	mctx->pxs.acc.handle = dlopen(mctx->args_info.acceptor_storage_module_arg, RTLD_NOW);
 	if (!mctx->pxs.acc.handle)
                errx(EXIT_FAILURE, "dlopen: %s", dlerror());
@@ -257,6 +232,15 @@ void acc_init_storage(ME_P)
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func, "set_highest_accepted");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func, "store_record");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func, "free_record");
-	mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)();
-	//selftest(ME_A);
+	if(mctx->args_info.acceptor_storage_options_given) {
+		snprintf(buf, buf_size, "%s %s",
+				mctx->args_info.acceptor_storage_module_arg,
+				mctx->args_info.acceptor_storage_options_arg);
+		if(0 != wordexp(buf, &we, WRDE_NOCMD))
+			errx(EXIT_FAILURE, "wordexp failed to parse acceptor storage command line");
+		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(we.we_wordc, we.we_wordv);
+		wordfree(&we);
+	} else {
+		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(0, NULL);
+	}
 }
