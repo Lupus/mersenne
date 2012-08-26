@@ -27,55 +27,35 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 
-struct socket_context {
-	int fd;
-	struct me_context *mctx;
-};
-
-static int readit(char *ptr, char *buf, int size)
+static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
-	struct socket_context *context = (struct socket_context *)ptr;
-	struct me_context *mctx = context->mctx;
-	int retval;
-	retval = fbr_read(&mctx->fbr, context->fd, buf, size);
-	if(-1 == retval)
-		warn("fbr_read failed");
-	if(0 == retval)
-		return -1;
-	return retval;
-}
-
-static int writeit(char *ptr, char *buf, int size)
-{
-	struct socket_context *context = (struct socket_context *)ptr;
-	struct me_context *mctx = context->mctx;
-	int retval;
-	retval = fbr_write_all(&mctx->fbr, context->fd, buf, size);
-	if(-1 == retval)
-		warn("fbr_write failed");
-	return retval;
-}
-
-static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buf)
-{
-	XDR xdrs;
 	struct cl_message msg;
-	struct socket_context context;
-	
-	context.fd = fd;
-	context.mctx = mctx;
+	XDR xdrs;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
+	uint16_t size, send_size;
+	ssize_t retval;
 	
 	msg.type = CL_LEARNED_VALUE;
 	msg.cl_message_u.learned_value.i = iid;
 	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0, BS_EMPTY);
-	buf_share(&msg.cl_message_u.learned_value.value, buf);
-	
-	xdrrec_create(&xdrs, 0, 0, (char *)&context, NULL, writeit);
-	xdrs.x_op = XDR_ENCODE;
+	buf_share(&msg.cl_message_u.learned_value.value, buffer);
+	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg))
-		err(EXIT_FAILURE, "unable to encode a client message");
-	xdrrec_endofrecord(&xdrs, TRUE);
+		errx(EXIT_FAILURE, "xdr_cl_message: unable to encode");
+	size = xdr_getpos(&xdrs);
 	xdr_destroy(&xdrs);
+
+	send_size = htons(size);
+	retval = fbr_write_all(&mctx->fbr, fd, &send_size, sizeof(uint16_t));
+	if(-1 == retval) {
+		warn("fbr_write_all");
+		return;
+	}
+	retval = fbr_write_all(&mctx->fbr, fd, buf, size);
+	if(-1 == retval) {
+		warn("fbr_write_all");
+		return;
+	}
 }
 
 void client_informer_fiber(struct fbr_context *fiber_context)
@@ -106,6 +86,7 @@ start:
 				buf = info->argv[2].v;
 
 				inform_client(ME_A_ fd, iid, buf);
+				buf_free(buf);
 				break;
 			case FAT_QUIT:
 				goto quit;
@@ -122,9 +103,10 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	int fd;
 	struct fbr_call_info *info = NULL;
 	XDR xdrs;
-	struct socket_context context;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct cl_message msg;
-	//char buf[1000];
+	ssize_t retval;
+	uint16_t size;
 	struct buffer *value;
 	struct fbr_fiber *informer;
 
@@ -133,37 +115,42 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
 	fbr_assert(&mctx->fbr, 1 == info->argc);
 	fd = info->argv[0].i;
-	context.fd = fd;
-	context.mctx = mctx;
 	
 	informer = fbr_create(&mctx->fbr, "client/informer", client_informer_fiber);
 	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(fd));
 
 	puts("[CLIENT] Connection fiber has started");
 	for(;;) {
-		xdrrec_create(&xdrs, 0, 0, (char *)&context, readit, NULL);
-		xdrs.x_op = XDR_DECODE;
-		if (!xdrrec_skiprecord(&xdrs))
-			errx(EXIT_FAILURE, "unable to skip initial record");
-		for(;;) {
-			memset(&msg, 0, sizeof(msg));
-			if(!xdr_cl_message(&xdrs, &msg)) {
-				if (!xdrrec_skiprecord(&xdrs))
-					goto conn_finish;
-				continue;
-			}
-			if(CL_NEW_VALUE != msg.type)
-				goto conn_finish;
-			value = &msg.cl_message_u.new_value.value;
-			//memcpy(buf, value->ptr, value->size1);
-			//buf[value->size1] = '\0';
-			//printf("[CLIENT] Got value: ``%s''\n", buf);
-			fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
-					fbr_arg_i(FAT_PXS_CLIENT_VALUE),
-					fbr_arg_v(value)
-				);
-			xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
+		retval = fbr_read_all(&mctx->fbr, fd, &size, sizeof(uint16_t));
+		if(-1 == retval) {
+			warn("fbr_read_all");
+			goto conn_finish;
 		}
+		size = ntohs(size);
+		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
+		if(-1 == retval) {
+			warn("fbr_read_all");
+			return;
+		}
+
+		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
+		memset(&msg, 0, sizeof(msg));
+		if(!xdr_cl_message(&xdrs, &msg)) {
+			warnx("xdr_cl_message: unable to decode");
+			xdr_destroy(&xdrs);
+			goto conn_finish;
+		}
+		if(CL_NEW_VALUE != msg.type)
+			goto conn_finish;
+		value = &msg.cl_message_u.new_value.value;
+		//memcpy(buf, value->ptr, value->size1);
+		//buf[value->size1] = '\0';
+		//printf("[CLIENT] Got value: ``%s''\n", buf);
+		fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
+				fbr_arg_i(FAT_PXS_CLIENT_VALUE),
+				fbr_arg_v(buf_deep_clone(value))
+			);
+		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
 	}
 conn_finish:

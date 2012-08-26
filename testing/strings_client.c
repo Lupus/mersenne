@@ -29,6 +29,7 @@
 
 #include <evfibers/fiber.h>
 #include <mersenne/cl_protocol.h>
+#include <mersenne/me_protocol.h>
 #include <mersenne/util.h>
 
 #define HASH_FIND_BUFFER(head,buffer,out) \
@@ -62,24 +63,6 @@ struct client_context {
 	} stats;
 };
 
-static int readit(char *ptr, char *buf, int size)
-{
-	struct client_context *cc = (struct client_context *)ptr;
-	int retval;
-	retval = fbr_read(&cc->fbr, cc->fd, buf, size);
-	if(-1 == retval)
-		err(EXIT_FAILURE, "fbr_read failed");
-	if(0 == retval)
-		return -1;
-	return retval;
-}
-
-static int writeit(char *ptr, char *buf, int size)
-{
-	struct client_context *cc = (struct client_context *)ptr;
-	return fbr_write_all(&cc->fbr, cc->fd, buf, size);
-}
-
 static void randomize_buffer(struct buffer *buffer)
 {
 	unsigned int i;
@@ -94,20 +77,33 @@ static void randomize_buffer(struct buffer *buffer)
 
 static void submit_value(struct client_context *cc, struct my_value *value)
 {
-	XDR xdrs;
 	struct cl_message msg;
 	struct buffer *msg_value;
+	XDR xdrs;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
+	uint16_t size, send_size;
+	ssize_t retval;
 
 	msg.type = CL_NEW_VALUE;
 	msg_value = &msg.cl_message_u.new_value.value;
-	xdrrec_create(&xdrs, 0, 0, (char *)cc, NULL, writeit);
-	xdrs.x_op = XDR_ENCODE;
 	buf_init(msg_value, NULL, 0, BS_EMPTY);
 	buf_share(msg_value, &value->v);
+	
+	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg))
 		err(EXIT_FAILURE, "unable to encode a client message");
-	xdrrec_endofrecord(&xdrs, TRUE);
+	size = xdr_getpos(&xdrs);
 	xdr_destroy(&xdrs);
+
+	send_size = htons(size);
+	retval = fbr_write_all(&cc->fbr, cc->fd, &send_size, sizeof(uint16_t));
+	if(-1 == retval)
+		err(EXIT_FAILURE, "fbr_write_all");
+	retval = fbr_write_all(&cc->fbr, cc->fd, buf, size);
+	if(-1 == retval)
+		err(EXIT_FAILURE, "fbr_write_all");
+	//snprintf(buf, value->v.size1 + 1, "%s", value->v.ptr);
+	//printf("Submitted value: ``%s''\n", buf);
 	ev_timer_start(cc->loop, &value->timer);
 }
 
@@ -131,6 +127,7 @@ static void client_finished(struct client_context *cc)
 static void next_value(struct client_context *cc, struct buffer *buf)
 {
 	struct my_value *value = NULL;
+
 	HASH_FIND_BUFFER(cc->values, buf, value);
 	if(NULL == value) {
 		cc->stats.other++;
@@ -157,35 +154,40 @@ static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
 void fiber_reader(struct fbr_context *fiber_context)
 {
 	struct client_context *cc;
-	XDR xdrs;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct cl_message msg;
+	ssize_t retval;
+	uint16_t size;
+	XDR xdrs;
 	struct buffer *value;
-	//char buf[2000];
+	//char str_buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 	fbr_next_call_info(&cc->fbr, NULL);
 
 	for(;;) {
-		xdrrec_create(&xdrs, 0, 0, (char *)cc, readit, NULL);
-		xdrs.x_op = XDR_DECODE;
-		if (!xdrrec_skiprecord(&xdrs))
-			errx(EXIT_FAILURE, "unable to skip initial record");
-		for(;;) {
-			memset(&msg, 0, sizeof(msg));
-			if(!xdr_cl_message(&xdrs, &msg)) {
-				if (!xdrrec_skiprecord(&xdrs))
-					goto conn_finish;
-				continue;
-			}
-			if(CL_LEARNED_VALUE != msg.type)
-				errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
-			value = &msg.cl_message_u.learned_value.value;
-			//snprintf(buf, value->size1 + 1, "%s", value->ptr);
-			//printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
-			//		msg.cl_message_u.learned_value.i, buf);
-			next_value(cc, value);
-			xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
-		}
+		retval = fbr_read_all(&cc->fbr, cc->fd, &size, sizeof(uint16_t));
+		if(-1 == retval)
+			err(EXIT_FAILURE, "fbr_read_all");
+		if(0 == retval) goto conn_finish;
+		size = ntohs(size);
+		retval = fbr_read_all(&cc->fbr, cc->fd, buf, size);
+		if(-1 == retval)
+			err(EXIT_FAILURE, "fbr_read_all");
+		if(0 == retval) goto conn_finish;
+
+		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
+		memset(&msg, 0, sizeof(msg));
+		if(!xdr_cl_message(&xdrs, &msg))
+			errx(EXIT_FAILURE, "xdr_cl_message: unable to decode");
+		if(CL_LEARNED_VALUE != msg.type)
+			errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
+		value = &msg.cl_message_u.learned_value.value;
+		//snprintf(str_buf, value->size1 + 1, "%s", value->ptr);
+		//printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
+		//		msg.cl_message_u.learned_value.i, str_buf);
+		next_value(cc, value);
+		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
 	}
 conn_finish:

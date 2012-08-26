@@ -504,6 +504,7 @@ start:
 				buf = info->argv[1].v;
 
 				do_client_value(ME_A_ buf);
+				buf_free(buf);
 				break;
 			case FAT_PXS_DELIVERED_VALUE:
 				fbr_assert(&mctx->fbr, 3 == info->argc);

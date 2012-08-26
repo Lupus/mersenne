@@ -68,6 +68,9 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a message");
 	switch(msg.super_type) {
 		case ME_LEADER:
+			//FIXME: &msg is allocated on the stack and may
+			//dissapear when leader fiber actually will process
+			//this call
 			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(&msg),

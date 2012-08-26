@@ -54,6 +54,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
 	pmsg = &msg->me_message_u.paxos_message;
+	//FIXME: Ensure that msg is not stack allocated!
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 		case ME_PAXOS_ACCEPT:
