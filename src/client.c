@@ -27,7 +27,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 
-static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
+static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
 	struct cl_message msg;
 	XDR xdrs;
@@ -40,8 +40,10 @@ static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0, BS_EMPTY);
 	buf_share(&msg.cl_message_u.learned_value.value, buffer);
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
-	if(!xdr_cl_message(&xdrs, &msg))
-		errx(EXIT_FAILURE, "xdr_cl_message: unable to encode");
+	if(!xdr_cl_message(&xdrs, &msg)) {
+		warnx("xdr_cl_message: unable to encode");
+		return -1;
+	}
 	size = xdr_getpos(&xdrs);
 	xdr_destroy(&xdrs);
 
@@ -49,13 +51,14 @@ static void inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	retval = fbr_write_all(&mctx->fbr, fd, &send_size, sizeof(uint16_t));
 	if(-1 == retval) {
 		warn("fbr_write_all");
-		return;
+		return -1;
 	}
 	retval = fbr_write_all(&mctx->fbr, fd, buf, size);
 	if(-1 == retval) {
 		warn("fbr_write_all");
-		return;
+		return -1;
 	}
+	return 0;
 }
 
 void client_informer_fiber(struct fbr_context *fiber_context)
@@ -66,6 +69,7 @@ void client_informer_fiber(struct fbr_context *fiber_context)
 	int fd;
 	struct buffer *buf;
 	uint64_t iid;
+	int retval;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
@@ -85,8 +89,10 @@ start:
 				iid = info->argv[1].i;
 				buf = info->argv[2].v;
 
-				inform_client(ME_A_ fd, iid, buf);
+				retval = inform_client(ME_A_ fd, iid, buf);
 				buf_free(buf);
+				if(-1 == retval)
+					warnx("informing of a client has failed");
 				break;
 			case FAT_QUIT:
 				goto quit;
@@ -130,7 +136,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
 		if(-1 == retval) {
 			warn("fbr_read_all");
-			return;
+			goto conn_finish;
 		}
 
 		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
