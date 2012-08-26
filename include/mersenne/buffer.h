@@ -41,6 +41,9 @@ void buf_init(struct buffer *buf, char *ptr, size_t size, enum buffer_state
 void buf_copy(struct buffer *to, struct buffer *from);
 void buf_share(struct buffer *to, struct buffer *from);
 int buf_cmp(struct buffer *a, struct buffer *b);
+struct buffer * buf_deep_clone(struct buffer *from);
+void buf_free(struct buffer *buffer);
+
 
 #endif
 

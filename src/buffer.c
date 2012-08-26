@@ -18,7 +18,7 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
-
+#include <stdlib.h>
 #include <assert.h>
 #include <mersenne/buffer.h>
 
@@ -51,4 +51,18 @@ int buf_cmp(struct buffer *a, struct buffer *b)
 	if(a->size1 != b->size1)
 		return a->size1 - b->size1;
 	return(memcmp(a->ptr, b->ptr, b->size1));
+}
+
+struct buffer * buf_deep_clone(struct buffer *from)
+{
+	struct buffer *bn = malloc(sizeof(struct buffer));
+	buf_init(bn, malloc(from->size1), from->size1, BS_EMPTY);
+	buf_copy(bn, from);
+	return bn;
+}
+
+void buf_free(struct buffer *buffer)
+{
+	free(buffer->ptr);
+	free(buffer);
 }
