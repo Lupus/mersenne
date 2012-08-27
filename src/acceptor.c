@@ -119,6 +119,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		goto cleanup;
 	}
 	r->b = data->b;
+	r->vb = data->b;
 	if(BS_EMPTY == r->v.state) {
 		ptr = malloc(data->v.size1);
 		buf_init(&r->v, ptr, data->v.size1, BS_EMPTY);

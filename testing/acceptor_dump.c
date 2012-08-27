@@ -50,7 +50,13 @@ static void attach_symbol(void **vptr, const char *symbol)
 }
 static void dump_record(struct acc_instance_record *r)
 {
-	printf("iid: %lu, b: %lu, vb: %lu, value size: %u\n", r->iid, r->b, r->vb, r->v.size1);
+	char buf[r->v.size1 + 1];
+	if(r->v.size1 > 64) {
+		snprintf(buf, 64 + 1, "%s", r->v.ptr);
+		snprintf(buf + 64, 15, "...(truncated)");
+	} else
+		snprintf(buf, r->v.size1 + 1, "%s", r->v.ptr);
+	printf("iid: %lu, b: %lu, vb: %lu, value size: %u, value: ``%s''\n", r->iid, r->b, r->vb, r->v.size1, buf);
 }
 
 int main(int argc, char *argv[]) {

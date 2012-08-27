@@ -132,12 +132,16 @@ static void connection_fiber(struct fbr_context *fiber_context)
 			warn("fbr_read_all");
 			goto conn_finish;
 		}
+		if(retval < sizeof(uint16_t))
+			goto conn_finish;
 		size = ntohs(size);
 		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
 		if(-1 == retval) {
 			warn("fbr_read_all");
 			goto conn_finish;
 		}
+		if(retval < size)
+			goto conn_finish;
 
 		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
 		memset(&msg, 0, sizeof(msg));
