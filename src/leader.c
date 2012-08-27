@@ -389,15 +389,18 @@ start:
 
 		if(is_expired(ME_A_ msg)) {
 			warnx("got expired message");
+			msg_free(ME_A_ msg);
 			continue;
 		}
 		if(!config_match(ME_A_ msg)) {
 			warnx("sender configuration does not match mine, "
 					"ignoring message");
+			msg_free(ME_A_ msg);
 			continue;
 		}
 
 		do_message(ME_A_ msg, from);
+		msg_free(ME_A_ msg);
 	}
 	goto start;
 }

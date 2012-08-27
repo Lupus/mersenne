@@ -34,6 +34,7 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/bitmask.h>
+#include <mersenne/me_protocol.strenum.h>
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -406,7 +407,6 @@ static void free_instance(ME_P_ struct pro_instance *instance)
 	ev_timer_stop(mctx->loop, &instance->timer);
 }
 
-
 static void proposer_init(ME_P)
 {
 	int i;
@@ -431,16 +431,6 @@ static void proposer_shutdown(ME_P)
 	}
 }
 
-static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
-{
-	struct me_paxos_message *pmsg;
-
-	pmsg = &msg->me_message_u.paxos_message;
-
-	assert(ME_PAXOS_PROMISE == pmsg->data.type);
-	do_promise(ME_A_ pmsg, from);
-}
-
 static void do_client_value(ME_P_ struct buffer *buf)
 {
 	struct ie_nv nv;
@@ -457,6 +447,26 @@ static void do_client_value(ME_P_ struct buffer *buf)
 		}
 	}
 	pending_append(ME_A_ buf);
+}
+
+static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
+{
+	struct me_paxos_message *pmsg;
+
+	pmsg = &msg->me_message_u.paxos_message;
+
+	switch(pmsg->data.type) {
+		case ME_PAXOS_PROMISE:
+			do_promise(ME_A_ pmsg, from);
+			break;
+		case ME_PAXOS_CLIENT_VALUE:
+			do_client_value(ME_A_ &pmsg->data.me_paxos_msg_data_u.client_value.v);
+			break;
+		default:
+			errx(EXIT_FAILURE, "invalid paxos message type for "
+					"proposer: %s",
+					strval_me_paxos_message_type(pmsg->data.type));
+	}
 }
 
 static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
@@ -498,6 +508,7 @@ start:
 				from = info->argv[2].v;
 
 				do_message(ME_A_ msg, from);
+				msg_free(ME_A_ msg);
 				break;
 			case FAT_PXS_CLIENT_VALUE:
 				fbr_assert(&mctx->fbr, 2 == info->argc);
@@ -523,16 +534,61 @@ fiber_exit:
 	fbr_reclaim(&mctx->fbr, learner);
 }
 
+static void send_proxy_value(ME_P_ struct buffer *buf)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_CLIENT_VALUE;
+	buf_init(&data->me_paxos_msg_data_u.client_value.v, NULL, 0, BS_EMPTY);
+	buf_share(&data->me_paxos_msg_data_u.client_value.v, buf);
+	msg_send_to(ME_A_ &msg, mctx->ldr.leader);
+}
+
+static void proxy_fiber(struct fbr_context *fiber_context)
+{
+	struct me_context *mctx;
+	struct fbr_call_info *info = NULL;
+	struct buffer *buf;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_next_call_info(&mctx->fbr, NULL);
+
+start:
+	fbr_yield(&mctx->fbr);
+	while(fbr_next_call_info(&mctx->fbr, &info)) {
+
+		switch(info->argv[0].i) {
+			case FAT_ME_MESSAGE:
+				fbr_assert(&mctx->fbr, 3 == info->argc);
+				msg_free(ME_A_ info->argv[1].v);
+				break;
+			case FAT_PXS_CLIENT_VALUE:
+				fbr_assert(&mctx->fbr, 2 == info->argc);
+				buf = info->argv[1].v;
+
+				send_proxy_value(ME_A_ buf);
+				buf_free(buf);
+				break;
+		}
+	}
+	goto start;
+}
+
 void pro_start(ME_P)
 {
-	fbr_assert(&mctx->fbr, NULL == mctx->fiber_proposer);
+	if(NULL != mctx->fiber_proposer)
+		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber);
 	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
 }
 
 void pro_stop(ME_P)
 {
-	fbr_assert(&mctx->fbr, NULL != mctx->fiber_proposer);
-	fbr_call(&mctx->fbr, mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
-	mctx->fiber_proposer = NULL;
+	if(NULL != mctx->fiber_proposer) {
+		fbr_call(&mctx->fbr, mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
+		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
+	}
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer_proxy", proxy_fiber);
+	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
 }

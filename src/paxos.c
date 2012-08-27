@@ -54,7 +54,6 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
 	pmsg = &msg->me_message_u.paxos_message;
-	//FIXME: Ensure that msg is not stack allocated!
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 		case ME_PAXOS_ACCEPT:
@@ -68,19 +67,21 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			break;
 		case ME_PAXOS_LEARN:
 		case ME_PAXOS_LAST_ACCEPTED:
+			//FIXME: msg will leak here
+			//FIXME: need some reference counting
 			fbr_multicall(&mctx->fbr, FMT_LEARNER, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(msg),
 					fbr_arg_v(from)
 				);
 			break;
+		case ME_PAXOS_CLIENT_VALUE:
 		case ME_PAXOS_PROMISE:
-			if(ldr_is_leader(ME_A))
-				fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,
-						fbr_arg_i(FAT_ME_MESSAGE),
-						fbr_arg_v(msg),
-						fbr_arg_v(from)
-					);
+			fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,
+					fbr_arg_i(FAT_ME_MESSAGE),
+					fbr_arg_v(msg),
+					fbr_arg_v(from)
+				);
 			break;
 	}
 }
@@ -92,4 +93,5 @@ void pxs_fiber_init(ME_P)
 	mctx->fiber_proposer = NULL;
 
 	fbr_call(&mctx->fbr, mctx->fiber_acceptor, 0);
+	pro_stop(ME_A);
 }

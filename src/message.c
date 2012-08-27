@@ -69,3 +69,8 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 }
 
 
+void msg_free(ME_P_ struct me_message *msg)
+{
+	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)msg);
+	free(msg);
+}

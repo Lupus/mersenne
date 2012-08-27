@@ -47,7 +47,7 @@
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
 {
-	struct me_message msg;
+	struct me_message *msg;
 	struct me_peer *p;
 	XDR xdrs;
 	
@@ -62,26 +62,22 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		return;
 	}
 
-	memset(&msg, 0, sizeof(msg));
+	msg = calloc(sizeof(struct me_message), 1);
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
-	if(!xdr_me_message(&xdrs, &msg))
+	if(!xdr_me_message(&xdrs, msg))
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a message");
-	switch(msg.super_type) {
+	switch(msg->super_type) {
 		case ME_LEADER:
-			//FIXME: &msg is allocated on the stack and may
-			//dissapear when leader fiber actually will process
-			//this call
 			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
-					fbr_arg_v(&msg),
+					fbr_arg_v(msg),
 					fbr_arg_v(p)
 				);
 			break;
 		case ME_PAXOS:
-			pxs_do_message(ME_A_ &msg, p);
+			pxs_do_message(ME_A_ msg, p);
 			break;
 	}
-	xdr_free((xdrproc_t)xdr_me_message, (caddr_t)&msg);
 }
 
 static void fiber_main(struct fbr_context *fiber_context)
