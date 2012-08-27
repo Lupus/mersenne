@@ -128,10 +128,10 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	if(data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		if(data->i > context->highest_seen)
 			context->highest_seen = data->i;
-		warnx("[LEARNER] value out of instance windows, discarding");
-		warnx("[LEARNER] data->i == %lu while "
-				"context->first_non_delivered == %lu", data->i,
-				context->first_non_delivered);
+		//warnx("[LEARNER] value out of instance windows, discarding");
+		//warnx("[LEARNER] data->i == %lu while "
+		//		"context->first_non_delivered == %lu", data->i,
+		//		context->first_non_delivered);
 		return;
 	}
 

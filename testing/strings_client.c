@@ -245,6 +245,7 @@ void fiber_main(struct fbr_context *fiber_context)
 	for(;;) {
 		fbr_yield(&cc->fbr);
 		while(fbr_next_call_info(&cc->fbr, &info)) {
+			printf("Timeout! Resubmitting...\n");
 			value = info->argv[0].v;
 			cc->stats.timeouts++;
 			submit_value(cc, value);

@@ -76,6 +76,7 @@ enum me_paxos_message_type {
 	ME_PAXOS_PREPARE,
 	ME_PAXOS_PROMISE,
 	ME_PAXOS_ACCEPT,
+	ME_PAXOS_REJECT,
 	ME_PAXOS_LAST_ACCEPTED,
 	ME_PAXOS_LEARN,
 	ME_PAXOS_RETRANSMIT,
@@ -98,6 +99,11 @@ struct me_paxos_accept_data {
 	uint64_t i;
 	uint64_t b;
 	struct buffer v;
+};
+
+struct me_paxos_reject_data {
+	uint64_t i;
+	uint64_t b;
 };
 
 struct me_paxos_last_accepted_data {
@@ -126,6 +132,8 @@ union me_paxos_msg_data switch(me_paxos_message_type type) {
 	struct me_paxos_promise_data promise;
 	case ME_PAXOS_ACCEPT:
 	struct me_paxos_accept_data accept;
+	case ME_PAXOS_REJECT:
+	struct me_paxos_reject_data reject;
 	case ME_PAXOS_LAST_ACCEPTED:
 	struct me_paxos_last_accepted_data last_accepted;
 	case ME_PAXOS_LEARN:

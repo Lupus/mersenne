@@ -77,6 +77,17 @@ static void send_highest_accepted(ME_P)
 	msg_send_all(ME_A_ &msg);
 }
 
+static void send_reject(ME_P_ struct acc_instance_record *r, struct me_peer *to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_REJECT;
+	data->me_paxos_msg_data_u.reject.i = r->iid;
+	data->me_paxos_msg_data_u.reject.b = r->b;
+	msg_send_to(ME_A_ &msg, to->index);
+}
+
 static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		*from)
 {
@@ -91,7 +102,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		DL_CALL(store_record_func, r);
 	}
 	if(data->b < r->b) {
-		//TODO: Add REJECT message here for speedup
+		send_reject(ME_A_ r, from);
 		goto cleanup;
 	}
 	r->b = data->b;

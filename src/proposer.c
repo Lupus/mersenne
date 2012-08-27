@@ -73,10 +73,12 @@ static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 
 static void pending_append(ME_P_ struct buffer *from)
 {
-	struct buffer *buf = malloc(sizeof(struct buffer));
-	buf_init(buf, malloc(from->size1), from->size1, BS_EMPTY);
-	buf_copy(buf, from);
+	struct buffer *buf;
+	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
+		return;
+	buf = buf_deep_clone(from);
 	DL_APPEND(mctx->pxs.pro.pending, buf);
+	mctx->pxs.pro.pending_size++;
 }
 
 static int pending_shift(ME_P_ struct buffer *to)
@@ -86,17 +88,14 @@ static int pending_shift(ME_P_ struct buffer *to)
 		return 0;
 	DL_DELETE(mctx->pxs.pro.pending, buf);
 	buf_copy(to, buf);
-	free(buf->ptr);
-	free(buf);
+	buf_free(buf);
+	mctx->pxs.pro.pending_size--;
 	return 1;
 }
 
 static void pending_unshift(ME_P_ struct buffer *from)
 {
-	struct buffer *buf = malloc(sizeof(struct buffer));
-	buf_init(buf, malloc(from->size1), from->size1, BS_EMPTY);
-	buf_copy(buf, from);
-	DL_PREPEND(mctx->pxs.pro.pending, buf);
+	DL_PREPEND(mctx->pxs.pro.pending, buf_deep_clone(from));
 }
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -407,6 +406,23 @@ static void free_instance(ME_P_ struct pro_instance *instance)
 	ev_timer_stop(mctx->loop, &instance->timer);
 }
 
+static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
+		*from)
+{
+	struct pro_instance *instance;
+	struct me_paxos_reject_data *data;
+	struct ie_base base;
+	base.type = IE_TO;
+	data = &pmsg->data.me_paxos_msg_data_u.reject;
+	if(data->i < mctx->pxs.pro.lowest_non_closed)
+		return;
+	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
+	if(IS_P1_PENDING == instance->state || IS_P2_PENDING == instance->state) {
+		instance->b = decode_ballot(ME_A_ data->b);
+		run_instance(ME_A_ instance, &base);
+	}
+}
+
 static void proposer_init(ME_P)
 {
 	int i;
@@ -458,6 +474,9 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PROMISE:
 			do_promise(ME_A_ pmsg, from);
+			break;
+		case ME_PAXOS_REJECT:
+			do_reject(ME_A_ pmsg, from);
 			break;
 		case ME_PAXOS_CLIENT_VALUE:
 			do_client_value(ME_A_ &pmsg->data.me_paxos_msg_data_u.client_value.v);

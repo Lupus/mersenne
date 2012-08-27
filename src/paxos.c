@@ -77,6 +77,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			break;
 		case ME_PAXOS_CLIENT_VALUE:
 		case ME_PAXOS_PROMISE:
+		case ME_PAXOS_REJECT:
 			fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
 					fbr_arg_v(msg),
