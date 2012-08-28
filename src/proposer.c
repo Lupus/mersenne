@@ -35,6 +35,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/bitmask.h>
 #include <mersenne/me_protocol.strenum.h>
+#include <mersenne/sharedmem.h>
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -527,7 +528,7 @@ start:
 				from = info->argv[2].v;
 
 				do_message(ME_A_ msg, from);
-				msg_free(ME_A_ msg);
+				sm_free(msg);
 				break;
 			case FAT_PXS_CLIENT_VALUE:
 				fbr_assert(&mctx->fbr, 2 == info->argc);
@@ -580,7 +581,7 @@ start:
 		switch(info->argv[0].i) {
 			case FAT_ME_MESSAGE:
 				fbr_assert(&mctx->fbr, 3 == info->argc);
-				msg_free(ME_A_ info->argv[1].v);
+				sm_free(info->argv[1].v);
 				break;
 			case FAT_PXS_CLIENT_VALUE:
 				fbr_assert(&mctx->fbr, 2 == info->argc);

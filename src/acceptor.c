@@ -159,10 +159,13 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	for(iid = data->from; iid <= data->to; iid++) {
 		if(0 == DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
 			continue;
-		if(BS_EMPTY == r->v.state)
+		if(BS_EMPTY == r->v.state) {
 			//FIXME: Not absolutely sure about this...
+			DL_CALL(free_record_func, r);
 			continue;
+		}
 		send_learn(ME_A_ r, from);
+		DL_CALL(free_record_func, r);
 	}
 }
 

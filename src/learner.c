@@ -30,6 +30,7 @@
 #include <mersenne/fiber_args.strenum.h>
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
+#include <mersenne/sharedmem.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 
@@ -227,6 +228,7 @@ start:
 						"wrong message type for learner: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
+		sm_free(msg);
 	}
 	goto start;
 }

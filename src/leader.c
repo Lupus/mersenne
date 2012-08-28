@@ -31,6 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/fiber_args.strenum.h>
+#include <mersenne/sharedmem.h>
 
 #define TIME_DELTA mctx->args_info.leader_delta_arg
 #define TIME_EPSILON mctx->args_info.leader_epsilon_arg
@@ -389,18 +390,18 @@ start:
 
 		if(is_expired(ME_A_ msg)) {
 			warnx("got expired message");
-			msg_free(ME_A_ msg);
+			sm_free(msg);
 			continue;
 		}
 		if(!config_match(ME_A_ msg)) {
 			warnx("sender configuration does not match mine, "
 					"ignoring message");
-			msg_free(ME_A_ msg);
+			sm_free(msg);
 			continue;
 		}
 
 		do_message(ME_A_ msg, from);
-		msg_free(ME_A_ msg);
+		sm_free(msg);
 	}
 	goto start;
 }

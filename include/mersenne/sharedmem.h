@@ -18,17 +18,15 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#ifndef _SHAREDMEM_H_
+#define _SHAREDMEM_H_
 
-#ifndef _MESSAGE_H_
-#define _MESSAGE_H_
-
-#include <mersenne/me_protocol.h>
-#include <mersenne/context_fwd.h>
-
-struct me_peer;
-
-void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
-void msg_send_all(ME_P_ struct me_message *msg);
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context);
+typedef void(*sm_destructor_t)(void *context, void *ptr);
+void * sm_alloc(size_t size);
+void * sm_alloc_ext(size_t size, sm_destructor_t destructor, void *context);
+void * sm_calloc(size_t nmemb, size_t size);
+void * sm_calloc_ext(size_t nmemb, size_t size, sm_destructor_t destructor, void *context);
+void sm_in_use(void *ptr);
+void sm_free(void *ptr);
 
 #endif

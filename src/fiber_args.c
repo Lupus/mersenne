@@ -19,16 +19,16 @@
 
  ********************************************************************/
 
-#ifndef _MESSAGE_H_
-#define _MESSAGE_H_
+#include <evfibers/fiber.h>
+#include <mersenne/fiber_args.h>
+#include <mersenne/sharedmem.h>
 
-#include <mersenne/me_protocol.h>
-#include <mersenne/context_fwd.h>
+static void fiber_arg_sm_use_cb(void *context, struct fbr_fiber_arg *arg)
+{
+	sm_in_use(arg->v);
+}
 
-struct me_peer;
-
-void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
-void msg_send_all(ME_P_ struct me_message *msg);
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context);
-
-#endif
+struct fbr_fiber_arg fiber_arg_vsm(void *smptr)
+{
+	return fbr_arg_v_cb(smptr, fiber_arg_sm_use_cb);
+}

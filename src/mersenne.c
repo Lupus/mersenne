@@ -40,9 +40,15 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/client.h>
+#include <mersenne/sharedmem.h>
 #include <mersenne/cmdline.h>
 
 #define LISTEN_BACKLOG 50
+
+static void message_destructor(void *context, void *ptr)
+{
+	xdr_free((xdrproc_t)xdr_me_message, ptr);
+}
 
 static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
@@ -51,7 +57,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	struct me_peer *p;
 	XDR xdrs;
 	
-	if (addr->sa_family != AF_INET) {
+	if(addr->sa_family != AF_INET) {
 		warnx("unsupported address family: %d", (addr->sa_family));
 		return;
 	}
@@ -62,7 +68,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		return;
 	}
 
-	msg = calloc(sizeof(struct me_message), 1);
+	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor, NULL);
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
 	if(!xdr_me_message(&xdrs, msg))
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a message");
@@ -70,7 +76,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		case ME_LEADER:
 			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),
-					fbr_arg_v(msg),
+					fiber_arg_vsm(msg),
 					fbr_arg_v(p)
 				);
 			break;
@@ -78,6 +84,7 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 			pxs_do_message(ME_A_ msg, p);
 			break;
 	}
+	sm_free(msg);
 }
 
 static void fiber_main(struct fbr_context *fiber_context)

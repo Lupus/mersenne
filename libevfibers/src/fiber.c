@@ -159,15 +159,27 @@ static void call_wrapper(FBR_P_ void (*func) (FBR_P))
 
 struct fbr_fiber_arg fbr_arg_i(int i)
 {
-	struct fbr_fiber_arg arg;
-	arg.i = i;
-	return arg;
+	return fbr_arg_i_cb(i, NULL);
 }
 
 struct fbr_fiber_arg fbr_arg_v(void *v)
 {
+	return fbr_arg_v_cb(v, NULL);
+}
+
+struct fbr_fiber_arg fbr_arg_i_cb(int i, fbr_arg_callback_t cb)
+{
+	struct fbr_fiber_arg arg;
+	arg.i = i;
+	arg.cb = cb;
+	return arg;
+}
+
+struct fbr_fiber_arg fbr_arg_v_cb(void *v, fbr_arg_callback_t cb)
+{
 	struct fbr_fiber_arg arg;
 	arg.v = v;
+	arg.cb = cb;
 	return arg;
 }
 
@@ -207,6 +219,11 @@ void fbr_unsubscribe_all(FBR_P)
 
 void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap)
 {
+	fbr_vcall_context(FBR_A_ callee, NULL, argnum, ap);
+}
+
+void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, va_list ap)
+{
 	struct fbr_fiber *caller = fctx->sp->fiber;
 	int i;
 	struct fbr_call_info *info;
@@ -221,8 +238,11 @@ void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap)
 	info = malloc(sizeof(struct fbr_call_info));
 	info->caller = caller;
 	info->argc = argnum;
-	for(i = 0; i < argnum; i++)
+	for(i = 0; i < argnum; i++) {
 		info->argv[i] = va_arg(ap, struct fbr_fiber_arg);
+		if(NULL != info->argv[i].cb)
+			info->argv[i].cb(context, info->argv + i);
+	}
 
 	DL_APPEND(callee->call_list, info);
 
@@ -237,6 +257,14 @@ void fbr_call(FBR_P_ struct fbr_fiber *callee, int argnum, ...)
 	va_end(ap);
 }
 
+void fbr_call_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, ...)
+{
+	va_list ap;
+	va_start(ap, argnum);
+	fbr_vcall_context(FBR_A_ callee, context, argnum, ap);
+	va_end(ap);
+}
+
 void fbr_multicall(FBR_P_ int mid, int argnum, ...)
 {
 	struct fbr_multicall *call = get_multicall(FBR_A_ mid);
@@ -245,6 +273,18 @@ void fbr_multicall(FBR_P_ int mid, int argnum, ...)
 	DL_FOREACH(call->fibers,fiber) {
 		va_start(ap, argnum);
 		fbr_vcall(FBR_A_ fiber, argnum, ap);
+		va_end(ap);
+	}
+}
+
+void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...)
+{
+	struct fbr_multicall *call = get_multicall(FBR_A_ mid);
+	struct fbr_fiber *fiber;
+	va_list ap;
+	DL_FOREACH(call->fibers,fiber) {
+		va_start(ap, argnum);
+		fbr_vcall_context(FBR_A_ fiber, context, argnum, ap);
 		va_end(ap);
 	}
 }

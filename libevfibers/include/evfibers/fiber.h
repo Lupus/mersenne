@@ -77,11 +77,15 @@ struct fbr_fiber;
 
 typedef void (*fbr_fiber_func_t)(FBR_P);
 
+struct fbr_fiber_arg;
+typedef void (*fbr_arg_callback_t)(void *context, struct fbr_fiber_arg *arg);
+
 struct fbr_fiber_arg {
 	union {
 		int i;
 		void *v;
 	};
+	fbr_arg_callback_t cb;
 };
 
 struct fbr_call_info {
@@ -98,12 +102,17 @@ void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber);
 int fbr_is_reclaimed(FBR_P_ struct fbr_fiber *fiber);
 struct fbr_fiber_arg fbr_arg_i(int i);
 struct fbr_fiber_arg fbr_arg_v(void *v);
+struct fbr_fiber_arg fbr_arg_i_cb(int i, fbr_arg_callback_t cb);
+struct fbr_fiber_arg fbr_arg_v_cb(void *v, fbr_arg_callback_t cb);
 void fbr_subscribe(FBR_P_ int mid);
 void fbr_unsubscribe(FBR_P_ int mid);
 void fbr_unsubscribe_all(FBR_P);
 void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap);
+void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, va_list ap);
 void fbr_call(FBR_P_ struct fbr_fiber *fiber, int argnum, ...);
+void fbr_call_context(FBR_P_ struct fbr_fiber *fiber, void *context, int argnum, ...);
 void fbr_multicall(FBR_P_ int mid, int argnum, ...);
+void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...);
 void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
 void fbr_destroy(FBR_P_ struct fbr_fiber *fiber);

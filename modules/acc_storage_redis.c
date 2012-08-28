@@ -135,10 +135,9 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 	reply = redisCommand(ctx->rctx, "GET rec:%d", iid);
 	switch(reply->type) {
 		case REDIS_REPLY_NIL:
-		found = 0;
-		if(mode == ACS_FM_CREATE)
-			r = malloc(sizeof(struct acc_instance_record));
-			freeReplyObject(reply);
+			found = 0;
+			if(mode == ACS_FM_CREATE)
+				r = malloc(sizeof(struct acc_instance_record));
 			break;
 		case REDIS_REPLY_STRING:
 			r = malloc(sizeof(struct acc_instance_record));
@@ -154,6 +153,7 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 		default:
 			errx(EXIT_FAILURE, "unexpected redis reply type: %d", reply->type);
 	}
+	freeReplyObject(reply);
 	*rptr = r;
 	return found;
 }
@@ -189,6 +189,7 @@ void store_record(void *context, struct acc_instance_record *record)
 void free_record(void *context, struct acc_instance_record *record)
 {
 	xdr_free((xdrproc_t)xdr_instance_record, (char *)record);
+	free(record);
 }
 
 void destroy(void *context)

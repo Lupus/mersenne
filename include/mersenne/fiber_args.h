@@ -33,4 +33,6 @@ enum fiber_multicall_type {
 	FMT_LEARNER = 1,
 };
 
+struct fbr_fiber_arg fiber_arg_vsm(void *smptr);
+
 #endif
