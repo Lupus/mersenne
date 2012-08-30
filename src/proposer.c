@@ -546,6 +546,7 @@ start:
 				buf = info->argv[2].v;
 
 				do_delivered_value(ME_A_ iid, buf);
+				sm_free(buf);
 				break;
 			case FAT_QUIT:
 				goto fiber_exit;

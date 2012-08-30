@@ -218,6 +218,7 @@ start:
 						"wrong message type for acceptor: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
+		sm_free(msg);
 	}
 	goto start;
 }
