@@ -28,7 +28,7 @@
 struct acc_instance_record {
 	uint64_t iid;
 	uint64_t b;
-	struct buffer v;
+	struct buffer *v;
 	uint64_t vb;
 };
 

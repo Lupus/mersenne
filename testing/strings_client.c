@@ -31,17 +31,18 @@
 #include <mersenne/cl_protocol.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/util.h>
+#include <mersenne/sharedmem.h>
 
 #define HASH_FIND_BUFFER(head,buffer,out) \
 	HASH_FIND(hh,head,(buffer)->ptr,(buffer)->size1,out)
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
-	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield.ptr,(add)->bufferfield.size1,add)
+	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size1,add)
 
 #define VALUE_TO 10.0
 #define VALUE_SIZE 1400
 
 struct my_value {
-	struct buffer v;
+	struct buffer *v;
 	struct ev_timer timer;
 	UT_hash_handle hh;
 };
@@ -72,22 +73,18 @@ static void randomize_buffer(struct buffer *buffer)
 		/* ASCII characters 33 to 126 */
 		buffer->ptr[i] = rand() % (126 - 33 + 1) + 33;
 	}
-	buffer->state = BS_FULL;
 }
 
 static void submit_value(struct client_context *cc, struct my_value *value)
 {
 	struct cl_message msg;
-	struct buffer *msg_value;
 	XDR xdrs;
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	uint16_t size, send_size;
 	ssize_t retval;
 
 	msg.type = CL_NEW_VALUE;
-	msg_value = &msg.cl_message_u.new_value.value;
-	buf_init(msg_value, NULL, 0, BS_EMPTY);
-	buf_share(msg_value, &value->v);
+	msg.cl_message_u.new_value.value = value->v;
 	
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg))
@@ -102,8 +99,8 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf, size);
 	if(-1 == retval)
 		err(EXIT_FAILURE, "fbr_write_all");
-	//snprintf(buf, value->v.size1 + 1, "%s", value->v.ptr);
-	//printf("Submitted value: ``%s''\n", buf);
+	snprintf(buf, value->v->size1 + 1, "%s", value->v->ptr);
+	printf("Submitted value: ``%s''\n", buf);
 	ev_timer_start(cc->loop, &value->timer);
 }
 
@@ -138,7 +135,7 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 	cc->stats.received++;
 	if(cc->stats.received == cc->stats.total)
 		client_finished(cc);
-	randomize_buffer(&value->v);
+	randomize_buffer(value->v);
 	HASH_ADD_BUFFER(cc->values, v, value);
 	submit_value(cc, value);
 }
@@ -160,7 +157,7 @@ void fiber_reader(struct fbr_context *fiber_context)
 	uint16_t size;
 	XDR xdrs;
 	struct buffer *value;
-	//char str_buf[ME_MAX_XDR_MESSAGE_LEN];
+	char str_buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 	fbr_next_call_info(&cc->fbr, NULL);
@@ -182,10 +179,10 @@ void fiber_reader(struct fbr_context *fiber_context)
 			errx(EXIT_FAILURE, "xdr_cl_message: unable to decode");
 		if(CL_LEARNED_VALUE != msg.type)
 			errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
-		value = &msg.cl_message_u.learned_value.value;
-		//snprintf(str_buf, value->size1 + 1, "%s", value->ptr);
-		//printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
-		//		msg.cl_message_u.learned_value.i, str_buf);
+		value = msg.cl_message_u.learned_value.value;
+		snprintf(str_buf, value->size1 + 1, "%s", value->ptr);
+		printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
+				msg.cl_message_u.learned_value.i, str_buf);
 		next_value(cc, value);
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
@@ -220,8 +217,9 @@ static void init_values(struct client_context *cc)
 	for(i = 0; i < cc->concurrency; i++) {
 		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, 0.);
 		values[i].timer.data = cc;
-		buf_init(&values[i].v, malloc(VALUE_SIZE), VALUE_SIZE, BS_EMPTY);
-		randomize_buffer(&values[i].v);
+		values[i].v = malloc(sizeof(struct buffer));
+		buf_init(values[i].v, VALUE_SIZE);
+		randomize_buffer(values[i].v);
 		HASH_ADD_BUFFER(cc->values, v, values + i);
 		submit_value(cc, values + i);
 	}

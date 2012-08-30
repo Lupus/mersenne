@@ -19,7 +19,6 @@
 
  ********************************************************************/
 
-%#include <mersenne/buffer.h>
 %#include <mersenne/xdr.h>
 
 enum cl_message_type {
@@ -28,12 +27,12 @@ enum cl_message_type {
 };
 
 struct cl_new_value_data {
-	struct buffer value;
+	buffer_ptr value;
 };
 
 struct cl_learned_value_data {
 	uint64_t i;
-	struct buffer value;
+	buffer_ptr value;
 };
 
 union cl_message switch(cl_message_type type) {

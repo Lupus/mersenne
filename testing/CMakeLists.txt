@@ -13,6 +13,7 @@ add_executable(strings_client
 	../src/xdr.c
 	../src/buffer.c
 	../src/bitmask.c
+	../src/sharedmem.c
 	)
 target_link_libraries(strings_client evfibers ev)
 add_executable(acceptor_dump acceptor_dump.c)

@@ -37,8 +37,7 @@ static bool_t xdr_instance_record(XDR *xdrs, struct acc_instance_record *record)
 {
 	return xdr_uint64_t(xdrs, &record->iid) &&
 		xdr_uint64_t(xdrs, &record->b) &&
-		xdr_enum(xdrs, (enum_t *)&record->v.state) &&
-		xdr_bytes(xdrs, &record->v.ptr, &record->v.size1, ME_MAX_XDR_MESSAGE_LEN) &&
+		xdr_buffer_ptr(xdrs, &record->v) &&
 		xdr_uint64_t(xdrs, &record->vb);
 }
 

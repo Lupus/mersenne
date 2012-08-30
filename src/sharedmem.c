@@ -66,9 +66,7 @@ void * sm_calloc_ext(size_t nmemb, size_t size, sm_destructor_t destructor, void
 static struct sm_block_info *get_block(void *ptr)
 {
 	struct sm_block_info *block;
-	char *cptr = (char *)ptr;
-	size_t size = sizeof(struct sm_block_info);
-	block = (struct sm_block_info *)(cptr - size);
+	block = (struct sm_block_info *)ptr - 1;
 	if(SM_MAGIC != block->magic) {
 		fprintf(stderr, "sm: 0x%lu is not a shared memory block\n",
 				(unsigned long)ptr);
@@ -77,11 +75,25 @@ static struct sm_block_info *get_block(void *ptr)
 	return block;
 }
 
-void sm_in_use(void *ptr)
+void sm_set_destructor(void *ptr, sm_destructor_t destructor, void *context)
+{
+	struct sm_block_info *block;
+	block = get_block(ptr);
+	block->destructor = destructor;
+	block->destructor_context = context;
+}
+
+size_t sm_size(void *ptr)
+{
+	return get_block(ptr)->size;
+}
+
+void * sm_in_use(void *ptr)
 {
 	struct sm_block_info *block;
 	block = get_block(ptr);
 	block->references++;
+	return ptr;
 }
 
 void sm_free(void *ptr)
@@ -89,8 +101,10 @@ void sm_free(void *ptr)
 	struct sm_block_info *block;
 	block = get_block(ptr);
 	block->references--;
-	if(0 == block->references)
-		if(block->destructor)
+	if(0 == block->references) {
+		if(NULL != block->destructor)
 			block->destructor(block->destructor_context, ptr);
+		memset(block, 0x00, sizeof(struct sm_block_info));
 		free(block);
+	}
 }

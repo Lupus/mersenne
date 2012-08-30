@@ -49,54 +49,52 @@ static is_func_t * const state_table[IS_MAX] = {
 
 static int veql(struct pro_instance *instance)
 {
-	if(buf_cmp(&instance->p1.v, &instance->p2.v))
+	if(buf_cmp(instance->p1.v, instance->p2.v))
 		return 0;
 	return 1;
 }
 
 static int v2_eql_to(struct pro_instance *instance, struct buffer *buf)
 {
-	if(buf_cmp(&instance->p2.v, buf))
+	if(buf_cmp(instance->p2.v, buf))
 		return 0;
 	return 1;
 }
 
 static void v1_to_v2(struct pro_instance *instance)
 {
-	buf_copy(&instance->p2.v, &instance->p1.v);
+	instance->p2.v = instance->p1.v;
 }
 
 static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 {
-	buf_copy(&instance->p2.v, buffer);
+	instance->p2.v = buffer;
 	instance->client_value = 1;
 }
 
-static void pending_append(ME_P_ struct buffer *from)
+static int pending_append(ME_P_ struct buffer *from)
 {
-	struct buffer *buf;
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
-		return;
-	buf = buf_deep_clone(from);
-	DL_APPEND(mctx->pxs.pro.pending, buf);
+		return -1;
+	DL_APPEND(mctx->pxs.pro.pending, from);
 	mctx->pxs.pro.pending_size++;
+	return 0;
 }
 
-static int pending_shift(ME_P_ struct buffer *to)
+static int pending_shift(ME_P_ struct buffer **pptr)
 {
 	struct buffer *buf = mctx->pxs.pro.pending;
 	if(NULL == buf)
 		return 0;
 	DL_DELETE(mctx->pxs.pro.pending, buf);
-	buf_copy(to, buf);
-	buf_free(buf);
+	*pptr = buf;
 	mctx->pxs.pro.pending_size--;
 	return 1;
 }
 
 static void pending_unshift(ME_P_ struct buffer *from)
 {
-	DL_PREPEND(mctx->pxs.pro.pending, buf_deep_clone(from));
+	DL_PREPEND(mctx->pxs.pro.pending, from);
 }
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -126,10 +124,12 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	struct bm_mask *mask = instance->p1.acks;
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
+	if(instance->p1.v)
+		sm_free(instance->p1.v);
+	if(instance->p2.v && instance->p2.v != instance->p1.v)
+		sm_free(instance->p2.v);
 	memset(instance, 0, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
-	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
-	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
 	instance->p1.acks = mask;
 	instance->timer = timer;
 	instance->iid = mctx->pxs.pro.max_iid++;
@@ -180,8 +180,8 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->type = ME_PAXOS_ACCEPT;
 	data->me_paxos_msg_data_u.accept.i = instance->iid;
 	data->me_paxos_msg_data_u.accept.b = instance->b;
-	buf_share(&data->me_paxos_msg_data_u.accept.v, &instance->p2.v);
-	assert(data->me_paxos_msg_data_u.accept.v.size1 > 0);
+	data->me_paxos_msg_data_u.accept.v = instance->p2.v;
+	assert(data->me_paxos_msg_data_u.accept.v->size1 > 0);
 	//printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
@@ -209,13 +209,15 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
-			if(p->data->vb > instance->p1.vb)
-				buf_copy(&instance->p1.v, &p->data->v);
+			if(p->data->vb > instance->p1.vb) {
+				if(instance->p1.v) sm_free(instance->p1.v);
+				instance->p1.v = p->data->v;
+			}
 			num = bm_hweight(instance->p1.acks);
 			//puts("[PROPOSER] Got promise!");
 			if(pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
-				if(BS_FULL == instance->p1.v.state) {
+				if(NULL != instance->p1.v) {
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_WITH_VALUE,
@@ -250,7 +252,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(BS_EMPTY == instance->p2.v.state) {
+			if(NULL == instance->p2.v) {
 				if(!pending_shift(ME_A_ &instance->p2.v))
 					break;
 				instance->client_value = 1;
@@ -281,14 +283,14 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 	struct ie_base new_base;
 	switch(base->type) {
 		case IE_R1:
-			if(BS_EMPTY == instance->p2.v.state) {
+			if(NULL == instance->p2.v) {
 				v1_to_v2(instance);
 				instance->client_value = 0;
 			} else if(veql(instance)) {
 				//Do nothing here?
 			} else if(!veql(instance)) {
 				if(instance->client_value)
-					pending_unshift(ME_A_ &instance->p2.v);
+					pending_unshift(ME_A_ instance->p2.v);
 				v1_to_v2(instance);
 				instance->client_value = 0;
 			}
@@ -345,7 +347,7 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					//TODO: Client value delivered,
 					//TODO: inform it about this
 				} else
-					pending_unshift(ME_A_ &instance->p2.v);
+					pending_unshift(ME_A_ instance->p2.v);
 			}
 			ev_timer_stop(mctx->loop, &instance->timer);
 			adjust_window(ME_A);
@@ -394,8 +396,8 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	int nbits = peer_count(ME_A);
 	instance->p1.acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 	bm_init(instance->p1.acks, nbits);
-	buf_init(&instance->p1.v, instance->p1.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
-	buf_init(&instance->p2.v, instance->p2.v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
+	instance->p1.v = NULL;
+	instance->p2.v = NULL;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = ME_A;
 	//ev_timer_start(mctx->loop, &instance->timer);
@@ -454,16 +456,17 @@ static void do_client_value(ME_P_ struct buffer *buf)
 	struct pro_instance *instance;
 	int i, j;
 	int start = mctx->pxs.pro.lowest_non_closed;
-	nv.b.type = IE_NV;
-	nv.buffer = buf;
 	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
+			nv.b.type = IE_NV;
+			nv.buffer = sm_in_use(buf);
 			run_instance(ME_A_ instance, &nv.b);
 			return;
 		}
 	}
-	pending_append(ME_A_ buf);
+	if(0 == pending_append(ME_A_ buf))
+		sm_in_use(buf);
 }
 
 static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
@@ -480,7 +483,7 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			do_reject(ME_A_ pmsg, from);
 			break;
 		case ME_PAXOS_CLIENT_VALUE:
-			do_client_value(ME_A_ &pmsg->data.me_paxos_msg_data_u.client_value.v);
+			do_client_value(ME_A_ pmsg->data.me_paxos_msg_data_u.client_value.v);
 			break;
 		default:
 			errx(EXIT_FAILURE, "invalid paxos message type for "
@@ -535,7 +538,7 @@ start:
 				buf = info->argv[1].v;
 
 				do_client_value(ME_A_ buf);
-				buf_free(buf);
+				sm_free(buf);
 				break;
 			case FAT_PXS_DELIVERED_VALUE:
 				fbr_assert(&mctx->fbr, 3 == info->argc);
@@ -560,8 +563,7 @@ static void send_proxy_value(ME_P_ struct buffer *buf)
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_CLIENT_VALUE;
-	buf_init(&data->me_paxos_msg_data_u.client_value.v, NULL, 0, BS_EMPTY);
-	buf_share(&data->me_paxos_msg_data_u.client_value.v, buf);
+	data->me_paxos_msg_data_u.client_value.v = buf;
 	msg_send_to(ME_A_ &msg, mctx->ldr.leader);
 }
 
@@ -588,7 +590,7 @@ start:
 				buf = info->argv[1].v;
 
 				send_proxy_value(ME_A_ buf);
-				buf_free(buf);
+				sm_free(buf);
 				break;
 		}
 	}

@@ -21,29 +21,17 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <mersenne/buffer.h>
+#include <mersenne/sharedmem.h>
 
-void buf_init(struct buffer *buf, char *ptr, size_t size, enum buffer_state
-		state)
+void buf_init(struct buffer *buf, size_t size)
 {
-	buf->ptr = ptr;
+	if(size)
+		buf->ptr = malloc(size);
+	else
+		buf->ptr = NULL;
 	buf->size1 = size;
-	buf->state = state;
 	buf->prev = NULL;
 	buf->next = NULL;
-}
-
-void buf_copy(struct buffer *to, struct buffer *from)
-{
-	to->size1 = from->size1;
-	memcpy(to->ptr, from->ptr, from->size1);
-	to->state = from->state;
-}
-
-void buf_share(struct buffer *to, struct buffer *from)
-{
-	to->size1 = from->size1;
-	to->ptr = from->ptr;
-	to->state = from->state;
 }
 
 int buf_cmp(struct buffer *a, struct buffer *b)
@@ -53,16 +41,9 @@ int buf_cmp(struct buffer *a, struct buffer *b)
 	return(memcmp(a->ptr, b->ptr, b->size1));
 }
 
-struct buffer * buf_deep_clone(struct buffer *from)
+void buffer_sm_destructor(void *context, void *ptr)
 {
-	struct buffer *bn = malloc(sizeof(struct buffer));
-	buf_init(bn, malloc(from->size1), from->size1, BS_EMPTY);
-	buf_copy(bn, from);
-	return bn;
-}
-
-void buf_free(struct buffer *buffer)
-{
-	free(buffer->ptr);
-	free(buffer);
+	struct buffer *buffer = ptr;
+	if(NULL != buffer->ptr)
+		sm_free(buffer->ptr);
 }

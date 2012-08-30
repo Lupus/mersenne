@@ -30,6 +30,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
+#include <mersenne/sharedmem.h>
 
 #define DL_CALL(func,...) (*mctx->pxs.acc.func)(mctx->pxs.acc.context, ##__VA_ARGS__)
 
@@ -42,7 +43,7 @@ static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 	data->type = ME_PAXOS_PROMISE;
 	data->me_paxos_msg_data_u.promise.i = r->iid;
 	data->me_paxos_msg_data_u.promise.b = r->b;
-	buf_share(&data->me_paxos_msg_data_u.promise.v, &r->v);
+	data->me_paxos_msg_data_u.promise.v = r->v;
 	data->me_paxos_msg_data_u.promise.vb = r->vb;
 	msg_send_to(ME_A_ &msg, to->index);
 }
@@ -52,13 +53,13 @@ static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 
-	assert(r->v.size1 > 0);
+	assert(r->v->size1 > 0);
 
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LEARN;
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->b;
-	buf_share(&data->me_paxos_msg_data_u.learn.v, &r->v);
+	data->me_paxos_msg_data_u.learn.v = r->v;
 	if(NULL == to)
 		msg_send_all(ME_A_ &msg);
 	else
@@ -98,7 +99,8 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
-		buf_init(&r->v, NULL, 0, BS_EMPTY);
+		r->v = NULL;
+		r->vb = 0;
 		DL_CALL(store_record_func, r);
 	}
 	if(data->b < r->b) {
@@ -117,10 +119,9 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 	struct acc_instance_record *r = NULL;
 	struct me_paxos_accept_data *data;
-	char *ptr;
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
-	assert(data->v.size1 > 0);
+	assert(data->v->size1 > 0);
 	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_JUST_FIND)) {
 		//TODO: Add automatic accept of ballot 0
 		return;
@@ -131,13 +132,11 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 	r->b = data->b;
 	r->vb = data->b;
-	if(BS_EMPTY == r->v.state) {
-		ptr = malloc(data->v.size1);
-		buf_init(&r->v, ptr, data->v.size1, BS_EMPTY);
-		buf_copy(&r->v, &data->v);
-		assert(r->v.size1 > 0);
+	if(NULL == r->v) {
+		r->v = data->v;
+		assert(r->v->size1 > 0);
 	} else
-		assert(0 == buf_cmp(&r->v, &data->v));
+		assert(0 == buf_cmp(r->v, data->v));
 	if(r->iid > DL_CALL(get_highest_accepted_func))
 		 DL_CALL(set_highest_accepted_func, r->iid);
 	DL_CALL(store_record_func, r);
@@ -159,7 +158,7 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	for(iid = data->from; iid <= data->to; iid++) {
 		if(0 == DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
 			continue;
-		if(BS_EMPTY == r->v.state) {
+		if(NULL == r->v) {
 			//FIXME: Not absolutely sure about this...
 			DL_CALL(free_record_func, r);
 			continue;

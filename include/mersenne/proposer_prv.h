@@ -49,14 +49,12 @@ struct pro_instance {
 	uint64_t b;
 	enum instance_state state;
 	struct {
-		struct buffer v;
-		char v_data[ME_MAX_XDR_MESSAGE_LEN];
+		struct buffer *v;
 		uint64_t vb;
 		struct bm_mask *acks;
 	} p1;
 	struct {
-		struct buffer v;
-		char v_data[ME_MAX_XDR_MESSAGE_LEN];
+		struct buffer *v;
 	} p2;
 	int client_value;
 	ev_timer timer;

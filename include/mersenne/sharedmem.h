@@ -26,7 +26,9 @@ void * sm_alloc(size_t size);
 void * sm_alloc_ext(size_t size, sm_destructor_t destructor, void *context);
 void * sm_calloc(size_t nmemb, size_t size);
 void * sm_calloc_ext(size_t nmemb, size_t size, sm_destructor_t destructor, void *context);
-void sm_in_use(void *ptr);
+void sm_set_destructor(void *ptr, sm_destructor_t destructor, void *context);
+size_t sm_size(void *ptr);
+void * sm_in_use(void *ptr);
 void sm_free(void *ptr);
 
 #endif

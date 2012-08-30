@@ -37,8 +37,7 @@
 struct lea_instance {
 	uint64_t iid;
 	uint64_t b;
-	struct buffer v;
-	char v_data[ME_MAX_XDR_MESSAGE_LEN];
+	struct buffer *v;
 	struct bm_mask *acks;
 	int closed;
 };
@@ -68,7 +67,7 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 	fbr_call(&mctx->fbr, context->owner, 3,
 			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 			fbr_arg_i(instance->iid),
-			fbr_arg_v(buf_deep_clone(&instance->v))
+			fiber_arg_vsm(instance->v)
 		);
 }
 
@@ -109,7 +108,8 @@ static void try_deliver(ME_P_ struct learner_context *context)
 
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
-		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
+		sm_free(instance->v);
+		instance->v = NULL;
 		if(context->first_non_delivered == context->next_retransmit)
 			retransmit_next_window(ME_A_ context);
 	}
@@ -139,16 +139,16 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	instance = get_instance(context, data->i);
 	if(instance->closed)
 		return;
-	if(BS_EMPTY == instance->v.state) {
+	if(NULL == instance->v) {
 		instance->iid = data->i;
 		instance->b = data->b;
-		assert(data->v.size1 > 0);
-		buf_copy(&instance->v, &data->v);
+		assert(data->v->size1 > 0);
+		instance->v = sm_in_use(data->v);
 	} else {
 		assert(instance->iid == data->i);
 		//FIXME: Find out why does it fails the following:
 		//assert(instance->b == data->b);
-		assert(0 == buf_cmp(&instance->v, &data->v));
+		assert(0 == buf_cmp(instance->v, data->v));
 	}
 	bm_set_bit(instance->acks, from->index, 1);
 	num = bm_hweight(instance->acks);
@@ -204,8 +204,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 		instance->closed = 0;
 		bm_init(instance->acks, nbits);
-		buf_init(&instance->v, instance->v_data, ME_MAX_XDR_MESSAGE_LEN, BS_EMPTY);
-		memset(instance->v_data, 0x00, ME_MAX_XDR_MESSAGE_LEN);
+		instance->v = NULL;
 	}
 
 start:

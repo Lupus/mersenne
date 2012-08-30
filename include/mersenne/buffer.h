@@ -23,27 +23,15 @@
 
 #include <string.h>
 
-enum buffer_state {
-	BS_EMPTY = 0,
-	BS_FULL = 1,
-};
-
 struct buffer {
 	char *ptr;
 	unsigned int size1;
-	enum buffer_state state;
 
 	struct buffer *next, *prev;
 };
 
-void buf_init(struct buffer *buf, char *ptr, size_t size, enum buffer_state
-		state);
-void buf_copy(struct buffer *to, struct buffer *from);
-void buf_share(struct buffer *to, struct buffer *from);
+void buf_init(struct buffer *buf, size_t size);
 int buf_cmp(struct buffer *a, struct buffer *b);
-struct buffer * buf_deep_clone(struct buffer *from);
-void buf_free(struct buffer *buffer);
-
+void buffer_sm_destructor(void *context, void *ptr);
 
 #endif
-

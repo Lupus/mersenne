@@ -26,6 +26,7 @@
 #include <mersenne/cl_protocol.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
+#include <mersenne/sharedmem.h>
 
 static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
@@ -35,14 +36,15 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	uint16_t size, send_size;
 	ssize_t retval;
 	
+	sm_in_use(buffer);
 	msg.type = CL_LEARNED_VALUE;
 	msg.cl_message_u.learned_value.i = iid;
-	buf_init(&msg.cl_message_u.learned_value.value, NULL, 0, BS_EMPTY);
-	buf_share(&msg.cl_message_u.learned_value.value, buffer);
+	msg.cl_message_u.learned_value.value = buffer;
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg)) {
 		warnx("xdr_cl_message: unable to encode");
-		return -1;
+		retval = -1;
+		goto finish;
 	}
 	size = xdr_getpos(&xdrs);
 	xdr_destroy(&xdrs);
@@ -51,14 +53,19 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	retval = fbr_write_all(&mctx->fbr, fd, &send_size, sizeof(uint16_t));
 	if(-1 == retval) {
 		warn("fbr_write_all");
-		return -1;
+		retval = -1;
+		goto finish;
 	}
 	retval = fbr_write_all(&mctx->fbr, fd, buf, size);
 	if(-1 == retval) {
 		warn("fbr_write_all");
-		return -1;
+		retval = -1;
+		goto finish;
 	}
-	return 0;
+	retval = 0;
+finish:
+	sm_free(buffer);
+	return retval;
 }
 
 void client_informer_fiber(struct fbr_context *fiber_context)
@@ -90,7 +97,7 @@ start:
 				buf = info->argv[2].v;
 
 				retval = inform_client(ME_A_ fd, iid, buf);
-				buf_free(buf);
+				sm_free(buf);
 				if(-1 == retval)
 					warnx("informing of a client has failed");
 				break;
@@ -152,13 +159,13 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		}
 		if(CL_NEW_VALUE != msg.type)
 			goto conn_finish;
-		value = &msg.cl_message_u.new_value.value;
+		value = msg.cl_message_u.new_value.value;
 		//memcpy(buf, value->ptr, value->size1);
 		//buf[value->size1] = '\0';
 		//printf("[CLIENT] Got value: ``%s''\n", buf);
 		fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
 				fbr_arg_i(FAT_PXS_CLIENT_VALUE),
-				fbr_arg_v(buf_deep_clone(value))
+				fiber_arg_vsm(value)
 			);
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
