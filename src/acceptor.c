@@ -99,7 +99,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
-		r->v = NULL;
+		DL_CALL(set_record_value_func, r, NULL);
 		r->vb = 0;
 		DL_CALL(store_record_func, r);
 	}
@@ -133,7 +133,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	r->b = data->b;
 	r->vb = data->b;
 	if(NULL == r->v) {
-		r->v = data->v;
+		DL_CALL(set_record_value_func, r, data->v);
 		assert(r->v->size1 > 0);
 	} else
 		assert(0 == buf_cmp(r->v, data->v));
@@ -245,6 +245,7 @@ void acc_init_storage(ME_P)
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func, "get_highest_accepted");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func, "initialize");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func, "set_highest_accepted");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_record_value_func, "set_record_value");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func, "store_record");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func, "free_record");
 	if(mctx->args_info.acceptor_storage_options_given) {

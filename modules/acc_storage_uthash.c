@@ -34,7 +34,6 @@
 struct acc_instance_wrapper {
 	struct acc_instance_record record;
 	int stored;
-	struct buffer *stored_v;
 	UT_hash_handle hh;
 };
 
@@ -75,13 +74,20 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 		found = 0;
 		if(mode == ACS_FM_CREATE) {
 			w = malloc(sizeof(struct acc_instance_wrapper));
-			w->stored = 0;
-			w->stored_v = NULL;
+			memset(w, 0x00, sizeof(struct acc_instance_wrapper));
 		}
 	}
-	w->record.v = w->stored_v;
 	*rptr = (struct acc_instance_record *)w;
 	return found;
+}
+
+void set_record_value(void *context, struct acc_instance_record *record, struct buffer *v)
+{
+	if(record->v)
+		sm_free(record->v);
+	record->v = v;
+	if(v)
+		sm_in_use(v);
 }
 
 void store_record(void *context, struct acc_instance_record *record)
@@ -95,16 +101,17 @@ void store_record(void *context, struct acc_instance_record *record)
 		w->stored = 1;
 		HASH_ADD_WIID(ctx->instances, iid, w);
 	}
-	if(NULL == w->stored_v && NULL != record->v)
-		w->stored_v = sm_in_use(record->v);
 }
 
 void free_record(void *context, struct acc_instance_record *record)
 {
 	struct acc_instance_wrapper *w;
 	w = (struct acc_instance_wrapper *)record;
-	if(!w->stored)
+	if(!w->stored) {
+		if(record->v)
+			sm_free(record->v);
 		free(record);
+	}
 }
 
 void destroy(void *context)

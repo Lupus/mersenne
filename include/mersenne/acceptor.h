@@ -39,6 +39,7 @@ struct acc_context {
 	acs_get_highest_accepted_func get_highest_accepted_func;
 	acs_set_highest_accepted_func set_highest_accepted_func;
 	acs_find_record_func find_record_func;
+	acs_set_record_value_func set_record_value_func;
 	acs_store_record_func store_record_func;
 	acs_free_record_func free_record_func;
 	acs_destroy_func destroy_func;

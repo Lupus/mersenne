@@ -127,16 +127,14 @@ bool_t xdr_buffer(XDR *xdrs, struct buffer *buf)
 {
 	if(!xdr_sm_bytes(xdrs, &buf->ptr, &buf->size1, ME_MAX_XDR_MESSAGE_LEN))
 		return FALSE;
-	if(xdrs->x_op == XDR_DECODE)
+	if(xdrs->x_op == XDR_DECODE) {
 		sm_in_use(buf->ptr);
+		sm_set_destructor(buf, buffer_sm_destructor, NULL);
+	}
 	return TRUE;
 }
 
 bool_t xdr_buffer_ptr(XDR *xdrs, struct buffer **pptr)
 {
-	if(!xdr_sm_pointer(xdrs, (char **)pptr, sizeof(struct buffer), (xdrproc_t)xdr_buffer))
-		return FALSE;
-	if(NULL != *pptr && xdrs->x_op == XDR_DECODE)
-		sm_set_destructor(*pptr, buffer_sm_destructor, NULL);
-	return TRUE;
+	return xdr_sm_pointer(xdrs, (char **)pptr, sizeof(struct buffer), (xdrproc_t)xdr_buffer);
 }

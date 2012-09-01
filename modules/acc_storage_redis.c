@@ -28,6 +28,7 @@
 
 #include <mersenne/acc_storage.h>
 #include <mersenne/me_protocol.h>
+#include <mersenne/sharedmem.h>
 
 struct context {
 	redisContext *rctx;
@@ -135,8 +136,10 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 	switch(reply->type) {
 		case REDIS_REPLY_NIL:
 			found = 0;
-			if(mode == ACS_FM_CREATE)
+			if(mode == ACS_FM_CREATE) {
 				r = malloc(sizeof(struct acc_instance_record));
+				memset(r, 0x00, sizeof(struct acc_instance_record));
+			}
 			break;
 		case REDIS_REPLY_STRING:
 			r = malloc(sizeof(struct acc_instance_record));
@@ -155,6 +158,15 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 	freeReplyObject(reply);
 	*rptr = r;
 	return found;
+}
+
+void set_record_value(void *context, struct acc_instance_record *record, struct buffer *v)
+{
+	if(record->v)
+		sm_free(record->v);
+	record->v = v;
+	if(v)
+		sm_in_use(v);
 }
 
 void store_record(void *context, struct acc_instance_record *record)
@@ -187,7 +199,8 @@ void store_record(void *context, struct acc_instance_record *record)
 
 void free_record(void *context, struct acc_instance_record *record)
 {
-	xdr_free((xdrproc_t)xdr_instance_record, (char *)record);
+	if(record->v)
+		xdr_free((xdrproc_t)xdr_instance_record, (char *)record);
 	free(record);
 }
 
