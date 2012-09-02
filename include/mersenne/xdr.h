@@ -1,4 +1,3 @@
-
 /********************************************************************
 
   Copyright 2012 Konstantin Olkhovskiy <lupus@oxnull.net>
@@ -32,6 +31,5 @@ typedef struct buffer * buffer_ptr;
 bool_t xdr_timeval(XDR *xdrs, struct timeval *tv);
 bool_t xdr_bm_mask_ptr(XDR *xdrs, struct bm_mask **pptr);
 bool_t xdr_buffer(XDR *xdrs, struct buffer *buf);
-bool_t xdr_buffer_ptr(XDR *xdrs, struct buffer **pptr);
 
 #endif

@@ -211,7 +211,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			if(p->data->vb > instance->p1.vb) {
 				if(instance->p1.v) sm_free(instance->p1.v);
-				instance->p1.v = p->data->v;
+				instance->p1.v = buf_sm_steal(p->data->v);
 			}
 			num = bm_hweight(instance->p1.acks);
 			//puts("[PROPOSER] Got promise!");
@@ -460,7 +460,7 @@ static void do_client_value(ME_P_ struct buffer *buf)
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
 			nv.b.type = IE_NV;
-			nv.buffer = sm_in_use(buf);
+			nv.buffer = buf;
 			run_instance(ME_A_ instance, &nv.b);
 			return;
 		}
@@ -472,6 +472,7 @@ static void do_client_value(ME_P_ struct buffer *buf)
 static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
+	struct buffer *buf;
 
 	pmsg = &msg->me_message_u.paxos_message;
 
@@ -483,7 +484,8 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			do_reject(ME_A_ pmsg, from);
 			break;
 		case ME_PAXOS_CLIENT_VALUE:
-			do_client_value(ME_A_ pmsg->data.me_paxos_msg_data_u.client_value.v);
+			buf = buf_sm_steal(pmsg->data.me_paxos_msg_data_u.client_value.v);
+			do_client_value(ME_A_ buf);
 			break;
 		default:
 			errx(EXIT_FAILURE, "invalid paxos message type for "

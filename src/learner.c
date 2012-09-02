@@ -116,7 +116,8 @@ static void try_deliver(ME_P_ struct learner_context *context)
 }
 
 static void do_learn(ME_P_ struct learner_context *context, struct
-		me_paxos_message *pmsg, struct me_peer *from)
+		me_paxos_message *pmsg, struct buffer *buf, struct me_peer
+		*from)
 {
 	struct lea_instance *instance;
 	struct me_paxos_learn_data *data;
@@ -142,13 +143,13 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	if(NULL == instance->v) {
 		instance->iid = data->i;
 		instance->b = data->b;
-		assert(data->v->size1 > 0);
-		instance->v = sm_in_use(data->v);
+		assert(buf->size1 > 0);
+		instance->v = sm_in_use(buf);
 	} else {
 		assert(instance->iid == data->i);
 		//FIXME: Find out why does it fails the following:
 		//assert(instance->b == data->b);
-		assert(0 == buf_cmp(instance->v, data->v));
+		assert(0 == buf_cmp(instance->v, buf));
 	}
 	bm_set_bit(instance->acks, from->index, 1);
 	num = bm_hweight(instance->acks);
@@ -180,6 +181,7 @@ void lea_fiber(struct fbr_context *fiber_context)
 	struct me_peer *from;
 	struct me_paxos_message *pmsg;
 	struct fbr_call_info *info = NULL;
+	struct buffer *buf;
 	int i;
 	struct lea_instance *instance;
 	int nbits;
@@ -217,7 +219,9 @@ start:
 		pmsg = &msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
-				do_learn(ME_A_ &context, pmsg, from);
+				buf = info->argv[3].v;
+				do_learn(ME_A_ &context, pmsg, buf, from);
+				sm_free(buf);
 				break;
 			case ME_PAXOS_LAST_ACCEPTED:
 				do_last_accepted(ME_A_ &context, pmsg, from);

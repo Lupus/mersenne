@@ -99,7 +99,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
-		DL_CALL(set_record_value_func, r, NULL);
+		r->v = NULL;
 		r->vb = 0;
 		DL_CALL(store_record_func, r);
 	}
@@ -133,7 +133,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	r->b = data->b;
 	r->vb = data->b;
 	if(NULL == r->v) {
-		DL_CALL(set_record_value_func, r, data->v);
+		r->v = buf_sm_steal(data->v);
 		assert(r->v->size1 > 0);
 	} else
 		assert(0 == buf_cmp(r->v, data->v));

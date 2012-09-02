@@ -27,7 +27,7 @@
 #include <mersenne/leader.h>
 #include <mersenne/proposer.h>
 #include <mersenne/fiber_args.h>
-
+#include <mersenne/sharedmem.h>
 
 static inline int acceptor_predicate(struct me_peer *peer, void *context)
 {
@@ -53,6 +53,8 @@ int pxs_is_acc_majority(ME_P_ int acc_num)
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
+	struct me_paxos_learn_data *ldata;
+	struct buffer *buf;
 	pmsg = &msg->me_message_u.paxos_message;
 	switch(pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
@@ -66,6 +68,16 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 					);
 			break;
 		case ME_PAXOS_LEARN:
+			ldata = &pmsg->data.me_paxos_msg_data_u.learn;
+			buf = buf_sm_steal(ldata->v);
+			fbr_multicall(&mctx->fbr, FMT_LEARNER, 4,
+					fbr_arg_i(FAT_ME_MESSAGE),
+					fiber_arg_vsm(msg),
+					fbr_arg_v(from),
+					fiber_arg_vsm(buf)
+				);
+			sm_free(buf);
+			break;
 		case ME_PAXOS_LAST_ACCEPTED:
 			fbr_multicall(&mctx->fbr, FMT_LEARNER, 3,
 					fbr_arg_i(FAT_ME_MESSAGE),

@@ -91,14 +91,14 @@ struct me_paxos_prepare_data {
 struct me_paxos_promise_data {
 	uint64_t i;
 	uint64_t b;
-	buffer_ptr v;
+	struct buffer *v;
 	uint64_t vb;
 };
 
 struct me_paxos_accept_data {
 	uint64_t i;
 	uint64_t b;
-	buffer_ptr v;
+	struct buffer *v;
 };
 
 struct me_paxos_reject_data {
@@ -113,7 +113,7 @@ struct me_paxos_last_accepted_data {
 struct me_paxos_learn_data {
 	uint64_t i;
 	uint64_t b;
-	buffer_ptr v;
+	struct buffer *v;
 };
 
 struct me_paxos_retransmit_data {
@@ -122,7 +122,7 @@ struct me_paxos_retransmit_data {
 };
 
 struct me_paxos_client_value_data {
-	buffer_ptr v;
+	struct buffer *v;
 };
 
 union me_paxos_msg_data switch(me_paxos_message_type type) {

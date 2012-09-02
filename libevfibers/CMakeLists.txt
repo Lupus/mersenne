@@ -38,7 +38,7 @@ configure_file(
 	"${CMAKE_CURRENT_BINARY_DIR}/include/evfibers/context_size.h"
 	)
 
-add_library(evfibers
+add_library(evfibers SHARED
 	${EVFIBERS_SOURCES}
 	${EVFIBERS_HEADERS}
 	${EVFIBERS_PRIVATE_HEADERS}

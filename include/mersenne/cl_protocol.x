@@ -27,12 +27,12 @@ enum cl_message_type {
 };
 
 struct cl_new_value_data {
-	buffer_ptr value;
+	struct buffer *value;
 };
 
 struct cl_learned_value_data {
 	uint64_t i;
-	buffer_ptr value;
+	struct buffer *value;
 };
 
 union cl_message switch(cl_message_type type) {

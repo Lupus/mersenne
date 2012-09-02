@@ -38,7 +38,7 @@ static bool_t xdr_instance_record(XDR *xdrs, struct acc_instance_record *record)
 {
 	return xdr_uint64_t(xdrs, &record->iid) &&
 		xdr_uint64_t(xdrs, &record->b) &&
-		xdr_buffer_ptr(xdrs, &record->v) &&
+		xdr_pointer(xdrs, (char **)&record->v, sizeof(struct buffer), (xdrproc_t)xdr_buffer) &&
 		xdr_uint64_t(xdrs, &record->vb);
 }
 

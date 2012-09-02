@@ -31,6 +31,7 @@ struct buffer {
 };
 
 void buf_init(struct buffer *buf, size_t size);
+struct buffer * buf_sm_steal(struct buffer *xdr_buf);
 int buf_cmp(struct buffer *a, struct buffer *b);
 void buffer_sm_destructor(void *context, void *ptr);
 

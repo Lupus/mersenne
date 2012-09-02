@@ -34,6 +34,17 @@ void buf_init(struct buffer *buf, size_t size)
 	buf->next = NULL;
 }
 
+struct buffer * buf_sm_steal(struct buffer *xdr_buf)
+{
+	struct buffer *buf;
+	buf = sm_alloc_ext(sizeof(struct buffer), buffer_sm_destructor, NULL);
+	buf->ptr = xdr_buf->ptr;
+	xdr_buf->ptr = NULL;
+	buf->size1 = xdr_buf->size1;
+	xdr_buf->size1 = 0;
+	return buf;
+}
+
 int buf_cmp(struct buffer *a, struct buffer *b)
 {
 	if(a->size1 != b->size1)
@@ -44,6 +55,5 @@ int buf_cmp(struct buffer *a, struct buffer *b)
 void buffer_sm_destructor(void *context, void *ptr)
 {
 	struct buffer *buffer = ptr;
-	if(NULL != buffer->ptr)
-		sm_free(buffer->ptr);
+	free(buffer->ptr);
 }
