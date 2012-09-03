@@ -128,6 +128,7 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 {
 	struct context *ctx = (struct context *)context;
 	struct acc_instance_record *r = NULL;
+	struct buffer *tmp;
 	int found = 1;
 	redisReply *reply;
 	XDR xdrs;
@@ -149,6 +150,11 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 				errx(EXIT_FAILURE, "xdr_instance_record: unable "
 						"to decode value from redis");
 			xdr_destroy(&xdrs);
+			if(r->v) {
+				tmp = r->v;
+				r->v = buf_sm_steal(r->v);
+				free(tmp);
+			}
 			break;
 		case REDIS_REPLY_ERROR:
 			errx(EXIT_FAILURE, "redis reply error: %s", reply->str);
@@ -158,15 +164,6 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 	freeReplyObject(reply);
 	*rptr = r;
 	return found;
-}
-
-void set_record_value(void *context, struct acc_instance_record *record, struct buffer *v)
-{
-	if(record->v)
-		sm_free(record->v);
-	record->v = v;
-	if(v)
-		sm_in_use(v);
 }
 
 void store_record(void *context, struct acc_instance_record *record)
@@ -200,7 +197,7 @@ void store_record(void *context, struct acc_instance_record *record)
 void free_record(void *context, struct acc_instance_record *record)
 {
 	if(record->v)
-		xdr_free((xdrproc_t)xdr_instance_record, (char *)record);
+		sm_free(record->v);
 	free(record);
 }
 

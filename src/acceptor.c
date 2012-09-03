@@ -245,7 +245,6 @@ void acc_init_storage(ME_P)
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func, "get_highest_accepted");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func, "initialize");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func, "set_highest_accepted");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_record_value_func, "set_record_value");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func, "store_record");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func, "free_record");
 	if(mctx->args_info.acceptor_storage_options_given) {

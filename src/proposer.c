@@ -64,10 +64,12 @@ static int v2_eql_to(struct pro_instance *instance, struct buffer *buf)
 static void v1_to_v2(struct pro_instance *instance)
 {
 	instance->p2.v = instance->p1.v;
+	instance->p1.v = NULL;
 }
 
 static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 {
+	if(instance->p2.v) sm_free(instance->p2.v);
 	instance->p2.v = buffer;
 	instance->client_value = 1;
 }
@@ -546,7 +548,6 @@ start:
 				fbr_assert(&mctx->fbr, 3 == info->argc);
 				iid = info->argv[1].i;
 				buf = info->argv[2].v;
-
 				do_delivered_value(ME_A_ iid, buf);
 				sm_free(buf);
 				break;

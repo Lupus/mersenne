@@ -81,15 +81,6 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 	return found;
 }
 
-void set_record_value(void *context, struct acc_instance_record *record, struct buffer *v)
-{
-	if(record->v)
-		sm_free(record->v);
-	record->v = v;
-	if(v)
-		sm_in_use(v);
-}
-
 void store_record(void *context, struct acc_instance_record *record)
 {
 	struct context *ctx = (struct context *)context;
