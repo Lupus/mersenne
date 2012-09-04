@@ -136,6 +136,8 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r->v = buf_sm_steal(data->v);
 		assert(r->v->size1 > 0);
 	} else
+		//FIXME: Find the cause of this as it's a violation of the
+		//FIXME: crutial safety property
 		assert(0 == buf_cmp(r->v, data->v));
 	if(r->iid > DL_CALL(get_highest_accepted_func))
 		 DL_CALL(set_highest_accepted_func, r->iid);
