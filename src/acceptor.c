@@ -259,3 +259,10 @@ void acc_init_storage(ME_P)
 		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(0, NULL);
 	}
 }
+
+void acc_free_storage(ME_P)
+{
+	DL_CALL(destroy_func);
+	if(0 != dlclose(mctx->pxs.acc.handle))
+               errx(EXIT_FAILURE, "dlclose: %s", dlerror());
+}

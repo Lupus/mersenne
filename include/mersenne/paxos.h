@@ -54,6 +54,7 @@ struct pxs_context {
 
 void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from);
 void pxs_fiber_init(ME_P);
+void pxs_fiber_shutdown(ME_P);
 void pxs_send_acceptors(ME_P_ struct me_message *msg);
 int pxs_acceptors_count(ME_P);
 int pxs_is_acc_majority(ME_P_ int acc_num);

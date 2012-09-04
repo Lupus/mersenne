@@ -97,6 +97,7 @@ struct fbr_call_info {
 
 int fbr_context_size();
 void (fbr_init)(FBR_P_ struct ev_loop *loop);
+void fbr_destroy(FBR_P);
 struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P));
 void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber);
 int fbr_is_reclaimed(FBR_P_ struct fbr_fiber *fiber);
@@ -115,7 +116,6 @@ void fbr_multicall(FBR_P_ int mid, int argnum, ...);
 void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...);
 void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
-void fbr_destroy(FBR_P_ struct fbr_fiber *fiber);
 int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr);
 ssize_t fbr_read(FBR_P_ int fd, void *buf, size_t count);
 ssize_t fbr_read_all(FBR_P_ int fd, void *buf, size_t count);

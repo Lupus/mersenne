@@ -145,6 +145,20 @@ static void set_up_client_socket(ME_P)
                err(EXIT_FAILURE, "client socket listen failed");
 }
 
+static void sigint_cb (EV_P_ ev_signal *w, int revents)
+{
+	ev_break (EV_A_ EVBREAK_ALL);
+}
+
+static void sigterm_cb (EV_P_ ev_signal *w, int revents)
+{
+	ev_break (EV_A_ EVBREAK_ALL);
+}
+
+static void sighup_cb (EV_P_ ev_signal *w, int revents)
+{
+}
+
 static int does_file_exists(const char *filename)
 {
 	struct stat st;
@@ -163,6 +177,9 @@ int main(int argc, char *argv[])
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
+	ev_signal sigint_watcher;
+	ev_signal sigterm_watcher;
+	ev_signal sighup_watcher;
 
 	params = cmdline_parser_params_create();
 
@@ -191,6 +208,13 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
 
+	ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
+	ev_signal_start(mctx->loop, &sigint_watcher);
+	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGINT);
+	ev_signal_start(mctx->loop, &sigterm_watcher);
+	ev_signal_init(&sighup_watcher, sighup_cb, SIGINT);
+	ev_signal_start(mctx->loop, &sighup_watcher);
+
 	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);
 
@@ -206,6 +230,13 @@ int main(int argc, char *argv[])
 	printf("Starting main loop\n");
 	ev_loop(context.loop, 0);
 	printf("Exiting\n");
+
+	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_main);
+	pxs_fiber_shutdown(ME_A);
+
+	fbr_destroy(&mctx->fbr);
 
 	cmdline_parser_free(&mctx->args_info);
 	free(params);

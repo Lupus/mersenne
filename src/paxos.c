@@ -106,3 +106,11 @@ void pxs_fiber_init(ME_P)
 	fbr_call(&mctx->fbr, mctx->fiber_acceptor, 0);
 	pro_stop(ME_A);
 }
+
+void pxs_fiber_shutdown(ME_P)
+{
+	acc_free_storage(ME_A);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_acceptor);
+	pro_stop(ME_A);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
+}

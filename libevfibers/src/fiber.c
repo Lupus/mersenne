@@ -46,6 +46,20 @@ void fbr_init(FBR_P_ struct ev_loop *loop)
 	fctx->loop = loop;
 }
 
+void fbr_destroy(FBR_P)
+{
+	struct fbr_fiber *fiber, *tmp;
+	struct fbr_multicall *call, *tmp2;
+	DL_FOREACH_SAFE(fctx->reclaimed, fiber, tmp) {
+		free(fiber->stack);
+		free(fiber);
+	}
+	HASH_ITER(hh, fctx->multicalls, call, tmp2) {
+		HASH_DEL(fctx->multicalls, call);
+		free(call);
+	}
+}
+
 static void ev_wakeup_io(EV_P_ ev_io *w, int event)
 {
 	struct fbr_context *fctx;
@@ -587,6 +601,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 		LL_DELETE(fctx->reclaimed, fctx->reclaimed);
 	} else {
 		fiber = malloc(sizeof(struct fbr_fiber));
+		memset(fiber, 0x00, sizeof(struct fbr_fiber));
 		fiber->stack = malloc(FBR_STACK_SIZE);
 		(void)VALGRIND_STACK_REGISTER(fiber->stack, fiber->stack + FBR_STACK_SIZE);
 	}
