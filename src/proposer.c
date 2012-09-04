@@ -78,6 +78,7 @@ static int pending_append(ME_P_ struct buffer *from)
 {
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
+	from = sm_in_use(from);
 	DL_APPEND(mctx->pxs.pro.pending, from);
 	mctx->pxs.pro.pending_size++;
 	return 0;
@@ -462,13 +463,12 @@ static void do_client_value(ME_P_ struct buffer *buf)
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_P1_READY_NO_VALUE == instance->state) {
 			nv.b.type = IE_NV;
-			nv.buffer = buf;
+			nv.buffer = sm_in_use(buf);
 			run_instance(ME_A_ instance, &nv.b);
 			return;
 		}
 	}
-	if(0 == pending_append(ME_A_ buf))
-		sm_in_use(buf);
+	pending_append(ME_A_ buf);
 }
 
 static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
@@ -488,6 +488,7 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		case ME_PAXOS_CLIENT_VALUE:
 			buf = buf_sm_steal(pmsg->data.me_paxos_msg_data_u.client_value.v);
 			do_client_value(ME_A_ buf);
+			sm_free(buf);
 			break;
 		default:
 			errx(EXIT_FAILURE, "invalid paxos message type for "

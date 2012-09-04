@@ -25,7 +25,7 @@
 
 static void fiber_arg_sm_use_cb(void *context, struct fbr_fiber_arg *arg)
 {
-	sm_in_use(arg->v);
+	arg->v = sm_in_use(arg->v);
 }
 
 struct fbr_fiber_arg fiber_arg_vsm(void *smptr)

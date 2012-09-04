@@ -36,7 +36,7 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	uint16_t size, send_size;
 	ssize_t retval;
 	
-	sm_in_use(buffer);
+	buffer = sm_in_use(buffer);
 	msg.type = CL_LEARNED_VALUE;
 	msg.cl_message_u.learned_value.i = iid;
 	msg.cl_message_u.learned_value.value = buffer;

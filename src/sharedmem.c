@@ -22,9 +22,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <valgrind/valgrind.h>
 #include <mersenne/sharedmem.h>
 
 #define SM_MAGIC ((uint32_t)0xdeadbaba)
+
+#undef RUNNING_ON_VALGRIND
+#define RUNNING_ON_VALGRIND 0
 
 struct sm_block_info {
 	uint32_t magic;
@@ -32,6 +36,7 @@ struct sm_block_info {
 	size_t size;
 	sm_destructor_t destructor;
 	void *destructor_context;
+	struct sm_block_info *vg_orig;
 };
 
 void * sm_alloc(size_t size)
@@ -48,6 +53,7 @@ void * sm_alloc_ext(size_t size, sm_destructor_t destructor, void *context)
 	block->size = size;
 	block->destructor = destructor;
 	block->destructor_context = context;
+	block->vg_orig = block;
 	return block + 1;
 }
 
@@ -70,7 +76,8 @@ static struct sm_block_info *get_block(void *ptr)
 	if(SM_MAGIC != block->magic) {
 		fprintf(stderr, "sm: 0x%lu is not a shared memory block\n",
 				(unsigned long)ptr);
-		abort();
+		if(!RUNNING_ON_VALGRIND)
+			abort();
 	}
 	return block;
 }
@@ -91,7 +98,17 @@ size_t sm_size(void *ptr)
 void * sm_in_use(void *ptr)
 {
 	struct sm_block_info *block;
+	struct sm_block_info *new_block;
+	size_t size;
 	block = get_block(ptr);
+	if(RUNNING_ON_VALGRIND) {
+		size = sizeof(struct sm_block_info) + block->size;
+		new_block = malloc(size);
+		memcpy(new_block, block, size);
+		if(NULL == block->vg_orig)
+		block->vg_orig->references++;
+		return new_block + 1;
+	}
 	block->references++;
 	return ptr;
 }
@@ -100,6 +117,15 @@ void sm_free(void *ptr)
 {
 	struct sm_block_info *block;
 	block = get_block(ptr);
+	if(RUNNING_ON_VALGRIND) {
+		block->vg_orig->references--;
+		if(0 == block->vg_orig->references) {
+			if(NULL != block->vg_orig->destructor)
+				block->vg_orig->destructor(block->vg_orig->destructor_context, ptr);
+		}
+		free(block);
+		return;
+	}
 	block->references--;
 	if(0 == block->references) {
 		if(NULL != block->destructor)
