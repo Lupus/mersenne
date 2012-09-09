@@ -32,6 +32,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/fiber_args.strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 #define TIME_DELTA mctx->args_info.leader_delta_arg
 #define TIME_EPSILON mctx->args_info.leader_epsilon_arg
@@ -116,13 +117,13 @@ int config_match(ME_P_ struct me_message *msg)
 
 void lost_leadership(ME_P)
 {
-	puts("Lost Leadership :(");
+	log(LL_INFO, "Lost Leadership :(");
 	pro_stop(ME_A);
 }
 
 void gained_leadership(ME_P)
 {
-	puts("Gained Leadership :)");
+	log(LL_INFO, "Gained Leadership :)");
 	pro_start(ME_A);
 }
 
@@ -137,7 +138,7 @@ void update_leader(ME_P_ int new_leader)
 			gained_leadership(ME_A);
 	}
 	mctx->ldr.leader = new_leader;
-	printf("R %d: Leader=%d\n", mctx->ldr.r, mctx->ldr.leader);
+	log(LL_INFO, "R %d: Leader=%d\n", mctx->ldr.r, mctx->ldr.leader);
 }
 
 void restart_timer(ME_P)
@@ -196,7 +197,7 @@ void start_round(ME_P_ const int s)
 	struct me_peer *p;
 	int n = HASH_COUNT(mctx->peers);
 
-	printf("R %d: new round started\n", mctx->ldr.r);
+	log(LL_INFO, "R %d: new round started\n", mctx->ldr.r);
 
 	if(mctx->me->index != s % n)
 		send_start(ME_A_ s, -1);
@@ -218,13 +219,11 @@ void do_msg_start(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.round.k;
 
-#ifdef _LDR_DEBUG_MSG
-	printf("R %d: Got START(%d) from peer #%d\n",
+	log(LL_DEBUG, "R %d: Got START(%d) from peer #%d\n",
 			mctx->ldr.r,
 			k,
 			from->index
-	      );
-#endif
+	   );
 
 	if(k > mctx->ldr.r)
 		start_round(ME_A_ k);
@@ -243,15 +242,15 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.ok.k;
 
-#ifdef _LDR_DEBUG_MSG
-	bm_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
-	printf("R %d: Got OK(%d) from peer #%d, trust: %s\n",
-			mctx->ldr.r,
-			k,
-			from->index,
-			buf
-	      );
-#endif
+	if(log_level_match(LL_DEBUG)) {
+		bm_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
+		log(LL_DEBUG, "R %d: Got OK(%d) from peer #%d, trust: %s\n",
+				mctx->ldr.r,
+				k,
+				from->index,
+				buf
+		   );
+	}
 
 	if(k > mctx->ldr.r) {
 		send_ack(ME_A_ k, k % HASH_COUNT(mctx->peers));
@@ -263,8 +262,7 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 
 	if(!bm_get_bit(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
-		bm_displayhex(buf, 512, data->me_leader_msg_data_u.ok.trust);
-		printf("Current leader does not trust me, trustmask: %s\n", buf);
+		log(LL_DEBUG, "Current leader does not trust me\n");
 		start_round(ME_A_ mctx->ldr.r + 1);
 		return;
 	}
@@ -286,13 +284,13 @@ void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 	data = &msg->me_message_u.leader_message.data;
 	k = data->me_leader_msg_data_u.round.k;
 
-#ifdef _LDR_DEBUG_MSG
-	printf("R %d: Got ACK(%d) from peer #%d\n",
-			mctx->ldr.r,
-			k,
-			from->index
-	      );
-#endif
+	if(log_level_match(LL_DEBUG)) {
+		log(LL_DEBUG, "R %d: Got ACK(%d) from peer #%d\n",
+				mctx->ldr.r,
+				k,
+				from->index
+		   );
+	}
 
 	if(k == mctx->ldr.r) {
 		from->ack_ttl = 3;
@@ -300,7 +298,7 @@ void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 		send_start(ME_A_ mctx->ldr.r, from->index);
 		return;
 	} else
-		warnx("got ACK from round higher than mine O.o");
+		log(LL_WARNING,  "got ACK from round higher than mine");
 }
 
 
@@ -389,13 +387,13 @@ start:
 		from = info->argv[1].v;
 
 		if(is_expired(ME_A_ msg)) {
-			warnx("got expired message");
+			log(LL_WARNING, "got expired message");
 			sm_free(msg);
 			continue;
 		}
 		if(!config_match(ME_A_ msg)) {
-			warnx("sender configuration does not match mine, "
-					"ignoring message");
+			log(LL_WARNING, "sender configuration does not match "
+					"mine, ignoring message");
 			sm_free(msg);
 			continue;
 		}

@@ -27,6 +27,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
@@ -132,7 +133,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	informer = fbr_create(&mctx->fbr, "client/informer", client_informer_fiber);
 	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(fd));
 
-	puts("[CLIENT] Connection fiber has started");
+	log(LL_INFO, "[CLIENT] Connection fiber has started");
 	for(;;) {
 		retval = fbr_read_all(&mctx->fbr, fd, &size, sizeof(uint16_t));
 		if(-1 == retval) {
@@ -160,9 +161,11 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		if(CL_NEW_VALUE != msg.type)
 			goto conn_finish;
 		value = buf_sm_steal(msg.cl_message_u.new_value.value);
-		//memcpy(buf, value->ptr, value->size1);
-		//buf[value->size1] = '\0';
-		//printf("[CLIENT] Got value: ``%s''\n", buf);
+		if(log_level_match(LL_DEBUG)) {
+			memcpy(buf, value->ptr, value->size1);
+			buf[value->size1] = '\0';
+			log(LL_DEBUG, "[CLIENT] Got value: ``%s''\n", buf);
+		}
 		fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
 				fbr_arg_i(FAT_PXS_CLIENT_VALUE),
 				fiber_arg_vsm(value)
@@ -172,7 +175,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		xdr_destroy(&xdrs);
 	}
 conn_finish:
-	puts("[CLIENT] Connection fiber has finished");
+	log(LL_INFO, "[CLIENT] Connection fiber has finished");
 	close(fd);
 	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(FAT_QUIT));
 	fbr_reclaim(&mctx->fbr, informer);

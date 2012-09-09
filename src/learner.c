@@ -31,6 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 
@@ -59,11 +60,15 @@ static inline struct lea_instance * get_instance(struct learner_context *context
 
 static void do_deliver(ME_P_ struct learner_context *context, struct lea_instance *instance)
 {
-	//char buf[ME_MAX_XDR_MESSAGE_LEN];
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
 
-	//snprintf(buf, instance->v.size1 + 1, "%s", instance->v.ptr);
-	//printf("[LEARNER] Instance #%ld is delivered at ballot #%ld vith value ``%s'' size %d\n",
-	//		instance->iid, instance->b, buf, instance->v.size1);
+	if(log_level_match(LL_DEBUG)) {
+		snprintf(buf, instance->v->size1 + 1, "%s", instance->v->ptr);
+		log(LL_DEBUG, "[LEARNER] Instance #%ld is delivered at ballot "
+				"#%ld vith value ``%s'' size %d\n",
+				instance->iid, instance->b, buf,
+				instance->v->size1);
+	}
 	fbr_call(&mctx->fbr, context->owner, 3,
 			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 			fbr_arg_i(instance->iid),
@@ -89,7 +94,7 @@ static void retransmit_next_window(ME_P_ struct learner_context *context)
 		context->highest_seen);
 	send_retransmit(ME_A_ context->first_non_delivered,
 			min(context->highest_seen, context->next_retransmit));
-	printf("[LEARNER] requesting retransmits from %lu to %lu, highest seen is %lu\n",
+	log(LL_INFO, "[LEARNER] requesting retransmits from %lu to %lu, highest seen is %lu\n",
 		context->first_non_delivered, context->next_retransmit,
 		context->highest_seen);
 }
@@ -130,10 +135,10 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	if(data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		if(data->i > context->highest_seen)
 			context->highest_seen = data->i;
-		//warnx("[LEARNER] value out of instance windows, discarding");
-		//warnx("[LEARNER] data->i == %lu while "
-		//		"context->first_non_delivered == %lu", data->i,
-		//		context->first_non_delivered);
+		log(LL_DEBUG, "[LEARNER] value out of instance windows, discarding");
+		log(LL_DEBUG, "[LEARNER] data->i == %lu while "
+				"context->first_non_delivered == %lu", data->i,
+				context->first_non_delivered);
 		return;
 	}
 

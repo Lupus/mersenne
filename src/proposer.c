@@ -36,6 +36,7 @@
 #include <mersenne/bitmask.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -117,15 +118,14 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-#if 1
-	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
+	log(LL_DEBUG, "[PROPOSER] Switching instance %ld ballot %ld from state "
+			"%s to state %s transition %s\n",
 			instance->iid,
 			instance->b,
 			strval_instance_state(instance->state),
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
 	instance->state = state;
-#endif
 	run_instance(ME_A_ instance, base);
 }
 
@@ -163,7 +163,6 @@ static void adjust_window(ME_P)
 
 static uint64_t encode_ballot(ME_P_ uint64_t ballot)
 {
-	//printf("%ld * %d + %d == %ld\n", ballot, MAX_PROC, mctx->me->index, ballot * MAX_PROC + mctx->me->index);
 	return ballot * mctx->args_info.max_instances_arg + mctx->me->index;
 }
 
@@ -193,7 +192,8 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	data->me_paxos_msg_data_u.accept.v = instance->p2.v;
 	assert(data->me_paxos_msg_data_u.accept.v->size1 > 0);
-	//printf("[PROPOSER] Sending accepts for instance #%lu at ballo #%lu\n", instance->iid, instance->b);
+	log(LL_DEBUG, "[PROPOSER] Sending accepts for instance #%lu at ballot "
+			"#%lu\n", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
@@ -227,11 +227,12 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 				if(instance->p1.v) sm_free(instance->p1.v);
 				instance->p1.v = buf_sm_steal(p->data->v);
 				instance->p1.vb = p->data->vb;
-				printf("Found safe value for instance %lu at vb %lu\n", p->data->i, p->data->vb);
+				log(LL_DEBUG, "Found safe value for instance "
+						"%lu at vb %lu\n", p->data->i,
+						p->data->vb);
 			}
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			num = bm_hweight(instance->p1.acks);
-			//puts("[PROPOSER] Got promise!");
 			if(pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
 				if(NULL != instance->p1.v) {
@@ -390,9 +391,8 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.from = from;
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
-	//FIXME: This one fails...
 	assert(instance->iid == data->i);
-	//FIXME: This one fails as well:
+	//FIXME: This one fails:
 	//assert(instance->b== data->b);
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
@@ -417,8 +417,6 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	instance->p2.v = NULL;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = ME_A;
-	//ev_timer_start(mctx->loop, &instance->timer);
-	//puts("timer started");
 }
 
 static void free_instance(ME_P_ struct pro_instance *instance)

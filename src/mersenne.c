@@ -42,6 +42,7 @@
 #include <mersenne/client.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/cmdline.h>
+#include <mersenne/log.h>
 
 #define LISTEN_BACKLOG 50
 
@@ -58,13 +59,13 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	XDR xdrs;
 	
 	if(addr->sa_family != AF_INET) {
-		warnx("unsupported address family: %d", (addr->sa_family));
+		log(LL_WARNING, "unsupported address family: %d", (addr->sa_family));
 		return;
 	}
 
 	p = find_peer(ME_A_ (struct sockaddr_in *)addr);
 	if(!p) {
-		warnx("got message from unknown peer --- ignoring");
+		log(LL_WARNING, "got message from unknown peer --- ignoring");
 		return;
 	}
 
@@ -145,6 +146,40 @@ static void set_up_client_socket(ME_P)
                err(EXIT_FAILURE, "client socket listen failed");
 }
 
+static void setup_logging(ME_P)
+{
+	enum log_level log_level;
+	switch(mctx->args_info.log_level_arg) {
+		case log_level_arg_emerg:
+			log_level = LL_EMERG;
+			break;
+		case log_level_arg_alert:
+			log_level = LL_ALERT;
+			break;
+		case log_level_arg_crit:
+			log_level = LL_CRIT;
+			break;
+		case log_level_arg_err:
+			log_level = LL_ERR;
+			break;
+		case log_level_arg_warning:
+			log_level = LL_WARNING;
+			break;
+		case log_level_arg_notice:
+			log_level = LL_NOTICE;
+			break;
+		case log_level_arg_info:
+			log_level = LL_INFO;
+			break;
+		case log_level_arg_debug:
+			log_level = LL_DEBUG;
+			break;
+		case log_level__NULL:
+			errx(EXIT_FAILURE, "invalid log level");
+	}
+	log_set_level(log_level);
+}
+
 static void sigint_cb (EV_P_ ev_signal *w, int revents)
 {
 	ev_break (EV_A_ EVBREAK_ALL);
@@ -200,6 +235,8 @@ int main(int argc, char *argv[])
 	cmdline_parser_dump(stdout, &mctx->args_info);
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
+	setup_logging(ME_A);
+
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
 
 	set_up_udp_socket(ME_A);
@@ -227,9 +264,9 @@ int main(int argc, char *argv[])
 	fbr_call(&mctx->fbr, mctx->fiber_client, 0);
 
 	// now wait for events to arrive
-	printf("Starting main loop\n");
+	log(LL_INFO, "Starting main loop\n");
 	ev_loop(context.loop, 0);
-	printf("Exiting\n");
+	log(LL_INFO, "Exiting\n");
 
 	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);

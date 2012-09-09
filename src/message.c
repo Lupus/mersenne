@@ -23,6 +23,7 @@
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 static inline int p_peer(struct me_peer *peer, void *context)
 {
@@ -64,7 +65,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
 		if (retval < size)
-			warnx("message got truncated from %d to %d while sending", size, retval);
+			log(LL_NOTICE, "message got truncated from %d to %d while sending", size, retval);
 	}
 	xdr_destroy(&xdrs);
 }
