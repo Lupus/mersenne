@@ -102,6 +102,7 @@ void fbr_multicall(FBR_P_ int mid, int argnum, ...);
 void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...);
 void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
+void * fbr_calloc(FBR_P_ unsigned int nmemb, size_t size);
 void fbr_free(FBR_P_ void *ptr);
 int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr);
 ssize_t fbr_read(FBR_P_ int fd, void *buf, size_t count);

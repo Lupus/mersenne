@@ -80,7 +80,7 @@ static int pending_append(ME_P_ struct buffer *from)
 	struct pending_value *pv;
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
-	pv = calloc(1, sizeof(struct pending_value));
+	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
 	pv->v = sm_in_use(from);
 	DL_APPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
@@ -95,14 +95,14 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	DL_DELETE(mctx->pxs.pro.pending, pv);
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
-	free(pv);
+	fbr_free(&mctx->fbr, pv);
 	return 1;
 }
 
 static void pending_unshift(ME_P_ struct buffer *from)
 {
 	struct pending_value *pv;
-	pv = calloc(1, sizeof(struct pending_value));
+	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
 	pv->v = from;
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
 }

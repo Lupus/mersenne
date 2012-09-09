@@ -32,6 +32,7 @@
 #include <err.h>
 #include <errno.h>
 #include <ev.h>
+#include <valgrind/valgrind.h>
 
 #include <mersenne/me_protocol.h>
 #include <mersenne/context.h>
@@ -245,11 +246,13 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
 
-	ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
-	ev_signal_start(mctx->loop, &sigint_watcher);
-	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGINT);
+	if(!RUNNING_ON_VALGRIND) {
+		ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
+		ev_signal_start(mctx->loop, &sigint_watcher);
+	}
+	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
 	ev_signal_start(mctx->loop, &sigterm_watcher);
-	ev_signal_init(&sighup_watcher, sighup_cb, SIGINT);
+	ev_signal_init(&sighup_watcher, sighup_cb, SIGHUP);
 	ev_signal_start(mctx->loop, &sighup_watcher);
 
 	fbr_init(&mctx->fbr, mctx->loop);
@@ -268,6 +271,7 @@ int main(int argc, char *argv[])
 	ev_loop(context.loop, 0);
 	log(LL_INFO, "Exiting\n");
 
+	destroy_peer_list(ME_A);
 	pxs_fiber_shutdown(ME_A);
 
 	fbr_destroy(&mctx->fbr);

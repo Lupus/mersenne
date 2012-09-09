@@ -658,6 +658,14 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	return fiber;
 }
 
+void * fbr_calloc(FBR_P_ unsigned int nmemb, size_t size)
+{
+	void *ptr;
+	ptr = allocate_in_fiber(FBR_A_ nmemb * size, CURRENT_FIBER);
+	memset(ptr, 0x00, nmemb * size);
+	return ptr;
+}
+
 void * fbr_alloc(FBR_P_ size_t size)
 {
 	return allocate_in_fiber(FBR_A_ size, CURRENT_FIBER);

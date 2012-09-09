@@ -109,6 +109,15 @@ void load_peer_list(ME_P_ int my_index)
 	fclose(peers_file);
 }
 
+void destroy_peer_list(ME_P)
+{
+	struct me_peer *elt, *tmp;
+	HASH_ITER(hh, mctx->peers, elt, tmp) {
+		HASH_DEL(mctx->peers, elt);
+		free(elt);
+	}
+}
+
 int peer_count(ME_P)
 {
 	return HASH_COUNT(mctx->peers);
