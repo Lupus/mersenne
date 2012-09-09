@@ -69,7 +69,7 @@ struct fbr_stack_item {
 	struct trace_info tinfo;
 };
 
-struct fbr_context {
+struct fbr_context_private {
 	struct fbr_stack_item stack[FBR_CALL_STACK_SIZE];
 	struct fbr_stack_item *sp;
 	struct fbr_fiber root;

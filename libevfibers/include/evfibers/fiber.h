@@ -29,9 +29,6 @@
 #include <assert.h>
 #include <ev.h>
 #include <err.h>
-#ifndef _FBR_NO_CTX_STUB
-#include <evfibers/context_size.h>
-#endif
 
 #define FBR_CALL_STACK_SIZE 16
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
@@ -51,29 +48,19 @@
 	} while(0);
 #endif
 
-struct fbr_context
-#ifndef _FBR_NO_CTX_STUB
-{ struct { char _opaque_context_data_[FBR_CONTEXT_SIZE]; }; }
-#endif
-;
+struct fbr_context_private;
 struct fbr_fiber;
+
+struct fbr_context
+{
+	struct fbr_context_private *__p;
+};
+
 
 #define FBR_P struct fbr_context *fctx
 #define FBR_P_ FBR_P,
 #define FBR_A fctx
 #define FBR_A_ FBR_A,
-
-
-#ifndef _FBR_NO_CTX_STUB
-#define fbr_init(ctx, loop) \
-	do { \
-		if(FBR_CONTEXT_SIZE != fbr_context_size()) \
-			errx(666, "libevfibers: FBR_CONTEXT_SIZE differs from " \
-				"fbr_context_size(), ensure that library header " \
-				"files match it's binary distribution"); \
-		fbr_init(ctx,loop); \
-	} while(0);
-#endif
 
 typedef void (*fbr_fiber_func_t)(FBR_P);
 
@@ -95,8 +82,7 @@ struct fbr_call_info {
 	struct fbr_call_info *next, *prev;
 };
 
-int fbr_context_size();
-void (fbr_init)(FBR_P_ struct ev_loop *loop);
+void fbr_init(FBR_P_ struct ev_loop *loop);
 void fbr_destroy(FBR_P);
 struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P));
 void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber);

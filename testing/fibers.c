@@ -81,7 +81,6 @@ int main(int argc, char *argv[]) {
 	struct fbr_context context;
 	struct fbr_context *fctx = &context;
 	struct fbr_fiber *fiber;
-	context._opaque_context_data_[0] = 'x';
 
 	fbr_init(FBR_A, EV_DEFAULT);
 	fiber = fbr_create(FBR_A_ "coro_test", coro_test);
