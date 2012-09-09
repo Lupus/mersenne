@@ -20,6 +20,7 @@
  ********************************************************************/
 #include <err.h>
 #include <assert.h>
+#include <errno.h>
 
 #include <mersenne/client.h>
 #include <mersenne/context.h>
@@ -137,7 +138,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	for(;;) {
 		retval = fbr_read_all(&mctx->fbr, fd, &size, sizeof(uint16_t));
 		if(-1 == retval) {
-			warn("fbr_read_all");
+			log(LL_WARNING, "fbr_read_all: %s\n", strerror(errno));
 			goto conn_finish;
 		}
 		if(retval < sizeof(uint16_t))
@@ -145,7 +146,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		size = ntohs(size);
 		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
 		if(-1 == retval) {
-			warn("fbr_read_all");
+			log(LL_WARNING, "fbr_read_all: %s\n", strerror(errno));
 			goto conn_finish;
 		}
 		if(retval < size)
@@ -154,7 +155,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
 		memset(&msg, 0, sizeof(msg));
 		if(!xdr_cl_message(&xdrs, &msg)) {
-			warnx("xdr_cl_message: unable to decode");
+			log(LL_WARNING, "xdr_cl_message: unable to decode\n");
 			xdr_destroy(&xdrs);
 			goto conn_finish;
 		}
@@ -175,7 +176,7 @@ static void connection_fiber(struct fbr_context *fiber_context)
 		xdr_destroy(&xdrs);
 	}
 conn_finish:
-	log(LL_INFO, "[CLIENT] Connection fiber has finished");
+	log(LL_INFO, "[CLIENT] Connection fiber has finished\n");
 	close(fd);
 	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(FAT_QUIT));
 	fbr_reclaim(&mctx->fbr, informer);
