@@ -60,6 +60,9 @@ struct fbr_fiber {
 	struct trace_info w_timer_tinfo;
 	int w_timer_expected;
 	int reclaimed;
+	struct trace_info reclaim_tinfo;
+	struct fbr_fiber *children;
+	struct fbr_fiber *parent;
 
 	struct fbr_fiber *next, *prev;
 };

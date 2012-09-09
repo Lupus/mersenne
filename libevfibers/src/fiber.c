@@ -46,10 +46,21 @@ void fbr_init(FBR_P_ struct ev_loop *loop)
 	fctx->__p->loop = loop;
 }
 
+static void reclaim_children(FBR_P_ struct fbr_fiber *fiber)
+{
+	struct fbr_fiber *child;
+	DL_FOREACH(fiber->children, child) {
+		fbr_reclaim(FBR_A_ child);
+	}
+}
+
 void fbr_destroy(FBR_P)
 {
 	struct fbr_fiber *fiber, *tmp;
 	struct fbr_multicall *call, *tmp2;
+	
+	reclaim_children(FBR_A_ &fctx->__p->root);
+
 	DL_FOREACH_SAFE(fctx->__p->reclaimed, fiber, tmp) {
 		free(fiber->stack);
 		free(fiber);
@@ -141,6 +152,8 @@ void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber)
 {
 	if(fiber->reclaimed)
 		return;
+	fill_trace_info(&fiber->reclaim_tinfo);
+	reclaim_children(FBR_A_ fiber);
 	fiber_cleanup(FBR_A_ fiber);
 	fiber->reclaimed = 1;
 	LL_PREPEND(fctx->__p->reclaimed, fiber);
@@ -252,7 +265,8 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 
 	if(1 == callee->reclaimed) {
 		fprintf(stderr, "libevfibers: fiber 0x%lu is about to be called "
-				"but it is reclaimed\n", (long unsigned)callee);
+				"but it was reclaimed here:\n", (long unsigned)callee);
+		print_trace_info(&callee->reclaim_tinfo);
 		abort();
 	}
 
@@ -623,8 +637,11 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	fiber->w_timer_expected = 0;
 	fiber->reclaimed = 0;
 	fiber->call_list = NULL;
+	fiber->children = NULL;
 	fiber->name = name;
 	fiber->func = func;
+	DL_APPEND(CURRENT_FIBER->children, fiber);
+	fiber->parent = CURRENT_FIBER;
 	return fiber;
 }
 
