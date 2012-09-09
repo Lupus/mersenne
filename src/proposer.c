@@ -76,28 +76,34 @@ static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 
 static int pending_append(ME_P_ struct buffer *from)
 {
+	struct pending_value *pv;
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
-	from = sm_in_use(from);
-	DL_APPEND(mctx->pxs.pro.pending, from);
+	pv = calloc(1, sizeof(struct pending_value));
+	pv->v = sm_in_use(from);
+	DL_APPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
 	return 0;
 }
 
 static int pending_shift(ME_P_ struct buffer **pptr)
 {
-	struct buffer *buf = mctx->pxs.pro.pending;
-	if(NULL == buf)
+	struct pending_value *pv = mctx->pxs.pro.pending;
+	if(NULL == pv)
 		return 0;
-	DL_DELETE(mctx->pxs.pro.pending, buf);
-	*pptr = buf;
+	DL_DELETE(mctx->pxs.pro.pending, pv);
+	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
+	free(pv);
 	return 1;
 }
 
 static void pending_unshift(ME_P_ struct buffer *from)
 {
-	DL_PREPEND(mctx->pxs.pro.pending, from);
+	struct pending_value *pv;
+	pv = calloc(1, sizeof(struct pending_value));
+	pv->v = from;
+	DL_PREPEND(mctx->pxs.pro.pending, pv);
 }
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -111,13 +117,15 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-	//printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
-	//		instance->iid,
-	//		instance->b,
-	//		strval_instance_state(instance->state),
-	//		strval_instance_state(state),
-	//		strval_instance_event_type(base->type));
+#if 1
+	printf("[PROPOSER] Switching instance %ld ballot %ld from state %s to state %s transition %s\n",
+			instance->iid,
+			instance->b,
+			strval_instance_state(instance->state),
+			strval_instance_state(state),
+			strval_instance_event_type(base->type));
 	instance->state = state;
+#endif
 	run_instance(ME_A_ instance, base);
 }
 
@@ -204,18 +212,24 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	int num;
 	switch(base->type) {
 		case IE_S:
-			instance->b = encode_ballot(ME_A_ 0);
+			instance->b = encode_ballot(ME_A_ 1);
+			instance->p1.v = NULL;
+			instance->p2.v = NULL;
+			instance->p1.vb = 0;
+			instance->client_value = 0;
 			send_prepare(ME_A_ instance);
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
-			bm_set_bit(instance->p1.acks, p->from->index, 1);
-			if(p->data->vb > instance->p1.vb) {
+			if(p->data->v && p->data->vb > instance->p1.vb) {
 				if(instance->p1.v) sm_free(instance->p1.v);
 				instance->p1.v = buf_sm_steal(p->data->v);
+				instance->p1.vb = p->data->vb;
+				printf("Found safe value for instance %lu at vb %lu\n", p->data->i, p->data->vb);
 			}
+			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			num = bm_hweight(instance->p1.acks);
 			//puts("[PROPOSER] Got promise!");
 			if(pxs_is_acc_majority(ME_A_ num)) {

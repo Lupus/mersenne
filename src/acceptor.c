@@ -46,6 +46,7 @@ static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 	data->me_paxos_msg_data_u.promise.v = r->v;
 	data->me_paxos_msg_data_u.promise.vb = r->vb;
 	msg_send_to(ME_A_ &msg, to->index);
+	printf("[ACCEPTOR] Sent promise for instance %lu with value size %u\n", r->iid, r->v ? r->v->size1 : 0);
 }
 
 static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
@@ -87,6 +88,7 @@ static void send_reject(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 	data->me_paxos_msg_data_u.reject.i = r->iid;
 	data->me_paxos_msg_data_u.reject.b = r->b;
 	msg_send_to(ME_A_ &msg, to->index);
+	printf("[ACCEPTOR] Sent reject for instance %lu at ballot %lu\n", r->iid, r->b);
 }
 
 static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -108,7 +110,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		goto cleanup;
 	}
 	r->b = data->b;
-	//printf("[ACCEPTOR] Promised to not accept ballots lower that %ld\n", data->b);
+	printf("[ACCEPTOR] Promised not to accept ballots lower that %lu for instance %lu\n", data->b, data->i);
 	send_promise(ME_A_ r, from);
 cleanup:
 	DL_CALL(free_record_func, r);
@@ -119,6 +121,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 	struct acc_instance_record *r = NULL;
 	struct me_paxos_accept_data *data;
+	char buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
@@ -138,7 +141,14 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	} else
 		//FIXME: Find the cause of this as it's a violation of the
 		//FIXME: crutial safety property
-		assert(0 == buf_cmp(r->v, data->v));
+		if(0 != buf_cmp(r->v, data->v)) {
+			fprintf(stderr, "Conflict while accepting a value for instance %lu ballot %lu\n", r->iid, r->b);
+			snprintf(buf, data->v->size1 + 1, "%s", data->v->ptr);
+			fprintf(stderr, "Suggested value sized %d is: ``%s''\n", data->v->size1, buf);
+			snprintf(buf, r->v->size1 + 1, "%s", r->v->ptr);
+			fprintf(stderr, "Current value sized %d is: ``%s''\n", r->v->size1, buf);
+			abort();
+		}
 	if(r->iid > DL_CALL(get_highest_accepted_func))
 		 DL_CALL(set_highest_accepted_func, r->iid);
 	DL_CALL(store_record_func, r);

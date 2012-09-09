@@ -31,11 +31,16 @@ struct me_peer;
 struct me_message;
 struct pro_instance;
 
+struct pending_value {
+	struct buffer *v;
+	struct pending_value *next, *prev;
+};
+
 struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
 	uint64_t max_iid;
-	struct buffer *pending;
+	struct pending_value *pending;
 	int pending_size;
 };
 

@@ -242,7 +242,18 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	int i;
 	struct fbr_call_info *info;
 	
-	assert(argnum < FBR_MAX_ARG_NUM);
+	if(argnum >= FBR_MAX_ARG_NUM) {
+		fprintf(stderr, "libevfibers: attempt to pass %d argumens while "
+				"FBR_MAX_ARG_NUM is %d, aborting\n", argnum,
+				FBR_MAX_ARG_NUM);
+		abort();
+	}
+
+	if(1 == callee->reclaimed) {
+		fprintf(stderr, "libevfibers: fiber 0x%lu is about to be called "
+				"but it is reclaimed\n", (long unsigned)callee);
+		abort();
+	}
 
 	fctx->sp++;
 
@@ -609,6 +620,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 			FBR_STACK_SIZE);
 	fiber->w_io_expected = 0;
 	fiber->w_timer_expected = 0;
+	fiber->reclaimed = 0;
 	fiber->call_list = NULL;
 	fiber->name = name;
 	fiber->func = func;

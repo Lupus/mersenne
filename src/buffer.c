@@ -30,8 +30,6 @@ void buf_init(struct buffer *buf, size_t size)
 	else
 		buf->ptr = NULL;
 	buf->size1 = size;
-	buf->prev = NULL;
-	buf->next = NULL;
 }
 
 struct buffer * buf_sm_steal(struct buffer *xdr_buf)
