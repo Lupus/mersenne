@@ -268,9 +268,6 @@ int main(int argc, char *argv[])
 	ev_loop(context.loop, 0);
 	log(LL_INFO, "Exiting\n");
 
-	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
-	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);
-	fbr_reclaim(&mctx->fbr, mctx->fiber_main);
 	pxs_fiber_shutdown(ME_A);
 
 	fbr_destroy(&mctx->fbr);
