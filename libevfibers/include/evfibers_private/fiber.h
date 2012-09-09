@@ -27,7 +27,6 @@
 #include <evfibers_private/trace.h>
 #include <coro.h>
 #include <uthash.h>
-#include <obstack.h>
 
 #define obstack_chunk_alloc malloc
 #define obstack_chunk_free free
@@ -46,13 +45,17 @@ struct fbr_multicall {
 	UT_hash_handle hh;
 };
 
+struct fbr_mem_pool {
+	struct fbr_mem_pool *next, *prev;
+	void *ptr;
+};
+
 struct fbr_fiber {
 	const char *name;
 	fbr_fiber_func_t func;
 	coro_context ctx;
 	char *stack;
 	struct fbr_call_info *call_list;
-	struct obstack obstack;
 	ev_io w_io;
 	int w_io_expected;
 	struct trace_info w_io_tinfo;
@@ -63,6 +66,7 @@ struct fbr_fiber {
 	struct trace_info reclaim_tinfo;
 	struct fbr_fiber *children;
 	struct fbr_fiber *parent;
+	struct fbr_mem_pool *pool;
 
 	struct fbr_fiber *next, *prev;
 };

@@ -136,15 +136,14 @@ static void unsubscribe_all(FBR_P_ struct fbr_fiber *fiber)
 
 static void fiber_cleanup(FBR_P_ struct fbr_fiber *fiber)
 {
-	struct fbr_call_info *elt, *tmp;
+	struct fbr_mem_pool *p_elt, *p_tmp;
 	//coro_destroy(&fiber->ctx);
 	unsubscribe_all(FBR_A_ fiber);
 	ev_io_stop(fctx->__p->loop, &fiber->w_io);
 	ev_timer_stop(fctx->__p->loop, &fiber->w_timer);
-	obstack_free(&fiber->obstack, NULL);
-	DL_FOREACH_SAFE(fiber->call_list, elt, tmp) {
-		DL_DELETE(fiber->call_list, elt);
-		free(elt);
+	DL_FOREACH_SAFE(fiber->pool, p_elt, p_tmp) {
+		DL_DELETE(fiber->pool, p_elt);
+		free(p_elt);
 	}
 }
 
@@ -166,7 +165,6 @@ int fbr_is_reclaimed(FBR_P_ struct fbr_fiber *fiber)
 
 static void fiber_prepare(FBR_P_ struct fbr_fiber *fiber)
 {
-	obstack_init(&fiber->obstack);
 	ev_init(&fiber->w_io, ev_wakeup_io);
 	ev_init(&fiber->w_timer, ev_wakeup_timer);
 	fiber->w_io.data = FBR_A;
@@ -250,6 +248,20 @@ void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap)
 	fbr_vcall_context(FBR_A_ callee, NULL, argnum, ap);
 }
 
+static void * allocate_in_fiber(FBR_P_ size_t size, struct fbr_fiber *in)
+{
+	struct fbr_mem_pool *pool_entry;
+	pool_entry = malloc(size + sizeof(struct fbr_mem_pool));
+	if(NULL == pool_entry) {
+		fprintf(stderr, "libevfibers: unable to allocate %lu bytes\n",
+				size + sizeof(struct fbr_mem_pool));
+		abort();
+	}
+	pool_entry->ptr = pool_entry;
+	DL_APPEND(in->pool, pool_entry);
+	return pool_entry + 1;
+}
+
 void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, va_list ap)
 {
 	struct fbr_fiber *caller = fctx->__p->sp->fiber;
@@ -275,7 +287,7 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	fctx->__p->sp->fiber = callee;
 	fill_trace_info(&fctx->__p->sp->tinfo);
 
-	info = malloc(sizeof(struct fbr_call_info));
+	info = allocate_in_fiber(FBR_A_ sizeof(struct fbr_call_info), callee);
 	info->caller = caller;
 	info->argc = argnum;
 	for(i = 0; i < argnum; i++) {
@@ -340,14 +352,14 @@ again:
 	tmp = fiber->call_list;
 	DL_DELETE(fiber->call_list, fiber->call_list);
 	if(tmp->caller == &fctx->__p->root) {
-		free(tmp);
+		fbr_free(FBR_A_ tmp);
 		goto again;
 	}
 	if(NULL == info_ptr)
-		free(tmp);
+		fbr_free(FBR_A_ tmp);
 	else {
 		if(NULL != *info_ptr)
-			free(*info_ptr);
+			fbr_free(FBR_A_ *info_ptr);
 		*info_ptr = tmp;
 	}
 	return 1;
@@ -638,6 +650,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	fiber->reclaimed = 0;
 	fiber->call_list = NULL;
 	fiber->children = NULL;
+	fiber->pool = NULL;
 	fiber->name = name;
 	fiber->func = func;
 	DL_APPEND(CURRENT_FIBER->children, fiber);
@@ -647,7 +660,23 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 
 void * fbr_alloc(FBR_P_ size_t size)
 {
-	return obstack_alloc(&CURRENT_FIBER->obstack, size);
+	return allocate_in_fiber(FBR_A_ size, CURRENT_FIBER);
+}
+
+void fbr_free(FBR_P_ void *ptr)
+{
+	struct fbr_mem_pool *pool_entry = NULL;
+	if(NULL == ptr)
+		return;
+	pool_entry = (struct fbr_mem_pool *)ptr - 1;
+	if(pool_entry->ptr != pool_entry) {
+		fprintf(stderr, "libevfibers: address 0x%lx does not look like "
+				"fiber memory pool entry\n", (unsigned long)ptr);
+		if(!RUNNING_ON_VALGRIND)
+			abort();
+	}
+	DL_DELETE(CURRENT_FIBER->pool, pool_entry);
+	free(pool_entry);
 }
 
 void fbr_dump_stack(FBR_P)
