@@ -30,11 +30,6 @@
 #define CURRENT_FIBER fctx->__p->sp->fiber
 #define CALLED_BY_ROOT ((fctx->__p->sp - 1)->fiber == &fctx->__p->root)
 
-int fbr_context_size()
-{
-	return sizeof(struct fbr_context);
-}
-
 void fbr_init(FBR_P_ struct ev_loop *loop)
 {
 	fctx->__p = malloc(sizeof(struct fbr_context_private));
@@ -287,7 +282,13 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	fctx->__p->sp->fiber = callee;
 	fill_trace_info(&fctx->__p->sp->tinfo);
 
-	info = allocate_in_fiber(FBR_A_ sizeof(struct fbr_call_info), callee);
+	if(caller == &fctx->__p->root) {
+		//We're not using call info when calling from the root fiber
+		coro_transfer(&caller->ctx, &callee->ctx);
+		return;
+	}
+
+	info = fbr_alloc(FBR_A_ sizeof(struct fbr_call_info));
 	info->caller = caller;
 	info->argc = argnum;
 	for(i = 0; i < argnum; i++) {
@@ -297,6 +298,14 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	}
 
 	DL_APPEND(callee->call_list, info);
+	callee->call_list_size++;
+	if(callee->call_list_size >= FBR_CALL_LIST_WARN) {
+		fprintf(stderr, "libevfibers: call list for ``%s'' contains %lu"
+				" elements, which looks suspicious. Is anyone"
+				" fetching the calls?\n", callee->name,
+				callee->call_list_size);
+		fbr_dump_stack(FBR_A);
+	}
 
 	coro_transfer(&caller->ctx, &callee->ctx);
 }
@@ -346,15 +355,12 @@ int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr)
 	struct fbr_fiber *fiber = CURRENT_FIBER;
 	struct fbr_call_info *tmp;
 
-again:
 	if(NULL == fiber->call_list)
 		return 0;
 	tmp = fiber->call_list;
 	DL_DELETE(fiber->call_list, fiber->call_list);
-	if(tmp->caller == &fctx->__p->root) {
-		fbr_free(FBR_A_ tmp);
-		goto again;
-	}
+	fiber->call_list_size--;
+
 	if(NULL == info_ptr)
 		fbr_free(FBR_A_ tmp);
 	else {
@@ -649,6 +655,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	fiber->w_timer_expected = 0;
 	fiber->reclaimed = 0;
 	fiber->call_list = NULL;
+	fiber->call_list_size = 0;
 	fiber->children = NULL;
 	fiber->pool = NULL;
 	fiber->name = name;

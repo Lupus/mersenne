@@ -34,6 +34,7 @@
 #define FBR_CALL_STACK_SIZE 16
 #define FBR_STACK_SIZE 64 * 1024 // 64 KB
 #define FBR_MAX_ARG_NUM 10
+#define FBR_CALL_LIST_WARN 1000
 
 #define container_of(ptr, type, member) ({            \
  const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
@@ -56,6 +57,7 @@ struct fbr_fiber {
 	coro_context ctx;
 	char *stack;
 	struct fbr_call_info *call_list;
+	size_t call_list_size;
 	ev_io w_io;
 	int w_io_expected;
 	struct trace_info w_io_tinfo;
