@@ -92,7 +92,7 @@ static void ev_wakeup_io(EV_P_ ev_io *w, int event)
 		abort();
 	}
 
-	fbr_call(FBR_A_ fiber, 0);
+	fbr_call_noinfo(FBR_A_ fiber, 0);
 }
 
 static void ev_wakeup_timer(EV_P_ ev_timer *w, int event)
@@ -115,7 +115,7 @@ static void ev_wakeup_timer(EV_P_ ev_timer *w, int event)
 		abort();
 	}
 
-	fbr_call(FBR_A_ fiber, 0);
+	fbr_call_noinfo(FBR_A_ fiber, 0);
 }
 
 static inline int ptrcmp(void *p1, void *p2)
@@ -245,7 +245,7 @@ void fbr_unsubscribe_all(FBR_P)
 
 void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap)
 {
-	fbr_vcall_context(FBR_A_ callee, NULL, argnum, ap);
+	fbr_vcall_context(FBR_A_ callee, NULL, 1, argnum, ap);
 }
 
 static void * allocate_in_fiber(FBR_P_ size_t size, struct fbr_fiber *in)
@@ -262,7 +262,8 @@ static void * allocate_in_fiber(FBR_P_ size_t size, struct fbr_fiber *in)
 	return pool_entry + 1;
 }
 
-void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, va_list ap)
+void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context,
+		int leave_info, int argnum, va_list ap)
 {
 	struct fbr_fiber *caller = fctx->__p->sp->fiber;
 	int i;
@@ -287,8 +288,7 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	fctx->__p->sp->fiber = callee;
 	fill_trace_info(&fctx->__p->sp->tinfo);
 
-	if(caller == &fctx->__p->root) {
-		//We're not using call info when calling from the root fiber
+	if(0 == leave_info) {
 		coro_transfer(&caller->ctx, &callee->ctx);
 		return;
 	}
@@ -315,6 +315,14 @@ void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnu
 	coro_transfer(&caller->ctx, &callee->ctx);
 }
 
+void fbr_call_noinfo(FBR_P_ struct fbr_fiber *callee, int argnum, ...)
+{
+	va_list ap;
+	va_start(ap, argnum);
+	fbr_vcall_context(FBR_A_ callee, NULL, 0, argnum, ap);
+	va_end(ap);
+}
+
 void fbr_call(FBR_P_ struct fbr_fiber *callee, int argnum, ...)
 {
 	va_list ap;
@@ -323,11 +331,12 @@ void fbr_call(FBR_P_ struct fbr_fiber *callee, int argnum, ...)
 	va_end(ap);
 }
 
-void fbr_call_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, ...)
+void fbr_call_context(FBR_P_ struct fbr_fiber *callee, void *context,
+		int leave_info, int argnum, ...)
 {
 	va_list ap;
 	va_start(ap, argnum);
-	fbr_vcall_context(FBR_A_ callee, context, argnum, ap);
+	fbr_vcall_context(FBR_A_ callee, context, leave_info, argnum, ap);
 	va_end(ap);
 }
 
@@ -343,14 +352,15 @@ void fbr_multicall(FBR_P_ int mid, int argnum, ...)
 	}
 }
 
-void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...)
+void fbr_multicall_context(FBR_P_ int mid, void *context, int leave_info,
+		int argnum, ...)
 {
 	struct fbr_multicall *call = get_multicall(FBR_A_ mid);
 	struct fbr_fiber *fiber;
 	va_list ap;
 	DL_FOREACH(call->fibers,fiber) {
 		va_start(ap, argnum);
-		fbr_vcall_context(FBR_A_ fiber, context, argnum, ap);
+		fbr_vcall_context(FBR_A_ fiber, context, leave_info, argnum, ap);
 		va_end(ap);
 	}
 }

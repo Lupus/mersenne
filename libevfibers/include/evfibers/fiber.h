@@ -96,11 +96,15 @@ void fbr_subscribe(FBR_P_ int mid);
 void fbr_unsubscribe(FBR_P_ int mid);
 void fbr_unsubscribe_all(FBR_P);
 void fbr_vcall(FBR_P_ struct fbr_fiber *callee, int argnum, va_list ap);
-void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context, int argnum, va_list ap);
+void fbr_vcall_context(FBR_P_ struct fbr_fiber *callee, void *context,
+		int leave_info, int argnum, va_list ap);
 void fbr_call(FBR_P_ struct fbr_fiber *fiber, int argnum, ...);
-void fbr_call_context(FBR_P_ struct fbr_fiber *fiber, void *context, int argnum, ...);
+void fbr_call_context(FBR_P_ struct fbr_fiber *fiber, void *context,
+		int leave_info, int argnum, ...);
+void fbr_call_noinfo(FBR_P_ struct fbr_fiber *callee, int argnum, ...);
 void fbr_multicall(FBR_P_ int mid, int argnum, ...);
-void fbr_multicall_context(FBR_P_ int mid, void *context, int argnum, ...);
+void fbr_multicall_context(FBR_P_ int mid, void *context, int leave_info,
+		int argnum, ...);
 void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
 void * fbr_calloc(FBR_P_ unsigned int nmemb, size_t size);
