@@ -62,7 +62,8 @@ void fbr_destroy(FBR_P)
 	reclaim_children(FBR_A_ &fctx->__p->root);
 
 	DL_FOREACH_SAFE(fctx->__p->reclaimed, fiber, tmp) {
-		free(fiber->stack);
+		if(0 != munmap(fiber->stack, fiber->stack_size))
+			err(EXIT_FAILURE, "munmap");
 		free(fiber);
 	}
 	HASH_ITER(hh, fctx->__p->multicalls, call, tmp2) {
@@ -680,6 +681,7 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P),
 				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if(MAP_FAILED == fiber->stack)
 			err(EXIT_FAILURE, "mmap failed");
+		fiber->stack_size = stack_size;
 		(void)VALGRIND_STACK_REGISTER(fiber->stack, fiber->stack +
 				stack_size);
 	}

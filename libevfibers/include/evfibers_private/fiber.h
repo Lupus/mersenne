@@ -56,6 +56,7 @@ struct fbr_fiber {
 	fbr_fiber_func_t func;
 	coro_context ctx;
 	char *stack;
+	size_t stack_size;
 	struct fbr_call_info *call_list;
 	size_t call_list_size;
 	ev_io w_io;
