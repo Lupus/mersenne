@@ -117,13 +117,13 @@ int config_match(ME_P_ struct me_message *msg)
 
 void lost_leadership(ME_P)
 {
-	log(LL_INFO, "Lost Leadership :(");
+	log(LL_INFO, "Lost Leadership :(\n");
 	pro_stop(ME_A);
 }
 
 void gained_leadership(ME_P)
 {
-	log(LL_INFO, "Gained Leadership :)");
+	log(LL_INFO, "Gained Leadership :)\n");
 	pro_start(ME_A);
 }
 
