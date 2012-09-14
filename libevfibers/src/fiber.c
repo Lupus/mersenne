@@ -33,7 +33,11 @@
 void fbr_init(FBR_P_ struct ev_loop *loop)
 {
 	fctx->__p = malloc(sizeof(struct fbr_context_private));
+	fctx->__p->reclaimed = NULL;
+	fctx->__p->multicalls = NULL;
 	fctx->__p->root.name = "root";
+	fctx->__p->root.children = NULL;
+	fctx->__p->root.pool = NULL;
 	coro_create(&fctx->__p->root.ctx, NULL, NULL, NULL, 0);
 	fctx->__p->sp = fctx->__p->stack;
 	fctx->__p->sp->fiber = &fctx->__p->root;
