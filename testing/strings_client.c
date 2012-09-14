@@ -235,7 +235,7 @@ void fiber_main(struct fbr_context *fiber_context)
 	cc = container_of(fiber_context, struct client_context, fbr);
 	set_up_socket(cc);
 	init_values(cc);
-	cc->mersenne_read = fbr_create(&cc->fbr, "mersenne_read", fiber_reader);
+	cc->mersenne_read = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, 0);
 	fbr_call(&cc->fbr, cc->mersenne_read, 0);
 	
 	fbr_next_call_info(&cc->fbr, NULL);
@@ -265,7 +265,7 @@ int main(int argc, char *argv[]) {
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
 	
-	cc.main = fbr_create(&cc.fbr, "main", fiber_main);
+	cc.main = fbr_create(&cc.fbr, "main", fiber_main, 0);
 	fbr_call(&cc.fbr, cc.main, 0);
 	
 	ev_loop(cc.loop, 0);

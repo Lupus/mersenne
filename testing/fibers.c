@@ -63,10 +63,10 @@ void coro_test(FBR_P)
 	struct fbr_call_info *info = NULL;
 	ev_tstamp timer_interval = 5.5;
 
-	io_fiber = fbr_create(FBR_A_ "io_test", coro_io_test);
+	io_fiber = fbr_create(FBR_A_ "io_test", coro_io_test, 0);
 	fbr_call(FBR_A_ io_fiber, 0);
 	
-	timer_fiber = fbr_create(FBR_A_ "timer_test", coro_timer_test);
+	timer_fiber = fbr_create(FBR_A_ "timer_test", coro_timer_test, 0);
 	fbr_call(FBR_A_ timer_fiber, 1, fbr_arg_v(&timer_interval));
 
 	for(i = 0;;i++) {
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
 	struct fbr_fiber *fiber;
 
 	fbr_init(FBR_A, EV_DEFAULT);
-	fiber = fbr_create(FBR_A_ "coro_test", coro_test);
+	fiber = fbr_create(FBR_A_ "coro_test", coro_test, 0);
 
 	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Hello, muthafucka!"));
 	fbr_call(FBR_A_ fiber, 1, fbr_arg_v("Hello, you fucker!"));

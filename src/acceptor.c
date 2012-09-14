@@ -206,7 +206,7 @@ void acc_fiber(struct fbr_context *fiber_context)
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_next_call_info(&mctx->fbr, NULL);
 
-	repeater = fbr_create(&mctx->fbr, "acceptor_repeater", repeater_fiber);
+	repeater = fbr_create(&mctx->fbr, "acceptor_repeater", repeater_fiber, 0);
 	fbr_call(&mctx->fbr, repeater, 0);
 start:
 	fbr_yield(&mctx->fbr);

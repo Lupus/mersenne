@@ -534,7 +534,7 @@ void pro_fiber(struct fbr_context *fiber_context)
 
 	proposer_init(ME_A);
 
-	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber);
+	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, 0);
 	fbr_call(&mctx->fbr, learner, 1, fbr_arg_i(0));
 
 start:
@@ -618,7 +618,7 @@ void pro_start(ME_P)
 {
 	if(NULL != mctx->fiber_proposer)
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
-	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber);
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, 0);
 	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
 }
 
@@ -628,6 +628,7 @@ void pro_stop(ME_P)
 		fbr_call(&mctx->fbr, mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 	}
-	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer_proxy", proxy_fiber);
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer_proxy",
+			proxy_fiber, 0);
 	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
 }

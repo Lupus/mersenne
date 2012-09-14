@@ -18,6 +18,7 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#include <sys/mman.h>
 #include <assert.h>
 #include <errno.h>
 #include <utlist.h>
@@ -641,7 +642,20 @@ ev_tstamp fbr_sleep(FBR_P_ ev_tstamp seconds)
 	return expected - ev_now(fctx->__p->loop);
 }
 
-struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
+static size_t round_up_to_page_size(size_t size)
+{
+	static long sz = 0;
+	size_t remainder;
+	if(0 == sz)
+		sz = sysconf(_SC_PAGESIZE);
+	remainder = size % sz;
+	if(remainder == 0)
+		return size;
+	return size + sz - remainder;
+}
+
+struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P),
+		size_t stack_size)
 {
 	struct fbr_fiber *fiber;
 	if(fctx->__p->reclaimed) {
@@ -650,8 +664,14 @@ struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P))
 	} else {
 		fiber = malloc(sizeof(struct fbr_fiber));
 		memset(fiber, 0x00, sizeof(struct fbr_fiber));
-		fiber->stack = malloc(FBR_STACK_SIZE);
-		(void)VALGRIND_STACK_REGISTER(fiber->stack, fiber->stack + FBR_STACK_SIZE);
+		if(0 == stack_size) stack_size = FBR_STACK_SIZE;
+		stack_size = round_up_to_page_size(stack_size);
+		fiber->stack = mmap(NULL, stack_size, PROT_READ | PROT_WRITE,
+				MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if(MAP_FAILED == fiber->stack)
+			err(EXIT_FAILURE, "mmap failed");
+		(void)VALGRIND_STACK_REGISTER(fiber->stack, fiber->stack +
+				stack_size);
 	}
 	coro_create(&fiber->ctx, (coro_func)call_wrapper, FBR_A, fiber->stack,
 			FBR_STACK_SIZE);

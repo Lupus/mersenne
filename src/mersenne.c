@@ -258,9 +258,9 @@ int main(int argc, char *argv[])
 	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);
 
-	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main);
-	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber);
-	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber);
+	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, 0);
+	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, 0);
+	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, 0);
 
 	fbr_call(&mctx->fbr, mctx->fiber_main, 0);
 	fbr_call(&mctx->fbr, mctx->fiber_leader, 0);

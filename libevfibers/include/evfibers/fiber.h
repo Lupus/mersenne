@@ -84,7 +84,8 @@ struct fbr_call_info {
 
 void fbr_init(FBR_P_ struct ev_loop *loop);
 void fbr_destroy(FBR_P);
-struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P));
+struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P),
+		size_t stack_size);
 void fbr_reclaim(FBR_P_ struct fbr_fiber *fiber);
 int fbr_is_reclaimed(FBR_P_ struct fbr_fiber *fiber);
 struct fbr_fiber_arg fbr_arg_i(int i);
