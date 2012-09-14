@@ -106,6 +106,7 @@ void load_peer_list(ME_P_ int my_index)
 		add_peer(ME_A_ p);
 		i++;
 	}
+	regfree(&rx_config_line);
 	fclose(peers_file);
 }
 
