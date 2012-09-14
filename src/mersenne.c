@@ -223,12 +223,12 @@ int main(int argc, char *argv[])
 	params->print_errors = 1;
 	params->check_required = 0;
 
-	if(does_file_exists("mersenne.conf"))
-		if (0 != cmdline_parser_config_file("mersenne.conf",
+	if(does_file_exists("mersenne.conf")) {
+		if(0 != cmdline_parser_config_file("mersenne.conf",
 					&mctx->args_info, params))
 			exit(EXIT_FAILURE + 1);
-
-	params->initialize = 0;
+		params->initialize = 0;
+	}
 	params->check_required = 1;
 	if(0 != cmdline_parser_ext(argc, argv, &mctx->args_info, params))
 		exit(EXIT_FAILURE + 1);
