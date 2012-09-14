@@ -38,7 +38,7 @@
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size1,add)
 
-#define VALUE_TO 10.0
+#define VALUE_TO 1.0
 #define VALUE_SIZE 1400
 
 struct my_value {
@@ -99,9 +99,8 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf, size);
 	if(-1 == retval)
 		err(EXIT_FAILURE, "fbr_write_all");
-	snprintf(buf, value->v->size1 + 1, "%s", value->v->ptr);
-	printf("Submitted value: ``%s''\n", buf);
-	ev_timer_start(cc->loop, &value->timer);
+	/*snprintf(buf, value->v->size1 + 1, "%s", value->v->ptr);
+	printf("Submitted value: ``%s''\n", buf);*/
 }
 
 static void client_finished(struct client_context *cc)
@@ -130,7 +129,6 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 		cc->stats.other++;
 		return;
 	}
-	ev_timer_stop(cc->loop, &value->timer);
 	HASH_DEL(cc->values, value);
 	cc->stats.received++;
 	if(cc->stats.received == cc->stats.total)
@@ -138,6 +136,7 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 	randomize_buffer(value->v);
 	HASH_ADD_BUFFER(cc->values, v, value);
 	submit_value(cc, value);
+	ev_timer_again(cc->loop, &value->timer);
 }
 
 static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
@@ -157,7 +156,7 @@ void fiber_reader(struct fbr_context *fiber_context)
 	uint16_t size;
 	XDR xdrs;
 	struct buffer *value;
-	char str_buf[ME_MAX_XDR_MESSAGE_LEN];
+	//char str_buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 	fbr_next_call_info(&cc->fbr, NULL);
@@ -180,9 +179,11 @@ void fiber_reader(struct fbr_context *fiber_context)
 		if(CL_LEARNED_VALUE != msg.type)
 			errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
 		value = msg.cl_message_u.learned_value.value;
+		/*
 		snprintf(str_buf, value->size1 + 1, "%s", value->ptr);
 		printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
 				msg.cl_message_u.learned_value.i, str_buf);
+				*/
 		next_value(cc, value);
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
@@ -215,13 +216,14 @@ static void init_values(struct client_context *cc)
 	cc->values = NULL;
 	cc->stats.started = time(NULL);
 	for(i = 0; i < cc->concurrency; i++) {
-		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, 0.);
+		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, VALUE_TO);
 		values[i].timer.data = cc;
 		values[i].v = malloc(sizeof(struct buffer));
 		buf_init(values[i].v, VALUE_SIZE);
 		randomize_buffer(values[i].v);
 		HASH_ADD_BUFFER(cc->values, v, values + i);
 		submit_value(cc, values + i);
+		ev_timer_start(cc->loop, &(values[i].timer));
 	}
 }
 
@@ -243,10 +245,10 @@ void fiber_main(struct fbr_context *fiber_context)
 	for(;;) {
 		fbr_yield(&cc->fbr);
 		while(fbr_next_call_info(&cc->fbr, &info)) {
-			printf("Timeout! Resubmitting...\n");
 			value = info->argv[0].v;
 			cc->stats.timeouts++;
 			submit_value(cc, value);
+			ev_timer_again(cc->loop, &value->timer);
 		}
 	}
 }
