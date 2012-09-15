@@ -436,7 +436,7 @@ static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		return;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	if(IS_P1_PENDING == instance->state || IS_P2_PENDING == instance->state) {
-		instance->b = decode_ballot(ME_A_ data->b);
+		instance->b = data->b;
 		run_instance(ME_A_ instance, &base);
 	}
 }
@@ -449,6 +449,8 @@ static void proposer_init(ME_P)
 	base.type = IE_I;
 	mctx->pxs.pro.max_iid = 0;
 	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
+	mctx->pxs.pro.pending = NULL;
+	mctx->pxs.pro.pending_size = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
 	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
