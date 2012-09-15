@@ -32,6 +32,7 @@
 #include <err.h>
 #include <errno.h>
 #include <ev.h>
+#include <execinfo.h>
 #include <valgrind/valgrind.h>
 
 #include <mersenne/me_protocol.h>
@@ -195,6 +196,18 @@ static void sighup_cb (EV_P_ ev_signal *w, int revents)
 {
 }
 
+static void sigsegv_cb(EV_P_ ev_signal *w, int revents)
+{
+	const int bt_size = 32;
+	void *array[bt_size];
+	size_t size;
+
+	size = backtrace(array, bt_size);
+	fprintf(stderr, "Program received signal SIGSEGV, Segmentation fault.\n");
+	backtrace_symbols_fd(array, size, STDERR_FILENO);
+	exit(EXIT_FAILURE);
+}
+
 static int does_file_exists(const char *filename)
 {
 	struct stat st;
@@ -216,6 +229,7 @@ int main(int argc, char *argv[])
 	ev_signal sigint_watcher;
 	ev_signal sigterm_watcher;
 	ev_signal sighup_watcher;
+	ev_signal sigsegv_watcher;
 
 	params = cmdline_parser_params_create();
 
@@ -249,6 +263,8 @@ int main(int argc, char *argv[])
 	if(!RUNNING_ON_VALGRIND) {
 		ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
 		ev_signal_start(mctx->loop, &sigint_watcher);
+		ev_signal_init(&sigsegv_watcher, sigsegv_cb, SIGSEGV);
+		ev_signal_start(mctx->loop, &sigsegv_watcher);
 	}
 	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
 	ev_signal_start(mctx->loop, &sigterm_watcher);
