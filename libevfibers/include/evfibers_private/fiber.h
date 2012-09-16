@@ -49,6 +49,8 @@ struct fbr_multicall {
 struct fbr_mem_pool {
 	struct fbr_mem_pool *next, *prev;
 	void *ptr;
+	fbr_alloc_destructor_func destructor;
+	void * destructor_context;
 };
 
 struct fbr_fiber {
@@ -74,6 +76,17 @@ struct fbr_fiber {
 	struct fbr_fiber *next, *prev;
 };
 
+struct fbr_mutex_pending {
+	struct fbr_mutex_pending *next, *prev;
+	struct fbr_fiber *fiber;
+};
+
+struct fbr_mutex {
+	int locked;
+	struct fbr_mutex_pending *pending;
+	struct fbr_mutex *next, *prev;
+};
+
 struct fbr_stack_item {
 	struct fbr_fiber *fiber;
 	struct trace_info tinfo;
@@ -85,6 +98,9 @@ struct fbr_context_private {
 	struct fbr_fiber root;
 	struct fbr_fiber *reclaimed;
 	struct fbr_multicall *multicalls;
+	struct ev_async mutex_async;
+	struct fbr_mutex *mutex_list;
+
 	struct ev_loop *loop;
 };
 

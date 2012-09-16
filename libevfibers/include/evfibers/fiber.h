@@ -50,6 +50,7 @@
 
 struct fbr_context_private;
 struct fbr_fiber;
+struct fbr_mutex;
 
 struct fbr_context
 {
@@ -82,6 +83,8 @@ struct fbr_call_info {
 	struct fbr_call_info *next, *prev;
 };
 
+typedef void (*fbr_alloc_destructor_func)(void *ptr, void *context);
+
 void fbr_init(FBR_P_ struct ev_loop *loop);
 void fbr_destroy(FBR_P);
 struct fbr_fiber * fbr_create(FBR_P_ const char *name, void (*func) (FBR_P),
@@ -107,6 +110,8 @@ void fbr_multicall_context(FBR_P_ int mid, void *context, int leave_info,
 		int argnum, ...);
 void fbr_yield(FBR_P);
 void * fbr_alloc(FBR_P_ size_t size);
+void fbr_alloc_set_destructor(FBR_P_ void *ptr, fbr_alloc_destructor_func func,
+		void *context);
 void * fbr_calloc(FBR_P_ unsigned int nmemb, size_t size);
 void fbr_free(FBR_P_ void *ptr);
 int fbr_next_call_info(FBR_P_ struct fbr_call_info **info_ptr);
@@ -122,5 +127,10 @@ ssize_t fbr_sendto(FBR_P_ int sockfd, const void *buf, size_t len, int flags, co
 int fbr_accept(FBR_P_ int sockfd, struct sockaddr *addr, socklen_t *addrlen);
 ev_tstamp fbr_sleep(FBR_P_ ev_tstamp seconds);
 void fbr_dump_stack(FBR_P);
+struct fbr_mutex * fbr_mutex_create(FBR_P);
+void fbr_mutex_lock(FBR_P_ struct fbr_mutex * mutex);
+int fbr_mutex_trylock(FBR_P_ struct fbr_mutex * mutex);
+void fbr_mutex_unlock(FBR_P_ struct fbr_mutex * mutex);
+void fbr_mutex_destroy(FBR_P_ struct fbr_mutex * mutex);
 
 #endif

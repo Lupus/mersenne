@@ -54,6 +54,7 @@ struct client_context {
 	struct fbr_fiber *mersenne_read;
 	struct fbr_fiber *main;
 	struct my_value *values;
+	struct fbr_mutex *mutex;
 	int concurrency;
 	struct {
 		int total;
@@ -92,6 +93,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	size = xdr_getpos(&xdrs);
 	xdr_destroy(&xdrs);
 
+	fbr_mutex_lock(&cc->fbr, cc->mutex);
 	send_size = htons(size);
 	retval = fbr_write_all(&cc->fbr, cc->fd, &send_size, sizeof(uint16_t));
 	if(-1 == retval)
@@ -99,8 +101,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf, size);
 	if(-1 == retval)
 		err(EXIT_FAILURE, "fbr_write_all");
-	/*snprintf(buf, value->v->size1 + 1, "%s", value->v->ptr);
-	printf("Submitted value: ``%s''\n", buf);*/
+	fbr_mutex_unlock(&cc->fbr, cc->mutex);
 }
 
 static void client_finished(struct client_context *cc)
@@ -266,6 +267,7 @@ int main(int argc, char *argv[]) {
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
+	cc.mutex = fbr_mutex_create(&cc.fbr);
 	
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, 0);
 	fbr_call(&cc.fbr, cc.main, 0);
