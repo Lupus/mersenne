@@ -1,7 +1,3 @@
---leak-check=full
---track-origins=yes
---show-possibly-lost=yes
---track-fds=yes
 --trace-children=yes
 --num-callers=32
 --suppressions=./supressions.vg
