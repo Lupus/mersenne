@@ -18,6 +18,7 @@
   along with Mersenne.  If not, see <http://www.gnu.org/licenses/>.
 
  ********************************************************************/
+#include <ctype.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <mersenne/buffer.h>
@@ -54,4 +55,16 @@ void buffer_sm_destructor(void *context, void *ptr)
 {
 	struct buffer *buffer = ptr;
 	free(buffer->ptr);
+}
+
+void buffer_print(FILE *stream, struct buffer *buf)
+{
+       int i;
+       for(i = 0; i < buf->size1; i++) {
+               if(isprint(buf->ptr[i]) || isspace(buf->ptr[i])) {
+                       fprintf(stream, "%c", buf->ptr[i]);
+               } else {
+                       fprintf(stream, "\\x%02x", (unsigned char)buf->ptr[i]);
+               }
+       }
 }
