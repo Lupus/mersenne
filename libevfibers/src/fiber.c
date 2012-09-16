@@ -159,6 +159,24 @@ static void unsubscribe_all(FBR_P_ struct fbr_fiber *fiber)
 	}
 }
 
+static void fbr_free_in_fiber(FBR_P_ struct fbr_fiber *fiber, void *ptr)
+{
+	struct fbr_mem_pool *pool_entry = NULL;
+	if(NULL == ptr)
+		return;
+	pool_entry = (struct fbr_mem_pool *)ptr - 1;
+	if(pool_entry->ptr != pool_entry) {
+		fprintf(stderr, "libevfibers: address 0x%lx does not look like "
+				"fiber memory pool entry\n", (unsigned long)ptr);
+		if(!RUNNING_ON_VALGRIND)
+			abort();
+	}
+	DL_DELETE(fiber->pool, pool_entry);
+	if(pool_entry->destructor)
+		pool_entry->destructor(ptr, pool_entry->destructor_context);
+	free(pool_entry);
+}
+
 static void fiber_cleanup(FBR_P_ struct fbr_fiber *fiber)
 {
 	struct fbr_mem_pool *p_elt, *p_tmp;
@@ -167,7 +185,7 @@ static void fiber_cleanup(FBR_P_ struct fbr_fiber *fiber)
 	ev_io_stop(fctx->__p->loop, &fiber->w_io);
 	ev_timer_stop(fctx->__p->loop, &fiber->w_timer);
 	DL_FOREACH_SAFE(fiber->pool, p_elt, p_tmp) {
-		fbr_free(FBR_A_ p_elt + 1);
+		fbr_free_in_fiber(FBR_A_ fiber, p_elt + 1);
 	}
 }
 
@@ -750,20 +768,7 @@ void fbr_alloc_set_destructor(FBR_P_ void *ptr, fbr_alloc_destructor_func
 
 void fbr_free(FBR_P_ void *ptr)
 {
-	struct fbr_mem_pool *pool_entry = NULL;
-	if(NULL == ptr)
-		return;
-	pool_entry = (struct fbr_mem_pool *)ptr - 1;
-	if(pool_entry->ptr != pool_entry) {
-		fprintf(stderr, "libevfibers: address 0x%lx does not look like "
-				"fiber memory pool entry\n", (unsigned long)ptr);
-		if(!RUNNING_ON_VALGRIND)
-			abort();
-	}
-	DL_DELETE(CURRENT_FIBER->pool, pool_entry);
-	if(pool_entry->destructor)
-		pool_entry->destructor(ptr, pool_entry->destructor_context);
-	free(pool_entry);
+	fbr_free_in_fiber(FBR_A_ CURRENT_FIBER, ptr);
 }
 
 void fbr_dump_stack(FBR_P)
