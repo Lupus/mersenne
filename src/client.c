@@ -44,7 +44,7 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	msg.cl_message_u.learned_value.value = buffer;
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg)) {
-		warnx("xdr_cl_message: unable to encode");
+		log(LL_WARNING, "[CLIENT] xdr_cl_message: unable to encode\n");
 		retval = -1;
 		goto finish;
 	}
@@ -54,14 +54,14 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	send_size = htons(size);
 	retval = fbr_write_all(&mctx->fbr, fd, &send_size, sizeof(uint16_t));
 	if(-1 == retval) {
-		warn("fbr_write_all");
-		retval = -1;
+		log(LL_WARNING, "[CLIENT] fbr_write_all: %s\n",
+				strerror(errno));
 		goto finish;
 	}
 	retval = fbr_write_all(&mctx->fbr, fd, buf, size);
 	if(-1 == retval) {
-		warn("fbr_write_all");
-		retval = -1;
+		log(LL_WARNING, "[CLIENT] fbr_write_all: %s\n",
+				strerror(errno));
 		goto finish;
 	}
 	retval = 0;
@@ -101,7 +101,8 @@ start:
 				retval = inform_client(ME_A_ fd, iid, buf);
 				sm_free(buf);
 				if(-1 == retval)
-					warnx("informing of a client has failed");
+					log(LL_WARNING, "[CLIENT] informing of "
+							"a client has failed");
 				break;
 			case FAT_QUIT:
 				goto quit;
@@ -141,26 +142,36 @@ static void connection_fiber(struct fbr_context *fiber_context)
 			log(LL_WARNING, "fbr_read_all: %s\n", strerror(errno));
 			goto conn_finish;
 		}
-		if(retval < sizeof(uint16_t))
+		if(retval < sizeof(uint16_t)) {
+			log(LL_DEBUG, "[CLIENT] fbr_read_all returned less "
+					"bytes (%lu) than expected (%lu)\n",
+					retval, sizeof(uint16_t));
 			goto conn_finish;
+		}
 		size = ntohs(size);
 		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
 		if(-1 == retval) {
-			log(LL_WARNING, "fbr_read_all: %s\n", strerror(errno));
+			log(LL_WARNING, "[CLIENT] fbr_read_all: %s\n", strerror(errno));
 			goto conn_finish;
 		}
-		if(retval < size)
+		if(retval < size) {
+			log(LL_DEBUG, "[CLIENT] fbr_read_all returned less "
+					"bytes (%lu) than expected (%hu)\n",
+					retval, size);
 			goto conn_finish;
+		}
 
 		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
 		memset(&msg, 0, sizeof(msg));
 		if(!xdr_cl_message(&xdrs, &msg)) {
-			log(LL_WARNING, "xdr_cl_message: unable to decode\n");
+			log(LL_WARNING, "[CLIENT] xdr_cl_message: unable to decode\n");
 			xdr_destroy(&xdrs);
 			goto conn_finish;
 		}
-		if(CL_NEW_VALUE != msg.type)
+		if(CL_NEW_VALUE != msg.type) {
+			log(LL_DEBUG, "[CLIENT] msg.type (%d) != CL_NEW_VALUE\n", msg.type);
 			goto conn_finish;
+		}
 		value = buf_sm_steal(msg.cl_message_u.new_value.value);
 		if(log_level_match(LL_DEBUG)) {
 			memcpy(buf, value->ptr, value->size1);

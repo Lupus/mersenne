@@ -223,11 +223,14 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
+			log(LL_DEBUG, "[PROPOSER] Got promise for instance %lu at vb %lu "
+					"from peer #%d\n", p->data->i,
+					p->data->vb, p->from->index);
 			if(p->data->v && p->data->vb > instance->p1.vb) {
 				if(instance->p1.v) sm_free(instance->p1.v);
 				instance->p1.v = buf_sm_steal(p->data->v);
 				instance->p1.vb = p->data->vb;
-				log(LL_DEBUG, "Found safe value for instance "
+				log(LL_DEBUG, "[PROPOSER] Found safe value for instance "
 						"%lu at vb %lu\n", p->data->i,
 						p->data->vb);
 			}
@@ -249,6 +252,9 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			}
 			break;
 		case IE_TO:
+			log(LL_DEBUG, "[PROPOSER] Phase 1 timeout for instance "
+					"#%lu at ballot #%lu\n", instance->iid,
+					instance->b);
 			bm_clear_all(instance->p1.acks);
 			b = decode_ballot(ME_A_ instance->b);
 			instance->b = encode_ballot(ME_A_ ++b);
@@ -336,6 +342,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_TO:
+			log(LL_DEBUG, "[PROPOSER] Phase 2 timeout for instance #%lu at ballot #%lu\n", instance->iid, instance->b);
 			switch_instance(ME_A_ instance,
 					IS_P1_PENDING,
 					base);

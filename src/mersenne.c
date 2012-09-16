@@ -61,13 +61,13 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 	XDR xdrs;
 	
 	if(addr->sa_family != AF_INET) {
-		log(LL_WARNING, "unsupported address family: %d", (addr->sa_family));
+		log(LL_WARNING, "unsupported address family: %d\n", (addr->sa_family));
 		return;
 	}
 
 	p = find_peer(ME_A_ (struct sockaddr_in *)addr);
 	if(!p) {
-		log(LL_WARNING, "got message from unknown peer --- ignoring");
+		log(LL_WARNING, "got message from unknown peer --- ignoring\n");
 		return;
 	}
 
@@ -270,6 +270,7 @@ int main(int argc, char *argv[])
 	ev_signal_start(mctx->loop, &sigterm_watcher);
 	ev_signal_init(&sighup_watcher, sighup_cb, SIGHUP);
 	ev_signal_start(mctx->loop, &sighup_watcher);
+	signal(SIGPIPE, SIG_IGN);
 
 	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);

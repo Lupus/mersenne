@@ -387,13 +387,13 @@ start:
 		from = info->argv[1].v;
 
 		if(is_expired(ME_A_ msg)) {
-			log(LL_WARNING, "got expired message");
+			log(LL_WARNING, "got expired message\n");
 			sm_free(msg);
 			continue;
 		}
 		if(!config_match(ME_A_ msg)) {
 			log(LL_WARNING, "sender configuration does not match "
-					"mine, ignoring message");
+					"mine, ignoring message\n");
 			sm_free(msg);
 			continue;
 		}
