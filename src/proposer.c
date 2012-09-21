@@ -223,7 +223,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
-			log(LL_DEBUG, "[PROPOSER] Got promise for instance %lu at vb %lu "
+			log(LL_DEBUG, "[PROPOSER] Processing promise for instance %lu at vb %lu "
 					"from peer #%d\n", p->data->i,
 					p->data->vb, p->from->index);
 			if(p->data->v && p->data->vb > instance->p1.vb) {
@@ -392,8 +392,16 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_promise_data *data;
 	struct ie_p p;
 	data = &pmsg->data.me_paxos_msg_data_u.promise;
-	if(data->i < mctx->pxs.pro.lowest_non_closed)
+	log(LL_DEBUG, "[PROPOSER] Got promise for instance %lu at vb %lu "
+			"from peer #%d\n", data->i,
+			data->vb, from->index);
+	if(data->i < mctx->pxs.pro.lowest_non_closed) {
+		log(LL_DEBUG, "[PROPOSER] Promise discarded as %lu < %lu "
+				"(lowest non closed)\n",
+				data->i,
+				mctx->pxs.pro.lowest_non_closed);
 		return;
+	}
 	p.b.type = IE_P;
 	p.from = from;
 	p.data = data;
@@ -455,6 +463,7 @@ static void proposer_init(ME_P)
 	size_t size = sizeof(struct pro_instance) * PRO_INSTANCE_WINDOW;
 	base.type = IE_I;
 	mctx->pxs.pro.max_iid = 0;
+	mctx->pxs.pro.lowest_non_closed = 0;
 	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;
