@@ -33,6 +33,12 @@ find_package(LibEV REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 
+option (USE_PROFILER "Use Google cpu profiling tool" OFF)
+if(USE_PROFILER)
+	set(PROFILER_LIBS "profiler")
+	add_definitions(-D_USE_PROFILER)
+endif(USE_PROFILER)
+
 include_directories(
 	"${CMAKE_CURRENT_SOURCE_DIR}/include"
 	"${CMAKE_CURRENT_BINARY_DIR}/include"
@@ -80,7 +86,7 @@ add_executable(mersenne
 	${GGO_GEN_SOURCES}
 	${LIBCORO_SOURCES}
 	)
-target_link_libraries(mersenne evfibers ${LIBEV_LDFLAGS} crypto)
+target_link_libraries(mersenne evfibers ${LIBEV_LDFLAGS} crypto ${PROFILER_LIBS})
 
 subdirs(modules)
 subdirs(testing)

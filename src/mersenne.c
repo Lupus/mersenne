@@ -34,6 +34,9 @@
 #include <ev.h>
 #include <execinfo.h>
 #include <valgrind/valgrind.h>
+#if _USE_PROFILER
+#include <google/profiler.h>
+#endif
 
 #include <mersenne/me_protocol.h>
 #include <mersenne/context.h>
@@ -226,6 +229,9 @@ int main(int argc, char *argv[])
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
+#if _USE_PROFILER
+	char profile_filename[256];
+#endif
 	ev_signal sigint_watcher;
 	ev_signal sigterm_watcher;
 	ev_signal sighup_watcher;
@@ -283,10 +289,19 @@ int main(int argc, char *argv[])
 	fbr_call(&mctx->fbr, mctx->fiber_leader, 0);
 	fbr_call(&mctx->fbr, mctx->fiber_client, 0);
 
-	// now wait for events to arrive
+#if _USE_PROFILER
+	snprintf(profile_filename, sizeof(profile_filename), "cpu_profile.%d",
+			mctx->me->index);
+	ProfilerStart(profile_filename);
+	log(LL_INFO, "Starting main loop (cpu profiling is ON)\n");
+#else
 	log(LL_INFO, "Starting main loop\n");
+#endif
 	ev_loop(context.loop, 0);
 	log(LL_INFO, "Exiting\n");
+#if _USE_PROFILER
+	ProfilerStop();
+#endif
 
 	destroy_peer_list(ME_A);
 	pxs_fiber_shutdown(ME_A);
