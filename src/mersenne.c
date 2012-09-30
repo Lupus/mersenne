@@ -51,6 +51,8 @@
 
 #define LISTEN_BACKLOG 50
 
+static int wait_for_debugger;
+
 static void message_destructor(void *context, void *ptr)
 {
 	xdr_free((xdrproc_t)xdr_me_message, ptr);
@@ -199,16 +201,22 @@ static void sighup_cb (EV_P_ ev_signal *w, int revents)
 {
 }
 
-static void sigsegv_cb(EV_P_ ev_signal *w, int revents)
+static void sigsegv_handler(int signum)
 {
 	const int bt_size = 32;
 	void *array[bt_size];
 	size_t size;
 
 	size = backtrace(array, bt_size);
+	fprintf(stderr, "--------------------------------------------------------------\n");
 	fprintf(stderr, "Program received signal SIGSEGV, Segmentation fault.\n");
 	backtrace_symbols_fd(array, size, STDERR_FILENO);
-	exit(EXIT_FAILURE);
+	fprintf(stderr, "--------------------------------------------------------------\n");
+	if(wait_for_debugger) {
+		fprintf(stderr, "Pid is %d, waiting for a debugger...\n", getpid());
+		for(;;) sleep(100);
+	} else
+		exit(EXIT_FAILURE);
 }
 
 static int does_file_exists(const char *filename)
@@ -235,7 +243,6 @@ int main(int argc, char *argv[])
 	ev_signal sigint_watcher;
 	ev_signal sigterm_watcher;
 	ev_signal sighup_watcher;
-	ev_signal sigsegv_watcher;
 
 	params = cmdline_parser_params_create();
 
@@ -256,6 +263,8 @@ int main(int argc, char *argv[])
 	cmdline_parser_dump(stdout, &mctx->args_info);
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
+	wait_for_debugger = mctx->args_info.wait_for_debugger_flag;
+
 	setup_logging(ME_A);
 
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
@@ -269,8 +278,7 @@ int main(int argc, char *argv[])
 	if(!RUNNING_ON_VALGRIND) {
 		ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
 		ev_signal_start(mctx->loop, &sigint_watcher);
-		ev_signal_init(&sigsegv_watcher, sigsegv_cb, SIGSEGV);
-		ev_signal_start(mctx->loop, &sigsegv_watcher);
+		signal(SIGSEGV, sigsegv_handler);
 	}
 	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
 	ev_signal_start(mctx->loop, &sigterm_watcher);
