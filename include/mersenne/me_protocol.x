@@ -31,7 +31,8 @@
 
 enum me_message_supertype {
 	ME_LEADER,
-	ME_PAXOS
+	ME_PAXOS,
+	ME_BULK
 };
 
 enum me_leader_message_type {
@@ -156,6 +157,8 @@ union me_message switch(me_message_supertype super_type) {
 	struct me_leader_message leader_message;
 	case ME_PAXOS:
 	struct me_paxos_message paxos_message;
+	case ME_BULK:
+	uint16_t size;
 
 	default:
 	void;

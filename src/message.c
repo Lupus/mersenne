@@ -45,7 +45,9 @@ void msg_send_all(ME_P_ struct me_message *msg)
 	msg_send_matching(ME_A_ msg, &p_all, NULL);
 }
 
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
+/*static void send_matching_now(ME_P_ struct me_message *msg,
+		int (*predicate)(struct me_peer *, void *context),
+		void *context) {
 	struct me_peer *p;
 	int size;
 	int retval;
@@ -60,7 +62,6 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(!predicate(p, context))
 			continue;
-		//printf("Sending predicated msg to %d\n", p->index);
 		retval = sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
@@ -68,4 +69,32 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 			log(LL_NOTICE, "message got truncated from %d to %d while sending", size, retval);
 	}
 	xdr_destroy(&xdrs);
+}*/
+
+void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
+	struct me_peer *p;
+	int size;
+	XDR xdrs;
+	char* buf;
+
+	//if(ME_LEADER == msg->super_type) {
+	//	send_matching_now(ME_A_ msg, predicate, context);
+	//	return;
+	//}
+
+	buf = sm_alloc(ME_MAX_XDR_MESSAGE_LEN);
+
+	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
+	if(!xdr_me_message(&xdrs, msg))
+		errx(EXIT_FAILURE, "xdr_me_message: failed to encode a message");
+	size = xdr_getpos(&xdrs);
+
+	for(p=mctx->peers; p != NULL; p=p->hh.next) {
+		if(!predicate(p, context))
+			continue;
+		peer_enque_message(ME_A_ p, buf, size);
+	}
+	sm_free(buf);
+	xdr_destroy(&xdrs);
 }
+

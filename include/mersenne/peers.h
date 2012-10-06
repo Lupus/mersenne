@@ -26,6 +26,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/uio.h>
+#include <ev.h>
 #include <uthash.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/paxos.h>
@@ -37,6 +39,11 @@ struct me_peer {
 	struct sockaddr_in addr;
 	int ack_ttl;
 	struct pxs_peer_info pxs;
+	struct iovec *pending_messages;
+	size_t pending_size;
+	size_t pending_data_size;
+	size_t pending_last;
+	struct ev_timer pending_timer;
 
 	UT_hash_handle hh;
 };
@@ -48,6 +55,7 @@ void delete_peer(ME_P_ struct me_peer *peer);
 void load_peer_list(ME_P_ int my_index);
 int peer_count(ME_P);
 int peer_count_matching(ME_P_ int (*predicate)(struct me_peer *, void *context), void *context);
+void peer_enque_message(ME_P_ struct me_peer *p, void *buf, size_t len);
 void destroy_peer_list(ME_P);
 
 #endif

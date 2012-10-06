@@ -58,6 +58,7 @@ struct pro_instance {
 	} p2;
 	int client_value;
 	ev_timer timer;
+	int reclaimed;
 };
 
 enum instance_event_type {

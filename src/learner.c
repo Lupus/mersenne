@@ -76,7 +76,8 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 		);
 }
 
-static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
+static void send_retransmit(ME_P_ struct learner_context *context, uint64_t
+		from, uint64_t to)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
@@ -85,39 +86,65 @@ static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 	data->me_paxos_msg_data_u.retransmit.from = from;
 	data->me_paxos_msg_data_u.retransmit.to = to;
 	pxs_send_acceptors(ME_A_ &msg);
+	log(LL_DEBUG, "[LEARNER] requesting retransmits from %lu to %lu,"
+			" highest seen is %lu\n", from, to,
+			context->highest_seen);
 }
 
-static void retransmit_next_window(ME_P_ struct learner_context *context)
+static void retransmit_window(ME_P_ struct learner_context *context)
 {
-	context->next_retransmit = min(
-		context->first_non_delivered + LEA_INSTANCE_WINDOW,
-		context->highest_seen);
-	send_retransmit(ME_A_ context->first_non_delivered,
-			min(context->highest_seen, context->next_retransmit));
-	log(LL_INFO, "[LEARNER] requesting retransmits from %lu to %lu, highest seen is %lu\n",
-		context->first_non_delivered, context->next_retransmit,
-		context->highest_seen);
+	uint64_t i, j;
+	uint64_t start = context->first_non_delivered;
+	uint64_t from = 0;
+	struct lea_instance *instance;
+	int collecting_gap = 0;
+	log(LL_DEBUG, "[LEARNER] Begin gap filling\n");
+	for(i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
+		instance = get_instance(context, i);
+		if(collecting_gap) {
+			if(instance->closed) {
+				send_retransmit(ME_A_ context, from, i - 1);
+				collecting_gap = 0;
+			}
+
+		} else if(0 == instance->closed) {
+			from = i;
+			collecting_gap = 1;
+		}
+		if(i == context->highest_seen)
+			break;
+	}
+	log(LL_DEBUG, "[LEARNER] End gap filling\n");
 }
 
 static void try_deliver(ME_P_ struct learner_context *context)
 {
-	int i, j;
+	uint64_t i;
+	int j;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for(j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(context, i);
 		if(!instance->closed)
-			return;
+			break;
 		do_deliver(ME_A_ context, instance);
 		context->first_non_delivered = i + 1;
-
+	}
+	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
+		if(0 == context->instances[j].closed)
+			break;
+	}
+	if(j < LEA_INSTANCE_WINDOW)
+		return;
+	for(j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
+		instance = get_instance(context, i);
 		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
 		sm_free(instance->v);
 		instance->v = NULL;
-		if(context->first_non_delivered == context->next_retransmit)
-			retransmit_next_window(ME_A_ context);
 	}
+	log(LL_DEBUG, "[LEARNER] window is closed, adjusting to next one!\n");
+	retransmit_window(ME_A_ context);
 }
 
 static void do_learn(ME_P_ struct learner_context *context, struct
@@ -172,11 +199,9 @@ static void do_last_accepted(ME_P_ struct learner_context *context, struct
 	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
 	if(data->i < context->first_non_delivered)
 		return;
-	if(data->i > context->first_non_delivered) {
-		if(data->i > context->highest_seen)
-			context->highest_seen = data->i;
-		retransmit_next_window(ME_A_ context);
-	}
+	if(data->i > context->highest_seen)
+		context->highest_seen = data->i;
+	retransmit_window(ME_A_ context);
 }
 
 void lea_fiber(struct fbr_context *fiber_context)

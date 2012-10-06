@@ -81,9 +81,11 @@ static int pending_append(ME_P_ struct buffer *from)
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
+	assert(64 == from->size1);
 	pv->v = sm_in_use(from);
 	DL_APPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
+	log(LL_DEBUG, "[PROPOSER] Appended client pending value to queue\n");
 	return 0;
 }
 
@@ -92,10 +94,12 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	struct pending_value *pv = mctx->pxs.pro.pending;
 	if(NULL == pv)
 		return 0;
+	assert(64 == pv->v->size1);
 	DL_DELETE(mctx->pxs.pro.pending, pv);
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
 	fbr_free(&mctx->fbr, pv);
+	log(LL_DEBUG, "[PROPOSER] Shifted client pending value from queue\n");
 	return 1;
 }
 
@@ -103,8 +107,10 @@ static void pending_unshift(ME_P_ struct buffer *from)
 {
 	struct pending_value *pv;
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
-	pv->v = from;
+	pv->v = sm_in_use(from);
+	assert(64 == pv->v->size1);
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
+	log(LL_DEBUG, "[PROPOSER] Unshifted client pending value to queue\n");
 }
 
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
@@ -139,26 +145,36 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 		sm_free(instance->p1.v);
 	if(instance->p2.v && instance->p2.v != instance->p1.v)
 		sm_free(instance->p2.v);
-	memset(instance, 0, sizeof(struct pro_instance));
+	memset(instance, 0x00, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
 	instance->timer = timer;
 	instance->iid = mctx->pxs.pro.max_iid++;
-	run_instance(ME_A_ instance, &base);
 }
 
 static void adjust_window(ME_P)
 {
 	struct pro_instance *instance;
+	struct ie_base base;
 	int i, j;
 	int start = mctx->pxs.pro.lowest_non_closed;
-	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+	for(j = 0, i = start; j < mctx->pxs.pro.current_window_size; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_DELIVERED != instance->state)
-			return;
+			break;
 		mctx->pxs.pro.lowest_non_closed = i + 1;
+		mctx->pxs.pro.current_window_size--;
 		reclaim_instance(ME_A_ instance);
 	}
+	if(mctx->pxs.pro.current_window_size > 0)
+		return;
+	log(LL_DEBUG, "[PROPOSER] Going for next window!\n");
+	base.type = IE_I;
+	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
+		run_instance(ME_A_ instance, &base);
+	}
+	mctx->pxs.pro.current_window_size = PRO_INSTANCE_WINDOW;
 }
 
 static uint64_t encode_ballot(ME_P_ uint64_t ballot)
@@ -280,6 +296,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 				if(!pending_shift(ME_A_ &instance->p2.v))
 					break;
 				instance->client_value = 1;
+				assert(64 == instance->p2.v->size1);
 
 			}
 			new_base.type = IE_A;
@@ -406,9 +423,10 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.from = from;
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
+	assert(0 == instance->reclaimed);
 	assert(instance->iid == data->i);
-	//FIXME: This one fails:
-	//assert(instance->b== data->b);
+	if(IS_P1_PENDING != instance->state)
+		return;
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }
@@ -432,6 +450,7 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	instance->p2.v = NULL;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = ME_A;
+	instance->reclaimed = 0;
 }
 
 static void free_instance(ME_P_ struct pro_instance *instance)
@@ -464,6 +483,7 @@ static void proposer_init(ME_P)
 	base.type = IE_I;
 	mctx->pxs.pro.max_iid = 0;
 	mctx->pxs.pro.lowest_non_closed = 0;
+	mctx->pxs.pro.current_window_size = PRO_INSTANCE_WINDOW;
 	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;

@@ -39,6 +39,7 @@ struct pending_value {
 struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
+	uint64_t current_window_size;
 	uint64_t max_iid;
 	struct pending_value *pending;
 	int pending_size;

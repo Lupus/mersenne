@@ -41,6 +41,7 @@ struct me_context {
 	int client_fd;
 	struct me_peer *peers;
 	struct me_peer *me;
+	int bulk_hdr_size;
 	struct ldr_context ldr;
 	struct pxs_context pxs;
 	struct fbr_context fbr;

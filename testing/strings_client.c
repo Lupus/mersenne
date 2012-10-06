@@ -38,8 +38,8 @@
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size1,add)
 
-#define VALUE_TO 1.0
-#define VALUE_SIZE 1400
+#define VALUE_TO 2.5
+#define VALUE_SIZE 64
 
 struct my_value {
 	struct buffer *v;
@@ -116,6 +116,7 @@ static void client_finished(struct client_context *cc)
 	printf("Values received: %d\n", cc->stats.received);
 	printf("Values timed out: %d\n", cc->stats.timeouts);
 	printf("Other values received: %d\n", cc->stats.other);
+	printf("Average throughput (transactions/second): %.2f\n", (float)cc->stats.received / run_time);
 	printf("Average throughput (bytes/second): %.2f\n", (float)VALUE_SIZE * cc->stats.received / run_time);
 	printf("==========================================\n");
 	exit(0);
