@@ -81,7 +81,6 @@ static int pending_append(ME_P_ struct buffer *from)
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
-	assert(64 == from->size1);
 	pv->v = sm_in_use(from);
 	DL_APPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
@@ -94,7 +93,6 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	struct pending_value *pv = mctx->pxs.pro.pending;
 	if(NULL == pv)
 		return 0;
-	assert(64 == pv->v->size1);
 	DL_DELETE(mctx->pxs.pro.pending, pv);
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
@@ -108,7 +106,6 @@ static void pending_unshift(ME_P_ struct buffer *from)
 	struct pending_value *pv;
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
 	pv->v = sm_in_use(from);
-	assert(64 == pv->v->size1);
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
 	log(LL_DEBUG, "[PROPOSER] Unshifted client pending value to queue\n");
 }
@@ -296,7 +293,6 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 				if(!pending_shift(ME_A_ &instance->p2.v))
 					break;
 				instance->client_value = 1;
-				assert(64 == instance->p2.v->size1);
 
 			}
 			new_base.type = IE_A;
