@@ -61,9 +61,22 @@ struct client_context {
 		int received;
 		int timeouts;
 		int other;
-		time_t started;
+		struct timespec started;
 	} stats;
 };
+
+static struct timespec diff(struct timespec start, struct timespec end)
+{
+	struct timespec temp;
+	if ((end.tv_nsec-start.tv_nsec) < 0) {
+		temp.tv_sec = end.tv_sec - start.tv_sec - 1;
+		temp.tv_nsec = 1e9 + end.tv_nsec - start.tv_nsec;
+	} else {
+		temp.tv_sec = end.tv_sec - start.tv_sec;
+		temp.tv_nsec = end.tv_nsec - start.tv_nsec;
+	}
+	return temp;
+}
 
 static void randomize_buffer(struct buffer *buffer)
 {
@@ -106,17 +119,23 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 
 static void client_finished(struct client_context *cc)
 {
-	time_t run_time = time(NULL) - cc->stats.started;
+	struct timespec current_time;
+	struct timespec run_time;
+	double elapsed;
+	clock_gettime(CLOCK_MONOTONIC, &current_time);
+	run_time = diff(cc->stats.started, current_time);
+	elapsed = run_time.tv_sec + run_time.tv_nsec * (double)1e-9;
 	printf("Run statistics:\n");
 	printf("==========================================\n");
-	printf("Total run time: %ld\n", run_time);
+	printf("Total run time: %.3f\n", elapsed);
 	printf("Value size (bytes): %d\n", VALUE_SIZE);
 	printf("Value timeout (seconds): %f\n", VALUE_TO);
 	printf("Value concurrency: %d\n", cc->concurrency);
 	printf("Values received: %d\n", cc->stats.received);
 	printf("Values timed out: %d\n", cc->stats.timeouts);
 	printf("Other values received: %d\n", cc->stats.other);
-	printf("Average throughput (bytes/second): %.2f\n", (float)VALUE_SIZE * cc->stats.received / run_time);
+	printf("Average throughput (transactions/second): %.3f\n", cc->stats.received / elapsed);
+	printf("Average throughput (bytes/second): %.3f\n", VALUE_SIZE * cc->stats.received / elapsed);
 	printf("==========================================\n");
 	exit(0);
 }
@@ -215,7 +234,7 @@ static void init_values(struct client_context *cc)
 	int i;
 	struct my_value *values = calloc(sizeof(struct my_value), cc->concurrency);
 	cc->values = NULL;
-	cc->stats.started = time(NULL);
+	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
 	for(i = 0; i < cc->concurrency; i++) {
 		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, VALUE_TO);
 		values[i].timer.data = cc;
@@ -256,6 +275,8 @@ void fiber_main(struct fbr_context *fiber_context)
 
 int main(int argc, char *argv[]) {
 	struct client_context cc;
+
+	signal(SIGPIPE, SIG_IGN);
 
 	srand((unsigned int) time(NULL));  
 	cc.loop = EV_DEFAULT;
