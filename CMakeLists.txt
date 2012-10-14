@@ -30,6 +30,7 @@ MACRO(GENSTRENUM INDIR INFILE DEPS)
 ENDMACRO(GENSTRENUM)
 
 find_package(LibEV REQUIRED)
+find_package(LibEVfibers REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 
@@ -86,7 +87,7 @@ add_executable(mersenne
 	${GGO_GEN_SOURCES}
 	${LIBCORO_SOURCES}
 	)
-target_link_libraries(mersenne evfibers ${LIBEV_LDFLAGS} crypto ${PROFILER_LIBS})
+target_link_libraries(mersenne ${LIBEVFIBERS_LDFLAGS} ${LIBEV_LDFLAGS} crypto ${PROFILER_LIBS})
 
 subdirs(modules)
 subdirs(testing)
