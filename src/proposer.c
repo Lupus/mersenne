@@ -103,7 +103,7 @@ static void pending_unshift(ME_P_ struct buffer *from)
 {
 	struct pending_value *pv;
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
-	pv->v = from;
+	pv->v = sm_in_use(from);
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
 }
 
@@ -139,7 +139,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 		sm_free(instance->p1.v);
 	if(instance->p2.v && instance->p2.v != instance->p1.v)
 		sm_free(instance->p2.v);
-	memset(instance, 0, sizeof(struct pro_instance));
+	memset(instance, 0x00, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
 	instance->timer = timer;
@@ -407,8 +407,8 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	assert(instance->iid == data->i);
-	//FIXME: This one fails:
-	//assert(instance->b== data->b);
+	if(IS_P1_PENDING != instance->state)
+		return;
 	if(instance->b == data->b && IS_P1_PENDING == instance->state)
 		run_instance(ME_A_ instance, &p.b);
 }

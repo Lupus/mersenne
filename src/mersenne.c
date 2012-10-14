@@ -58,10 +58,36 @@ static void message_destructor(void *context, void *ptr)
 	xdr_free((xdrproc_t)xdr_me_message, ptr);
 }
 
-static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
+static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
+{
+	int pos;
+	struct me_message *msg;
+
+	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor,
+			NULL);
+	pos = xdr_getpos(xdrs);
+	if(!xdr_me_message(xdrs, msg))
+		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a "
+				"message at %d", pos);
+
+	switch(msg->super_type) {
+		case ME_LEADER:
+			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
+					fbr_arg_i(FAT_ME_MESSAGE),
+					fiber_arg_vsm(msg),
+					fbr_arg_v(from)
+				);
+			break;
+		case ME_PAXOS:
+			pxs_do_message(ME_A_ msg, from);
+			break;
+	}
+	sm_free(msg);
+}
+
+static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
 		socklen_t addrlen)
 {
-	struct me_message *msg;
 	struct me_peer *p;
 	XDR xdrs;
 	
@@ -76,23 +102,9 @@ static void process_message(ME_P_ char* buf, int buf_size, const struct sockaddr
 		return;
 	}
 
-	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor, NULL);
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
-	if(!xdr_me_message(&xdrs, msg))
-		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a message");
-	switch(msg->super_type) {
-		case ME_LEADER:
-			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
-					fbr_arg_i(FAT_ME_MESSAGE),
-					fiber_arg_vsm(msg),
-					fbr_arg_v(p)
-				);
-			break;
-		case ME_PAXOS:
-			pxs_do_message(ME_A_ msg, p);
-			break;
-	}
-	sm_free(msg);
+	process_message(ME_A_ &xdrs, p);
+	xdr_destroy(&xdrs);
 }
 
 static void fiber_main(struct fbr_context *fiber_context)
@@ -111,7 +123,7 @@ static void fiber_main(struct fbr_context *fiber_context)
 				&client_addrlen);
 		if (nbytes < 0 && errno != EINTR)
 				err(1, "recvfrom");
-		process_message(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);
+		process_message_buf(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);
 	}
 }
 
@@ -265,15 +277,15 @@ int main(int argc, char *argv[])
 
 	wait_for_debugger = mctx->args_info.wait_for_debugger_flag;
 
+	// use the default event loop unless you have special needs
+	mctx->loop = EV_DEFAULT;
+
 	setup_logging(ME_A);
 
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
 
 	set_up_udp_socket(ME_A);
 	set_up_client_socket(ME_A);
-
-	// use the default event loop unless you have special needs
-	mctx->loop = EV_DEFAULT;
 
 	if(!RUNNING_ON_VALGRIND) {
 		ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
