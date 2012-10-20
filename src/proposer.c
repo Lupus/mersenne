@@ -107,6 +107,49 @@ static void pending_unshift(ME_P_ struct buffer *from)
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
 }
 
+#ifdef WINDOW_DUMP
+static void print_window(ME_P)
+{
+	int j;
+	int hw;
+	struct pro_instance *instance;
+	char buf[PRO_INSTANCE_WINDOW + 1];
+	char *ptr = buf;
+	for(j = 0; j < PRO_INSTANCE_WINDOW; j++) {
+		instance = mctx->pxs.pro.instances +j;
+		switch(instance->state) {
+			case IS_CLOSED:
+				*ptr++ = 'C';
+				break;
+			case IS_DELIVERED:
+				*ptr++ = 'D';
+				break;
+			case IS_EMPTY:
+				*ptr++ = '.';
+				break;
+			case IS_P1_PENDING:
+				hw = bm_hweight(instance->p1.acks);
+				snprintf(ptr++, 2, "%d", hw);
+				break;
+			case IS_P1_READY_NO_VALUE:
+				*ptr++ = '?';
+				break;
+			case IS_P1_READY_WITH_VALUE:
+				*ptr++ = 'V';
+				break;
+			case IS_P2_PENDING:
+				*ptr++ = 'P';
+				break;
+			case IS_MAX:
+				*ptr++ = '!';
+				break;
+		}
+	}
+	*ptr++ = '\0';
+	fprintf(stderr, "%s\n", buf);
+}
+#endif
+
 static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	if(IE_D == base->type)
@@ -126,6 +169,9 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
 	instance->state = state;
+#ifdef WINDOW_DUMP
+	print_window(ME_A);
+#endif
 	run_instance(ME_A_ instance, base);
 }
 

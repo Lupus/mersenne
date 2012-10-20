@@ -52,13 +52,40 @@ struct learner_context {
 	struct me_context *mctx;
 };
 
-static inline struct lea_instance * get_instance(struct learner_context *context, uint64_t iid)
+static inline struct lea_instance * get_instance(struct learner_context
+		*context, uint64_t iid)
 {
 	struct me_context *mctx = context->mctx;
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
 }
 
-static void do_deliver(ME_P_ struct learner_context *context, struct lea_instance *instance)
+#ifdef WINDOW_DUMP
+static void print_window(ME_P_ struct learner_context *context)
+{
+	int j;
+	int hw;
+	struct lea_instance *instance;
+	char buf[LEA_INSTANCE_WINDOW + 1];
+	char *ptr = buf;
+	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
+		instance = context->instances +j;
+		if(instance->closed) {
+			*ptr++ = 'X';
+		} else {
+			hw = bm_hweight(instance->acks);
+			if(hw)
+				snprintf(ptr++, 2, "%d", hw);
+			else
+				*ptr++ = '.';
+		}
+	}
+	*ptr++ = '\0';
+	fprintf(stderr, "%s\n", buf);
+}
+#endif
+
+static void do_deliver(ME_P_ struct learner_context *context, struct
+		lea_instance *instance)
 {
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 
@@ -69,6 +96,9 @@ static void do_deliver(ME_P_ struct learner_context *context, struct lea_instanc
 				instance->iid, instance->b, buf,
 				instance->v->size1);
 	}
+#ifdef WINDOW_DUMP
+	print_window(ME_A_ context);
+#endif
 	fbr_call(&mctx->fbr, context->owner, 3,
 			fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
 			fbr_arg_i(instance->iid),
