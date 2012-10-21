@@ -18,6 +18,11 @@ case $1 in
 		export CC=/usr/bin/clang
 		cmake -DUSE_PROFILER=YES -DCMAKE_BUILD_TYPE=Debug ..
 		;;
+	clang-release)
+		export LD=/usr/bin/clang
+		export CC=/usr/bin/clang
+		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+		;;
 	gcc)
 		export LD=/usr/bin/gcc
 		export CC=/usr/bin/gcc
@@ -27,6 +32,11 @@ case $1 in
 		export LD=/usr/bin/gcc
 		export CC=/usr/bin/gcc
 		cmake -DUSE_PROFILER=YES -DCMAKE_BUILD_TYPE=Debug ..
+		;;
+	gcc-release)
+		export LD=/usr/bin/gcc
+		export CC=/usr/bin/gcc
+		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 		;;
 	libevfibers)
 		export LD=/usr/bin/clang
