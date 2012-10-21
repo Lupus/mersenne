@@ -90,7 +90,7 @@ static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sock
 {
 	struct me_peer *p;
 	XDR xdrs;
-	
+
 	if(addr->sa_family != AF_INET) {
 		log(LL_WARNING, "unsupported address family: %d\n", (addr->sa_family));
 		return;
@@ -114,7 +114,7 @@ static void fiber_main(struct fbr_context *fiber_context)
 	struct sockaddr client_addr;
 	socklen_t client_addrlen = sizeof(client_addr);
 	char msgbuf[ME_MAX_XDR_MESSAGE_LEN];
-	
+
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_next_call_info(&mctx->fbr, NULL);
 	for(;;) {

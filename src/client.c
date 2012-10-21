@@ -127,15 +127,15 @@ static void connection_fiber(struct fbr_context *fiber_context)
 	struct fbr_fiber *informer;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
-	
+
 	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
 	fbr_assert(&mctx->fbr, 1 == info->argc);
 	fd = info->argv[0].i;
-	
+
 	informer = fbr_create(&mctx->fbr, "client/informer", client_informer_fiber, 0);
 	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(fd));
 
-	log(LL_INFO, "[CLIENT] Connection fiber has started");
+	log(LL_INFO, "[CLIENT] Connection fiber has started\n");
 	for(;;) {
 		retval = fbr_read_all(&mctx->fbr, fd, &size, sizeof(uint16_t));
 		if(-1 == retval) {
