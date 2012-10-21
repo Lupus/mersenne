@@ -44,7 +44,6 @@ static is_func_t * const state_table[IS_MAX] = {
 	do_is_p1_ready_no_value,
 	do_is_p1_ready_with_value,
 	do_is_p2_pending,
-	do_is_closed,
 	do_is_delivered,
 };
 
@@ -92,6 +91,7 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	struct pending_value *pv = mctx->pxs.pro.pending;
 	if(NULL == pv)
 		return 0;
+	assert(mctx->pxs.pro.pending_size > 0);
 	DL_DELETE(mctx->pxs.pro.pending, pv);
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
@@ -105,6 +105,7 @@ static void pending_unshift(ME_P_ struct buffer *from)
 	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
 	pv->v = sm_in_use(from);
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
+	mctx->pxs.pro.pending_size++;
 }
 
 #ifdef WINDOW_DUMP
@@ -402,11 +403,6 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	}
 }
 
-void do_is_closed(ME_P_ struct pro_instance *instance, struct ie_base *base)
-{
-	//TODO: Do we really need this?
-}
-
 void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
 	struct ie_d *d;
@@ -455,7 +451,7 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	assert(instance->iid == data->i);
 	if(IS_P1_PENDING != instance->state)
 		return;
-	if(instance->b == data->b && IS_P1_PENDING == instance->state)
+	if(instance->b == data->b)
 		run_instance(ME_A_ instance, &p.b);
 }
 
