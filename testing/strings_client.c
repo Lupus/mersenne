@@ -47,6 +47,14 @@ struct my_value {
 	UT_hash_handle hh;
 };
 
+struct client_stats {
+	int total;
+	int received;
+	int timeouts;
+	int other;
+	struct timespec started;
+};
+
 struct client_context {
 	int fd;
 	struct fbr_context fbr;
@@ -56,13 +64,7 @@ struct client_context {
 	struct my_value *values;
 	struct fbr_mutex *mutex;
 	int concurrency;
-	struct {
-		int total;
-		int received;
-		int timeouts;
-		int other;
-		struct timespec started;
-	} stats;
+	struct client_stats stats;
 };
 
 static struct timespec diff(struct timespec start, struct timespec end)
@@ -99,7 +101,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 
 	msg.type = CL_NEW_VALUE;
 	msg.cl_message_u.new_value.value = value->v;
-	
+
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg))
 		err(EXIT_FAILURE, "unable to encode a client message");
@@ -137,7 +139,6 @@ static void client_finished(struct client_context *cc)
 	printf("Average throughput (transactions/second): %.3f\n", cc->stats.received / elapsed);
 	printf("Average throughput (bytes/second): %.3f\n", VALUE_SIZE * cc->stats.received / elapsed);
 	printf("==========================================\n");
-	exit(0);
 }
 
 static void next_value(struct client_context *cc, struct buffer *buf)
@@ -151,8 +152,11 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 	}
 	HASH_DEL(cc->values, value);
 	cc->stats.received++;
-	if(cc->stats.received == cc->stats.total)
+	if(cc->stats.received == cc->stats.total) {
 		client_finished(cc);
+		ev_break(cc->loop, EVBREAK_ALL);
+		return;
+	}
 	randomize_buffer(value->v);
 	HASH_ADD_BUFFER(cc->values, v, value);
 	submit_value(cc, value);
@@ -213,6 +217,29 @@ conn_finish:
 	errx(EXIT_FAILURE, "disconnected from mersenne");
 }
 
+void fiber_stats(struct fbr_context *fiber_context)
+{
+	struct client_context *cc;
+	struct client_stats last_stats;
+	int current, last;
+	ev_tstamp interval = 5.0;
+	double tx_per_second;
+
+	cc = container_of(fiber_context, struct client_context, fbr);
+	fbr_next_call_info(&cc->fbr, NULL);
+	memset(&last_stats, 0x00, sizeof(last_stats));
+	for(;;) {
+		fbr_sleep(fiber_context, interval);
+		current = cc->stats.other + cc->stats.received;
+		//printf("[STATS] Current = %d\n", current);
+		last = last_stats.other + last_stats.received;
+		//printf("[STATS] Last = %d\n", last);
+		tx_per_second = (current - last) / interval;
+		printf("[STATS] %.3f transactions per second...\n", tx_per_second);
+		last_stats = cc->stats;
+	}
+}
+
 void set_up_socket(struct client_context *cc)
 {
 	struct sockaddr_un addr;
@@ -253,13 +280,18 @@ void fiber_main(struct fbr_context *fiber_context)
 	struct client_context *cc;
 	struct fbr_call_info *info = NULL;
 	struct my_value *value;
+	struct fbr_fiber *reader, *stats;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
+
 	set_up_socket(cc);
 	init_values(cc);
-	cc->mersenne_read = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, 0);
-	fbr_call(&cc->fbr, cc->mersenne_read, 0);
-	
+
+	reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, 0);
+	fbr_call(&cc->fbr, reader, 0);
+	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, 0);
+	fbr_call(&cc->fbr, stats, 0);
+
 	fbr_next_call_info(&cc->fbr, NULL);
 
 	for(;;) {
@@ -278,7 +310,7 @@ int main(int argc, char *argv[]) {
 
 	signal(SIGPIPE, SIG_IGN);
 
-	srand((unsigned int) time(NULL));  
+	srand((unsigned int) time(NULL));
 	cc.loop = EV_DEFAULT;
 	fbr_init(&cc.fbr, cc.loop);
 
@@ -289,11 +321,13 @@ int main(int argc, char *argv[]) {
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
 	cc.mutex = fbr_mutex_create(&cc.fbr);
-	
+
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, 0);
 	fbr_call(&cc.fbr, cc.main, 0);
-	
+
 	ev_loop(cc.loop, 0);
+
+	fbr_destroy(&cc.fbr);
 
 	return 0;
 }
