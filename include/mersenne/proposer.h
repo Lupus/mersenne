@@ -26,10 +26,30 @@
 #include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
+#include <mersenne/message.h>
 
 struct me_peer;
 struct me_message;
 struct pro_instance;
+
+enum pro_msg_type {
+	PRO_MSG_ME_MESSAGE = 1,
+	PRO_MSG_CLIENT_VALUE,
+};
+
+struct pro_msg_base {
+	enum pro_msg_type type;
+};
+
+struct pro_msg_me_message {
+	struct pro_msg_base base;
+	struct msg_info info;
+};
+
+struct pro_msg_client_value {
+	struct pro_msg_base base;
+	struct buffer *value;
+};
 
 struct pending_value {
 	struct buffer *v;
@@ -50,7 +70,7 @@ struct pro_context {
 	.pending_size = 0, \
 }
 
-void pro_fiber(struct fbr_context *fiber_context);
+void pro_fiber(struct fbr_context *fiber_context, void *_arg);
 void pro_start(ME_P);
 void pro_stop(ME_P);
 

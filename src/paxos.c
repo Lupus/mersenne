@@ -28,6 +28,7 @@
 #include <mersenne/proposer.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/log.h>
 
 static inline int acceptor_predicate(struct me_peer *peer, void *context)
 {
@@ -55,55 +56,82 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	struct me_paxos_message *pmsg;
 	struct me_paxos_learn_data *ldata;
 	struct buffer *buf;
+	struct msg_info *info;
+	struct fbr_buffer *fb;
+	struct fiber_tailq_i *item;
+	struct pro_msg_me_message *pro_msg;
+
 	pmsg = &msg->me_message_u.paxos_message;
+
 	switch(pmsg->data.type) {
-		case ME_PAXOS_PREPARE:
-		case ME_PAXOS_ACCEPT:
-		case ME_PAXOS_RETRANSMIT:
-			if(mctx->me->pxs.is_acceptor)
-				fbr_call(&mctx->fbr, mctx->fiber_acceptor, 3,
-						fbr_arg_i(FAT_ME_MESSAGE),
-						fiber_arg_vsm(msg),
-						fbr_arg_v(from)
-					);
+	case ME_PAXOS_PREPARE:
+	case ME_PAXOS_ACCEPT:
+	case ME_PAXOS_RETRANSMIT:
+		if(!mctx->me->pxs.is_acceptor)
 			break;
-		case ME_PAXOS_LEARN:
-			ldata = &pmsg->data.me_paxos_msg_data_u.learn;
-			buf = buf_sm_steal(ldata->v);
-			fbr_multicall(&mctx->fbr, FMT_LEARNER, 4,
-					fbr_arg_i(FAT_ME_MESSAGE),
-					fiber_arg_vsm(msg),
-					fbr_arg_v(from),
-					fiber_arg_vsm(buf)
-				);
-			sm_free(buf);
-			break;
-		case ME_PAXOS_LAST_ACCEPTED:
-			fbr_multicall(&mctx->fbr, FMT_LEARNER, 3,
-					fbr_arg_i(FAT_ME_MESSAGE),
-					fiber_arg_vsm(msg),
-					fbr_arg_v(from)
-				);
-			break;
-		case ME_PAXOS_CLIENT_VALUE:
-		case ME_PAXOS_PROMISE:
-		case ME_PAXOS_REJECT:
-			fbr_call(&mctx->fbr, mctx->fiber_proposer, 3,
-					fbr_arg_i(FAT_ME_MESSAGE),
-					fiber_arg_vsm(msg),
-					fbr_arg_v(from)
-				);
-			break;
+		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_acceptor);
+		assert(NULL != fb);
+		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+				sizeof(struct msg_info));
+		info->msg = sm_in_use(msg);
+		info->from = from;
+		fbr_buffer_alloc_commit(&mctx->fbr, fb);
+		break;
+
+	case ME_PAXOS_LEARN:
+		ldata = &pmsg->data.me_paxos_msg_data_u.learn;
+		buf = buf_sm_steal(ldata->v);
+		TAILQ_FOREACH(item, &mctx->learners, entries) {
+			fb = fbr_get_user_data(&mctx->fbr, item->id);
+			assert(NULL != fb);
+			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+					sizeof(struct msg_info));
+			info->msg = sm_in_use(msg);
+			info->buf = sm_in_use(buf);
+			info->from = from;
+			fbr_buffer_alloc_commit(&mctx->fbr, fb);
+		}
+		sm_free(buf);
+		break;
+
+	case ME_PAXOS_LAST_ACCEPTED:
+		TAILQ_FOREACH(item, &mctx->learners, entries) {
+			fb = fbr_get_user_data(&mctx->fbr, item->id);
+			assert(NULL != fb);
+			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+					sizeof(struct msg_info));
+			info->msg = sm_in_use(msg);
+			info->from = from;
+			fbr_buffer_alloc_commit(&mctx->fbr, fb);
+		}
+		break;
+
+	case ME_PAXOS_CLIENT_VALUE:
+	case ME_PAXOS_PROMISE:
+	case ME_PAXOS_REJECT:
+		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
+		if(NULL == fb) {
+			assert(FBR_ENOFIBER == mctx->fbr.f_errno);
+			log(LL_ALERT, "proposer not found\n");
+			abort();
+		}
+		pro_msg = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+				sizeof(*pro_msg));
+		pro_msg->base.type = PRO_MSG_ME_MESSAGE;
+		pro_msg->info.msg = sm_in_use(msg);
+		pro_msg->info.from = from;
+		fbr_buffer_alloc_commit(&mctx->fbr, fb);
+		break;
 	}
 }
 
 void pxs_fiber_init(ME_P)
 {
 	acc_init_storage(ME_A);
-	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber, 0);
-	mctx->fiber_proposer = NULL;
+	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber, NULL, 0);
+	mctx->fiber_proposer = 0;
 
-	fbr_call(&mctx->fbr, mctx->fiber_acceptor, 0);
+	fbr_transfer(&mctx->fbr, mctx->fiber_acceptor);
 	pro_stop(ME_A);
 }
 

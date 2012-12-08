@@ -22,6 +22,7 @@
 #ifndef _CONTEXT_H_
 #define _CONTEXT_H_
 
+#include <sys/queue.h>
 #include <ev.h>
 
 #include <evfibers/fiber.h>
@@ -31,6 +32,13 @@
 #include <mersenne/cmdline.h>
 
 struct me_peer;
+
+struct fiber_tailq_i {
+	fbr_id_t id;
+	TAILQ_ENTRY(fiber_tailq_i) entries;
+};
+
+TAILQ_HEAD(fiber_tailq, fiber_tailq_i);
 
 struct me_context {
 	struct gengetopt_args_info args_info;
@@ -44,11 +52,12 @@ struct me_context {
 	struct ldr_context ldr;
 	struct pxs_context pxs;
 	struct fbr_context fbr;
-	struct fbr_fiber *fiber_main;
-	struct fbr_fiber *fiber_leader;
-	struct fbr_fiber *fiber_acceptor;
-	struct fbr_fiber *fiber_proposer;
-	struct fbr_fiber *fiber_client;
+	fbr_id_t fiber_main;
+	fbr_id_t fiber_leader;
+	fbr_id_t fiber_acceptor;
+	fbr_id_t fiber_proposer;
+	fbr_id_t fiber_client;
+	struct fiber_tailq learners;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
@@ -58,9 +67,9 @@ struct me_context {
 	.me = NULL, \
 	.ldr = LDR_CONTEXT_INITIALIZER, \
 	.pxs = PXS_CONTEXT_INITIALIZER, \
-	.fiber_main = NULL, \
-	.fiber_leader = NULL, \
-	.fiber_proposer = NULL, \
+	.fiber_main = 0, \
+	.fiber_leader = 0, \
+	.fiber_proposer = 0, \
 }
 
 #define ME_P struct me_context *mctx

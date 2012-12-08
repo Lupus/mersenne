@@ -498,6 +498,18 @@ static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 }
 
+static void instances_destructor(struct fbr_context *fiber_context, void *ptr,
+		void *context)
+{
+	int i;
+	struct pro_instance *instances = ptr;
+	struct me_context *mctx = context;
+	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
+		free_instance(ME_A_ instances + i);
+	}
+}
+
+
 static void proposer_init(ME_P)
 {
 	int i;
@@ -507,6 +519,8 @@ static void proposer_init(ME_P)
 	mctx->pxs.pro.max_iid = 0;
 	mctx->pxs.pro.lowest_non_closed = 0;
 	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
+	fbr_alloc_set_destructor(&mctx->fbr, mctx->pxs.pro.instances,
+			instances_destructor, mctx);
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
@@ -514,14 +528,6 @@ static void proposer_init(ME_P)
 		init_instance(ME_A_ mctx->pxs.pro.instances + i);
 		mctx->pxs.pro.instances[i].iid = mctx->pxs.pro.max_iid++;
 		run_instance(ME_A_ mctx->pxs.pro.instances + i, &base);
-	}
-}
-
-static void proposer_shutdown(ME_P)
-{
-	int i;
-	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
-		free_instance(ME_A_ mctx->pxs.pro.instances + i);
 	}
 }
 
@@ -579,59 +585,133 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
 }
 
-void pro_fiber(struct fbr_context *fiber_context)
+struct proposer_context {
+	struct fbr_buffer *fb;
+	struct fbr_buffer *lea_fb;
+	struct fbr_mutex *fb_mutex;
+	struct fbr_mutex *lea_fb_mutex;
+};
+
+static void context_destructor(struct fbr_context *fiber_context, void *ptr,
+		void *context)
+{
+	struct proposer_context *proposer_context = ptr;
+	struct me_context *mctx = context;
+	fbr_buffer_free(&mctx->fbr, proposer_context->fb);
+	if(proposer_context->lea_fb)
+		fbr_buffer_free(&mctx->fbr, proposer_context->lea_fb);
+	if(proposer_context->fb_mutex)
+		fbr_mutex_destroy(&mctx->fbr, proposer_context->fb_mutex);
+	if(proposer_context->lea_fb_mutex)
+		fbr_mutex_destroy(&mctx->fbr, proposer_context->lea_fb_mutex);
+}
+
+static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
+{
+	struct lea_instance_info *instance_info;
+	instance_info = fbr_buffer_read_address(&mctx->fbr, lea_fb,
+			sizeof(struct lea_instance_info));
+	do_delivered_value(ME_A_ instance_info->iid, instance_info->buffer);
+	sm_free(instance_info->buffer);
+	fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+}
+
+static void process_fb(ME_P_ struct fbr_buffer *fb)
+{
+	struct pro_msg_base *base;
+	enum pro_msg_type type;
+	struct pro_msg_me_message *pro_msg;
+	struct msg_info *msg_info;
+	struct pro_msg_client_value *pro_client;
+	base = fbr_buffer_read_address(&mctx->fbr, fb,
+			sizeof(struct pro_msg_base));
+	type = base->type;
+	fbr_buffer_read_discard(&mctx->fbr, fb);
+	switch(type) {
+		case PRO_MSG_ME_MESSAGE:
+			pro_msg = fbr_buffer_read_address(&mctx->fbr, fb,
+					sizeof(struct pro_msg_me_message));
+			msg_info = &pro_msg->info;
+			do_message(ME_A_ msg_info->msg, msg_info->from);
+			sm_free(msg_info->msg);
+			fbr_buffer_read_advance(&mctx->fbr, fb);
+			break;
+		case PRO_MSG_CLIENT_VALUE:
+			pro_client = fbr_buffer_read_address(&mctx->fbr, fb,
+					sizeof(struct pro_msg_client_value));
+			do_client_value(ME_A_ pro_client->value);
+			sm_free(pro_client->value);
+			fbr_buffer_read_advance(&mctx->fbr, fb);
+			break;
+		default:
+			abort();
+	}
+}
+
+void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct me_message *msg;
-	struct me_peer *from;
-	struct fbr_call_info *info = NULL;
-	struct fbr_fiber *learner;
-	struct buffer *buf;
-	uint64_t iid;
+	fbr_id_t learner;
+	struct fbr_buffer *fb, *lea_fb;
+	struct lea_fiber_arg lea_arg;
+	struct fbr_ev_cond_var ev_fb;
+	struct fbr_ev_cond_var ev_lea_fb;
+	struct fbr_ev_base *ev;
+	struct proposer_context *proposer_context;
+	struct fbr_mutex *fb_mutex;
+	struct fbr_mutex *lea_fb_mutex;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
+
+	proposer_context = fbr_alloc(&mctx->fbr, sizeof(struct pro_context));
+	fbr_alloc_set_destructor(&mctx->fbr, proposer_context,
+			context_destructor, mctx);
+
+	fb = fbr_buffer_create(&mctx->fbr, 0);
+	assert(NULL != fb);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), fb);
+	fb_mutex = fbr_mutex_create(&mctx->fbr);
+	lea_fb = fbr_buffer_create(&mctx->fbr, 0);
+	assert(NULL != lea_fb);
+	lea_fb_mutex = fbr_mutex_create(&mctx->fbr);
+	proposer_context->fb = fb;
+	proposer_context->lea_fb = lea_fb;
+	proposer_context->fb_mutex = fb_mutex;
+	proposer_context->lea_fb_mutex = lea_fb_mutex;
+
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
+			fbr_buffer_cond_read(&mctx->fbr, fb),
+			fb_mutex);
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
+			fbr_buffer_cond_read(&mctx->fbr, lea_fb),
+			lea_fb_mutex);
 
 	proposer_init(ME_A);
 
-	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, 0);
-	fbr_call(&mctx->fbr, learner, 1, fbr_arg_i(0));
+	lea_arg.buffer = lea_fb;
+	lea_arg.starting_iid = 1;
+	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
+	fbr_transfer(&mctx->fbr, learner);
 
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
-
-		switch(info->argv[0].i) {
-			case FAT_ME_MESSAGE:
-				fbr_assert(&mctx->fbr, 3 == info->argc);
-				msg = info->argv[1].v;
-				from = info->argv[2].v;
-
-				do_message(ME_A_ msg, from);
-				sm_free(msg);
-				break;
-			case FAT_PXS_CLIENT_VALUE:
-				fbr_assert(&mctx->fbr, 2 == info->argc);
-				buf = info->argv[1].v;
-
-				do_client_value(ME_A_ buf);
-				sm_free(buf);
-				break;
-			case FAT_PXS_DELIVERED_VALUE:
-				fbr_assert(&mctx->fbr, 3 == info->argc);
-				iid = info->argv[1].i;
-				buf = info->argv[2].v;
-				do_delivered_value(ME_A_ iid, buf);
-				sm_free(buf);
-				break;
-			case FAT_QUIT:
-				goto fiber_exit;
+	for(;;) {
+		fbr_mutex_lock(&mctx->fbr, fb_mutex);
+		fbr_mutex_lock(&mctx->fbr, lea_fb_mutex);
+		ev = fbr_ev_wait(&mctx->fbr, (struct fbr_ev_base*[]){
+				&ev_fb.ev_base,
+				&ev_lea_fb.ev_base,
+				NULL
+				});
+		if(ev == &ev_fb.ev_base) {
+			fbr_mutex_unlock(&mctx->fbr, fb_mutex);
+			process_fb(ME_A_ fb);
+		} else {
+			assert(ev == &ev_lea_fb.ev_base);
+			fbr_mutex_unlock(&mctx->fbr, lea_fb_mutex);
+			process_lea_fb(ME_A_ lea_fb);
 		}
+
+
 	}
-	goto start;
-fiber_exit:
-	proposer_shutdown(ME_A);
-	fbr_reclaim(&mctx->fbr, learner);
 }
 
 static void send_proxy_value(ME_P_ struct buffer *buf)
@@ -644,51 +724,67 @@ static void send_proxy_value(ME_P_ struct buffer *buf)
 	msg_send_to(ME_A_ &msg, mctx->ldr.leader);
 }
 
-static void proxy_fiber(struct fbr_context *fiber_context)
+static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct fbr_call_info *info = NULL;
-	struct buffer *buf;
+	struct fbr_buffer *fb;
+	struct proposer_context *proposer_context;
+	struct pro_msg_base *base;
+	enum pro_msg_type type;
+	struct pro_msg_me_message *pro_msg;
+	struct msg_info *msg_info;
+	struct pro_msg_client_value *pro_client;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
 
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
+	proposer_context = fbr_alloc(&mctx->fbr, sizeof(struct pro_context));
+	fbr_alloc_set_destructor(&mctx->fbr, proposer_context,
+			context_destructor, mctx);
 
-		switch(info->argv[0].i) {
-			case FAT_ME_MESSAGE:
-				fbr_assert(&mctx->fbr, 3 == info->argc);
-				sm_free(info->argv[1].v);
+	fb = fbr_buffer_create(&mctx->fbr, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), fb);
+	memset(proposer_context, 0x00, sizeof(struct proposer_context));
+	proposer_context->fb = fb;
+
+	for(;;) {
+		base = fbr_buffer_read_address(&mctx->fbr, fb,
+				sizeof(struct pro_msg_base));
+		type = base->type;
+		fbr_buffer_read_discard(&mctx->fbr, fb);
+		switch(type) {
+			case PRO_MSG_ME_MESSAGE:
+				pro_msg = fbr_buffer_read_address(&mctx->fbr, fb,
+						sizeof(struct pro_msg_me_message));
+				msg_info = &pro_msg->info;
+				sm_free(msg_info->msg);
+				fbr_buffer_read_advance(&mctx->fbr, fb);
 				break;
-			case FAT_PXS_CLIENT_VALUE:
-				fbr_assert(&mctx->fbr, 2 == info->argc);
-				buf = info->argv[1].v;
-
-				send_proxy_value(ME_A_ buf);
-				sm_free(buf);
+			case PRO_MSG_CLIENT_VALUE:
+				pro_client = fbr_buffer_read_address(&mctx->fbr, fb,
+						sizeof(struct pro_msg_client_value));
+				send_proxy_value(ME_A_ pro_client->value);
+				sm_free(pro_client->value);
+				fbr_buffer_read_advance(&mctx->fbr, fb);
 				break;
 		}
 	}
-	goto start;
 }
 
 void pro_start(ME_P)
 {
-	if(NULL != mctx->fiber_proposer)
+	if(0 != mctx->fiber_proposer)
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
-	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, 0);
-	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, NULL, 0);
+	assert(0 != mctx->fiber_proposer);
+	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
 }
 
 void pro_stop(ME_P)
 {
-	if(NULL != mctx->fiber_proposer) {
-		fbr_call(&mctx->fbr, mctx->fiber_proposer, 1, fbr_arg_i(FAT_QUIT));
+	if(0 != mctx->fiber_proposer)
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
-	}
 	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer_proxy",
-			proxy_fiber, 0);
-	fbr_call(&mctx->fbr, mctx->fiber_proposer, 0);
+			proxy_fiber, NULL, 0);
+	assert(0 != mctx->fiber_proposer);
+	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
 }

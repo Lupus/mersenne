@@ -181,12 +181,10 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 }
 
-static void repeater_fiber(struct fbr_context *fiber_context)
+static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	
-	fbr_next_call_info(&mctx->fbr, NULL);
 
 	for(;;) {
 		send_highest_accepted(ME_A);
@@ -194,46 +192,47 @@ static void repeater_fiber(struct fbr_context *fiber_context)
 	}
 }
 
-void acc_fiber(struct fbr_context *fiber_context)
+void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct me_message *msg;
-	struct me_peer *from;
+	struct msg_info *info;
 	struct me_paxos_message *pmsg;
-	struct fbr_call_info *info = NULL;
-	struct fbr_fiber *repeater;
+	fbr_id_t repeater;
+	struct fbr_buffer *buffer;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
 
-	repeater = fbr_create(&mctx->fbr, "acceptor_repeater", repeater_fiber, 0);
-	fbr_call(&mctx->fbr, repeater, 0);
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
-		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
-		msg = info->argv[1].v;
-		from = info->argv[2].v;
+	buffer = fbr_buffer_create(&mctx->fbr, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), buffer);
 
-		pmsg = &msg->me_message_u.paxos_message;
+	repeater = fbr_create(&mctx->fbr, "acceptor_repeater", repeater_fiber,
+			NULL, 0);
+	fbr_transfer(&mctx->fbr, repeater);
+
+	for(;;) {
+		info = fbr_buffer_read_address(&mctx->fbr, buffer,
+				sizeof(struct msg_info));
+
+		pmsg = &info->msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_PREPARE:
-				do_prepare(ME_A_ pmsg, from);
+				do_prepare(ME_A_ pmsg, info->from);
 				break;
 			case ME_PAXOS_ACCEPT:
-				do_accept(ME_A_ pmsg, from);
+				do_accept(ME_A_ pmsg, info->from);
 				break;
 			case ME_PAXOS_RETRANSMIT:
-				do_retransmit(ME_A_ pmsg, from);
+				do_retransmit(ME_A_ pmsg, info->from);
 				break;
 			default:
 				errx(EXIT_FAILURE,
 						"wrong message type for acceptor: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
-		sm_free(msg);
+		sm_free(info->msg);
+
+		fbr_buffer_read_advance(&mctx->fbr, buffer);
 	}
-	goto start;
 }
 
 static void attach_symbol(ME_P_ void **vptr, const char *symbol)

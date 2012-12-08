@@ -22,9 +22,21 @@
 #ifndef _LEARNER_H_
 #define _LEARNER_H_
 
+#include <stdint.h>
+
 #include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 
-void lea_fiber(struct fbr_context *fiber_context);
+struct lea_fiber_arg {
+	struct fbr_buffer *buffer;
+	uint64_t starting_iid;
+};
+
+struct lea_instance_info {
+	uint64_t iid;
+	struct buffer *buffer;
+};
+
+void lea_fiber(struct fbr_context *fiber_context, void *_arg);
 
 #endif

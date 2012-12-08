@@ -174,6 +174,7 @@ void send_ok(ME_P_ int s)
 	data->type = ME_LEADER_OK;
 	data->me_leader_msg_data_u.ok.trust = get_trust(ME_A);
 	data->me_leader_msg_data_u.ok.k = s;
+
 	msg_send_all(ME_A_ &msg);
 	fbr_free(&mctx->fbr, data->me_leader_msg_data_u.ok.trust);
 }
@@ -304,14 +305,14 @@ void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 
 static void timeout_cb (EV_P_ ev_timer *w, int revents)
 {
+	int n;
 	struct me_peer *p;
 	struct ldr_context *ldr;
 	struct me_context *mctx;
 	ldr = container_of(w, struct ldr_context, delta_timer);
 	mctx = container_of(ldr, struct me_context, ldr);
 
-	int n = HASH_COUNT(mctx->peers);
-
+	n = HASH_COUNT(mctx->peers);
 
 	if(mctx->me->index == mctx->ldr.r % n) {
 		for(p=mctx->peers; p != NULL; p=p->hh.next) {
@@ -362,15 +363,16 @@ int ldr_round_length(ME_P)
 	return TIME_DELTA / 1000.;
 }
 
-void ldr_fiber(struct fbr_context *fiber_context)
+void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct me_message *msg;
-	struct me_peer *from;
-	struct fbr_call_info *info = NULL;
-	
+	struct msg_info *info;
+	struct fbr_buffer *buffer;
+
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
+
+	buffer = fbr_buffer_create(&mctx->fbr, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), buffer);
 
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
 			TIME_DELTA / 1000.);
@@ -379,27 +381,25 @@ void ldr_fiber(struct fbr_context *fiber_context)
 	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
 
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
-		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
-		msg = info->argv[1].v;
-		from = info->argv[1].v;
+	for(;;) {
+		info = fbr_buffer_read_address(&mctx->fbr, buffer,
+				sizeof(struct msg_info));
 
-		if(is_expired(ME_A_ msg)) {
+		if(is_expired(ME_A_ info->msg)) {
 			log(LL_WARNING, "got expired message\n");
-			sm_free(msg);
+			sm_free(info->msg);
 			continue;
 		}
-		if(!config_match(ME_A_ msg)) {
+		if(!config_match(ME_A_ info->msg)) {
 			log(LL_WARNING, "sender configuration does not match "
 					"mine, ignoring message\n");
-			sm_free(msg);
+			sm_free(info->msg);
 			continue;
 		}
 
-		do_message(ME_A_ msg, from);
-		sm_free(msg);
+		do_message(ME_A_ info->msg, info->from);
+		sm_free(info->msg);
+
+		fbr_buffer_read_advance(&mctx->fbr, buffer);
 	}
-	goto start;
 }

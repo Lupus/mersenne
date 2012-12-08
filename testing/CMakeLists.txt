@@ -12,7 +12,7 @@ add_executable(strings_client
 	../src/bitmask.c
 	../src/sharedmem.c
 	)
-target_link_libraries(strings_client evfibers ev rt)
+target_link_libraries(strings_client ${LIBEVFIBERS_LDFLAGS} ${LIBEV_LDFLAGS} rt)
 
 add_executable(acceptor_dump acceptor_dump.c)
 target_link_libraries(acceptor_dump dl hiredis)

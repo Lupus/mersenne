@@ -62,6 +62,8 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 {
 	int pos;
 	struct me_message *msg;
+	struct fbr_buffer *fb;
+	struct msg_info *info;
 
 	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor,
 			NULL);
@@ -72,11 +74,12 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 
 	switch(msg->super_type) {
 		case ME_LEADER:
-			fbr_call(&mctx->fbr, mctx->fiber_leader, 3,
-					fbr_arg_i(FAT_ME_MESSAGE),
-					fiber_arg_vsm(msg),
-					fbr_arg_v(from)
-				);
+			fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_leader);
+			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+					sizeof(struct msg_info));
+			info->msg = sm_in_use(msg);
+			info->from = from;
+			fbr_buffer_alloc_commit(&mctx->fbr, fb);
 			break;
 		case ME_PAXOS:
 			pxs_do_message(ME_A_ msg, from);
@@ -107,7 +110,7 @@ static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sock
 	xdr_destroy(&xdrs);
 }
 
-static void fiber_main(struct fbr_context *fiber_context)
+static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	int nbytes;
@@ -116,7 +119,6 @@ static void fiber_main(struct fbr_context *fiber_context)
 	char msgbuf[ME_MAX_XDR_MESSAGE_LEN];
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
 	for(;;) {
 		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf,
 				ME_MAX_XDR_MESSAGE_LEN, 0, &client_addr,
@@ -279,6 +281,7 @@ int main(int argc, char *argv[])
 
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
+	TAILQ_INIT(&mctx->learners);
 
 	setup_logging(ME_A);
 
@@ -301,13 +304,13 @@ int main(int argc, char *argv[])
 	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);
 
-	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, 0);
-	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, 0);
-	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, 0);
+	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
+	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, NULL, 0);
+	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, NULL, 0);
 
-	fbr_call(&mctx->fbr, mctx->fiber_main, 0);
-	fbr_call(&mctx->fbr, mctx->fiber_leader, 0);
-	fbr_call(&mctx->fbr, mctx->fiber_client, 0);
+	fbr_transfer(&mctx->fbr, mctx->fiber_main);
+	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
+	fbr_transfer(&mctx->fbr, mctx->fiber_client);
 
 #if _USE_PROFILER
 	snprintf(profile_filename, sizeof(profile_filename), "cpu_profile.%d",

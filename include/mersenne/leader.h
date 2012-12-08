@@ -41,7 +41,7 @@ struct ldr_context {
 	.delta_count = 0, \
 }
 
-void ldr_fiber(struct fbr_context *fiber_context);
+void ldr_fiber(struct fbr_context *fiber_context, void *_arg);
 int ldr_is_leader(ME_P);
 int ldr_round_length(ME_P);
 

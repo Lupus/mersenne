@@ -27,6 +27,12 @@
 
 struct me_peer;
 
+struct msg_info {
+	struct me_message *msg;
+	struct me_peer *from;
+	struct buffer *buf;
+};
+
 void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
 void msg_send_all(ME_P_ struct me_message *msg);
 void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context);

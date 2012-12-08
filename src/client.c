@@ -37,7 +37,7 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	uint16_t size, send_size;
 	ssize_t retval;
-	
+
 	buffer = sm_in_use(buffer);
 	msg.type = CL_LEARNED_VALUE;
 	msg.cl_message_u.learned_value.i = iid;
@@ -70,70 +70,58 @@ finish:
 	return retval;
 }
 
-void client_informer_fiber(struct fbr_context *fiber_context)
+void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct fbr_call_info *info = NULL;
-	struct fbr_fiber *learner;
-	int fd;
-	struct buffer *buf;
-	uint64_t iid;
+	fbr_id_t learner;
+	int fd = *(int *)_arg;
 	int retval;
+	struct lea_fiber_arg lea_arg;
+	struct lea_instance_info *instance;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
-	fbr_assert(&mctx->fbr, 1 == info->argc);
-	fd = info->argv[0].i;
 
-	learner = fbr_create(&mctx->fbr, "client/informer/learner", lea_fiber, 0);
-	fbr_call(&mctx->fbr, learner, 1, fbr_arg_i(0));
+	lea_arg.buffer = fbr_buffer_create(&mctx->fbr, 1);
+	lea_arg.starting_iid = 0;
+	learner = fbr_create(&mctx->fbr, "client/informer/learner", lea_fiber,
+			&lea_arg, 0);
+	retval = fbr_transfer(&mctx->fbr, learner);
+	assert(0 == retval);
 
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
+	for (;;) {
+		instance = fbr_buffer_read_address(&mctx->fbr, lea_arg.buffer,
+				sizeof(struct lea_instance_info));
 
-		switch(info->argv[0].i) {
-			case FAT_PXS_DELIVERED_VALUE:
-				fbr_assert(&mctx->fbr, 3 == info->argc);
-				iid = info->argv[1].i;
-				buf = info->argv[2].v;
+		retval = inform_client(ME_A_ fd, instance->iid, instance->buffer);
 
-				retval = inform_client(ME_A_ fd, iid, buf);
-				sm_free(buf);
-				if(-1 == retval)
-					log(LL_WARNING, "[CLIENT] informing of "
-							"a client has failed");
-				break;
-			case FAT_QUIT:
-				goto quit;
-		}
+		sm_free(instance->buffer);
+		fbr_buffer_read_advance(&mctx->fbr, lea_arg.buffer);
+
+		if(-1 == retval)
+			log(LL_WARNING, "[CLIENT] informing of a client has"
+					" failed");
 	}
-	goto start;
-quit:
-	fbr_reclaim(&mctx->fbr, learner);
 }
 
-static void connection_fiber(struct fbr_context *fiber_context)
+static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	int fd;
-	struct fbr_call_info *info = NULL;
+	int fd = *(int *)_arg;
 	XDR xdrs;
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct cl_message msg;
 	ssize_t retval;
 	uint16_t size;
 	struct buffer *value;
-	struct fbr_fiber *informer;
+	fbr_id_t informer;
+	struct fbr_buffer *pro_buf;
+	struct pro_msg_client_value *msg_client_value;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	fbr_assert(&mctx->fbr, 1 == fbr_next_call_info(&mctx->fbr, &info));
-	fbr_assert(&mctx->fbr, 1 == info->argc);
-	fd = info->argv[0].i;
-
-	informer = fbr_create(&mctx->fbr, "client/informer", client_informer_fiber, 0);
-	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(fd));
+	informer = fbr_create(&mctx->fbr, "client/informer",
+			client_informer_fiber, &fd, 0);
+	fbr_transfer(&mctx->fbr, informer);
 
 	log(LL_INFO, "[CLIENT] Connection fiber has started\n");
 	for(;;) {
@@ -178,10 +166,13 @@ static void connection_fiber(struct fbr_context *fiber_context)
 			buf[value->size1] = '\0';
 			log(LL_DEBUG, "[CLIENT] Got value: ``%s''\n", buf);
 		}
-		fbr_call(&mctx->fbr, mctx->fiber_proposer, 2,
-				fbr_arg_i(FAT_PXS_CLIENT_VALUE),
-				fiber_arg_vsm(value)
-			);
+		pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
+		assert(NULL != pro_buf);
+		msg_client_value = fbr_buffer_alloc_prepare(&mctx->fbr,
+				pro_buf, sizeof(struct pro_msg_client_value));
+		msg_client_value->base.type = PRO_MSG_CLIENT_VALUE;
+		msg_client_value->value = sm_in_use(value);
+		fbr_buffer_alloc_commit(&mctx->fbr, pro_buf);
 		sm_free(value);
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);
@@ -189,26 +180,25 @@ static void connection_fiber(struct fbr_context *fiber_context)
 conn_finish:
 	log(LL_INFO, "[CLIENT] Connection fiber has finished\n");
 	close(fd);
-	fbr_call(&mctx->fbr, informer, 1, fbr_arg_i(FAT_QUIT));
-	fbr_reclaim(&mctx->fbr, informer);
 }
 
-void clt_fiber(struct fbr_context *fiber_context)
+void clt_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	int sockfd;
 	struct sockaddr_un addr;
 	socklen_t addrlen = sizeof(addr);
-	struct fbr_fiber *fiber;
+	fbr_id_t fiber;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_next_call_info(&mctx->fbr, NULL);
 
 	for(;;) {
-		sockfd = fbr_accept(&mctx->fbr, mctx->client_fd, (struct sockaddr *)&addr, &addrlen);
+		sockfd = fbr_accept(&mctx->fbr, mctx->client_fd,
+				(struct	sockaddr *)&addr, &addrlen);
 		if(-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed");
-		fiber = fbr_create(&mctx->fbr, "client_fiber", connection_fiber, 0);
-		fbr_call(&mctx->fbr, fiber, 1, fbr_arg_i(sockfd));
+		fiber = fbr_create(&mctx->fbr, "client_fiber",
+				connection_fiber, &sockfd, 0);
+		fbr_transfer(&mctx->fbr, fiber);
 	}
 }

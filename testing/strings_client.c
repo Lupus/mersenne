@@ -59,8 +59,8 @@ struct client_context {
 	int fd;
 	struct fbr_context fbr;
 	struct ev_loop *loop;
-	struct fbr_fiber *mersenne_read;
-	struct fbr_fiber *main;
+	fbr_id_t mersenne_read;
+	fbr_id_t main;
 	struct my_value *values;
 	struct fbr_mutex *mutex;
 	int concurrency;
@@ -166,12 +166,17 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
 	struct client_context *cc = (struct client_context *)w->data;
-	struct my_value *value;
+	struct my_value *value, **vptr;
+	struct fbr_buffer *fb;
 	value = container_of(w, struct my_value, timer);
-	fbr_call(&cc->fbr, cc->main, 1, fbr_arg_v(value));
+	fb = fbr_get_user_data(&cc->fbr, cc->main);
+	assert(NULL != fb);
+	vptr = fbr_buffer_alloc_prepare(&cc->fbr, fb, sizeof(void *));
+	*vptr = value;
+	fbr_buffer_alloc_commit(&cc->fbr, fb);
 }
 
-void fiber_reader(struct fbr_context *fiber_context)
+void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
@@ -183,7 +188,6 @@ void fiber_reader(struct fbr_context *fiber_context)
 	//char str_buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
-	fbr_next_call_info(&cc->fbr, NULL);
 
 	for(;;) {
 		retval = fbr_read_all(&cc->fbr, cc->fd, &size, sizeof(uint16_t));
@@ -217,7 +221,7 @@ conn_finish:
 	errx(EXIT_FAILURE, "disconnected from mersenne");
 }
 
-void fiber_stats(struct fbr_context *fiber_context)
+void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
 	struct client_stats last_stats;
@@ -226,7 +230,6 @@ void fiber_stats(struct fbr_context *fiber_context)
 	double tx_per_second;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
-	fbr_next_call_info(&cc->fbr, NULL);
 	memset(&last_stats, 0x00, sizeof(last_stats));
 	for(;;) {
 		fbr_sleep(fiber_context, interval);
@@ -275,33 +278,33 @@ static void init_values(struct client_context *cc)
 }
 
 
-void fiber_main(struct fbr_context *fiber_context)
+void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
-	struct fbr_call_info *info = NULL;
-	struct my_value *value;
-	struct fbr_fiber *reader, *stats;
+	struct my_value *value, **vptr;
+	fbr_id_t reader, stats;
+	struct fbr_buffer *fb;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
+
+	fb = fbr_buffer_create(&cc->fbr, 0);
+	fbr_set_user_data(&cc->fbr, fbr_self(&cc->fbr), fb);
 
 	set_up_socket(cc);
 	init_values(cc);
 
-	reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, 0);
-	fbr_call(&cc->fbr, reader, 0);
-	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, 0);
-	fbr_call(&cc->fbr, stats, 0);
-
-	fbr_next_call_info(&cc->fbr, NULL);
+	reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, NULL, 0);
+	fbr_transfer(&cc->fbr, reader);
+	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, NULL, 0);
+	fbr_transfer(&cc->fbr, stats);
 
 	for(;;) {
-		fbr_yield(&cc->fbr);
-		while(fbr_next_call_info(&cc->fbr, &info)) {
-			value = info->argv[0].v;
-			cc->stats.timeouts++;
-			submit_value(cc, value);
-			ev_timer_again(cc->loop, &value->timer);
-		}
+		vptr = fbr_buffer_read_address(&cc->fbr, fb, sizeof(void *));
+		value = *vptr;
+		fbr_buffer_read_advance(&cc->fbr, fb);
+		cc->stats.timeouts++;
+		submit_value(cc, value);
+		ev_timer_again(cc->loop, &value->timer);
 	}
 }
 
@@ -322,8 +325,8 @@ int main(int argc, char *argv[]) {
 	cc.stats.other = 0;
 	cc.mutex = fbr_mutex_create(&cc.fbr);
 
-	cc.main = fbr_create(&cc.fbr, "main", fiber_main, 0);
-	fbr_call(&cc.fbr, cc.main, 0);
+	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);
+	fbr_transfer(&cc.fbr, cc.main);
 
 	ev_loop(cc.loop, 0);
 

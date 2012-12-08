@@ -19,16 +19,3 @@
 
  ********************************************************************/
 
-#include <evfibers/fiber.h>
-#include <mersenne/fiber_args.h>
-#include <mersenne/sharedmem.h>
-
-static void fiber_arg_sm_use_cb(void *context, struct fbr_fiber_arg *arg)
-{
-	arg->v = sm_in_use(arg->v);
-}
-
-struct fbr_fiber_arg fiber_arg_vsm(void *smptr)
-{
-	return fbr_arg_v_cb(smptr, fiber_arg_sm_use_cb);
-}

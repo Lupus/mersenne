@@ -25,7 +25,7 @@
 #include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
 
-void clt_fiber(struct fbr_context *fiber_context);
+void clt_fiber(struct fbr_context *fiber_context, void *_arg);
 
 #endif
 

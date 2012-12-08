@@ -54,8 +54,10 @@ struct learner_context {
 	uint64_t first_non_delivered;
 	uint64_t highest_seen;
 	struct lea_instance *instances;
-	struct fbr_fiber *owner;
 	struct me_context *mctx;
+	struct lea_fiber_arg *arg;
+	struct fbr_buffer *buffer;
+	struct fiber_tailq_i item;
 };
 
 static inline struct lea_instance * get_instance(struct learner_context *context, uint64_t iid)
@@ -100,6 +102,9 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
                lea_instance *instance)
 {
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
+	struct lea_instance_info *info;
+	struct fbr_buffer *buffer = context->arg->buffer;
+
 	assert(LIS_CLOSED == instance->state);
 	if(log_level_match(LL_DEBUG)) {
 		snprintf(buf, instance->v->size1 + 1, "%s", instance->v->ptr);
@@ -108,14 +113,14 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
 				instance->iid, instance->b, buf,
 				instance->v->size1);
 	}
-       fbr_call(&mctx->fbr, context->owner, 3,
-		       fbr_arg_i(FAT_PXS_DELIVERED_VALUE),
-		       fbr_arg_i(instance->iid),
-		       fiber_arg_vsm(instance->v)
-	       );
-       instance->state = LIS_DELIVERED;
+	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
+			sizeof(struct lea_instance_info));
+	info->iid = instance->iid;
+	info->buffer = sm_in_use(instance->v);
+	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
+	instance->state = LIS_DELIVERED;
 #ifdef WINDOW_DUMP
-       print_window(ME_A_ context);
+	print_window(ME_A_ context);
 #endif
 }
 
@@ -247,63 +252,85 @@ static void do_last_accepted(ME_P_ struct learner_context *context, struct
 	retransmit_window(ME_A_ context);
 }
 
-void lea_fiber(struct fbr_context *fiber_context)
+void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
+		void *context)
 {
-	struct me_context *mctx;
-	struct me_message *msg;
-	struct me_peer *from;
-	struct me_paxos_message *pmsg;
-	struct fbr_call_info *info = NULL;
-	struct buffer *buf;
+	struct me_context *mctx = context;
+	struct learner_context *lcontext = ptr;
+	TAILQ_REMOVE(&mctx->learners, &lcontext->item, entries);
+	fbr_buffer_free(&mctx->fbr, lcontext->buffer);
+}
+
+static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
+{
 	int i;
-	struct lea_instance *instance;
 	int nbits;
-	struct learner_context context;
+	struct lea_instance *instance;
+	struct learner_context *context;
 
-	mctx = container_of(fiber_context, struct me_context, fbr);
 	nbits = peer_count(ME_A);
-	fbr_next_call_info(&mctx->fbr, &info);
-	fbr_assert(&mctx->fbr, 1 == info->argc);
-	context.first_non_delivered = info->argv[0].i;
-	context.owner = info->caller;
-	context.mctx = mctx;
+	context = fbr_alloc(&mctx->fbr, sizeof(struct learner_context));
+	fbr_alloc_set_destructor(&mctx->fbr, context, lea_context_destructor,
+			mctx);
+	context->first_non_delivered = arg->starting_iid;
+	context->mctx = mctx;
+	context->arg = arg;
 
-	fbr_subscribe(&mctx->fbr, FMT_LEARNER);
+	context->buffer = fbr_buffer_create(&mctx->fbr, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), context->buffer);
 
-	context.instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW * sizeof(struct lea_instance));
-	context.highest_seen = context.first_non_delivered;
+	context->item.id = fbr_self(&mctx->fbr);
+	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
+
+	context->instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW *
+			sizeof(struct lea_instance));
+	context->highest_seen = context->first_non_delivered;
 
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
-		instance = context.instances + i;
+		instance = context->instances + i;
 		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
 		instance->state = LIS_WAITING;
 		bm_init(instance->acks, nbits);
 		instance->v = NULL;
 	}
 
-start:
-	fbr_yield(&mctx->fbr);
-	while(fbr_next_call_info(&mctx->fbr, &info)) {
-		fbr_assert(&mctx->fbr, FAT_ME_MESSAGE == info->argv[0].i);
-		msg = info->argv[1].v;
-		from = info->argv[2].v;
+	return context;
+}
 
-		pmsg = &msg->me_message_u.paxos_message;
+void lea_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct me_paxos_message *pmsg;
+	struct buffer *buf;
+	struct learner_context *context;
+	struct fbr_buffer *fb;
+	struct msg_info *info;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	context = init_context(ME_A_ _arg);
+	fb = context->buffer;
+
+	for(;;) {
+		info = fbr_buffer_read_address(&mctx->fbr, fb,
+				sizeof(struct msg_info));
+
+		pmsg = &info->msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
-				buf = info->argv[3].v;
-				do_learn(ME_A_ &context, pmsg, buf, from);
-				sm_free(buf);
+				buf = info->buf;
+				do_learn(ME_A_ context, pmsg, buf, info->from);
+				sm_free(info->buf);
 				break;
 			case ME_PAXOS_LAST_ACCEPTED:
-				do_last_accepted(ME_A_ &context, pmsg, from);
+				do_last_accepted(ME_A_ context, pmsg, info->from);
 				break;
 			default:
 				errx(EXIT_FAILURE,
 						"wrong message type for learner: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
-		sm_free(msg);
+		sm_free(info->msg);
+
+		fbr_buffer_read_advance(&mctx->fbr, fb);
 	}
-	goto start;
 }
