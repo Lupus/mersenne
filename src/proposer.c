@@ -36,7 +36,6 @@
 #include <mersenne/bitmask.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
-#include <mersenne/log.h>
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -162,8 +161,8 @@ static void run_instance(ME_P_ struct pro_instance *instance, struct ie_base *ba
 static void switch_instance(ME_P_ struct pro_instance *instance, enum
 		instance_state state, struct ie_base *base)
 {
-	log(LL_DEBUG, "[PROPOSER] Switching instance %ld ballot %ld from state "
-			"%s to state %s transition %s\n",
+	fbr_log_d(&mctx->fbr, "Switching instance %ld ballot %ld from state "
+			"%s to state %s transition %s",
 			instance->iid,
 			instance->b,
 			strval_instance_state(instance->state),
@@ -239,8 +238,8 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 	data->me_paxos_msg_data_u.accept.b = instance->b;
 	data->me_paxos_msg_data_u.accept.v = instance->p2.v;
 	assert(data->me_paxos_msg_data_u.accept.v->size1 > 0);
-	log(LL_DEBUG, "[PROPOSER] Sending accepts for instance #%lu at ballot "
-			"#%lu\n", instance->iid, instance->b);
+	fbr_log_d(&mctx->fbr, "Sending accepts for instance #%lu at ballot "
+			"#%lu", instance->iid, instance->b);
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
@@ -270,15 +269,15 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
-			log(LL_DEBUG, "[PROPOSER] Processing promise for instance %lu at vb %lu "
-					"from peer #%d\n", p->data->i,
+			fbr_log_d(&mctx->fbr, "Processing promise for instance %lu at vb %lu "
+					"from peer #%d", p->data->i,
 					p->data->vb, p->from->index);
 			if(p->data->v && p->data->vb > instance->p1.vb) {
 				if(instance->p1.v) sm_free(instance->p1.v);
 				instance->p1.v = buf_sm_steal(p->data->v);
 				instance->p1.vb = p->data->vb;
-				log(LL_DEBUG, "[PROPOSER] Found safe value for instance "
-						"%lu at vb %lu\n", p->data->i,
+				fbr_log_d(&mctx->fbr, "Found safe value for instance "
+						"%lu at vb %lu", p->data->i,
 						p->data->vb);
 			}
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
@@ -299,8 +298,8 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			}
 			break;
 		case IE_TO:
-			log(LL_DEBUG, "[PROPOSER] Phase 1 timeout for instance "
-					"#%lu at ballot #%lu\n", instance->iid,
+			fbr_log_d(&mctx->fbr, "Phase 1 timeout for instance "
+					"#%lu at ballot #%lu", instance->iid,
 					instance->b);
 			bm_clear_all(instance->p1.acks);
 			b = decode_ballot(ME_A_ instance->b);
@@ -389,7 +388,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_TO:
-			log(LL_DEBUG, "[PROPOSER] Phase 2 timeout for instance #%lu at ballot #%lu\n", instance->iid, instance->b);
+			fbr_log_d(&mctx->fbr, "Phase 2 timeout for instance #%lu at ballot #%lu", instance->iid, instance->b);
 			switch_instance(ME_A_ instance,
 					IS_P1_PENDING,
 					base);
@@ -434,12 +433,12 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_promise_data *data;
 	struct ie_p p;
 	data = &pmsg->data.me_paxos_msg_data_u.promise;
-	log(LL_DEBUG, "[PROPOSER] Got promise for instance %lu at vb %lu "
-			"from peer #%d\n", data->i,
+	fbr_log_d(&mctx->fbr, "Got promise for instance %lu at vb %lu "
+			"from peer #%d", data->i,
 			data->vb, from->index);
 	if(data->i < mctx->pxs.pro.lowest_non_closed) {
-		log(LL_DEBUG, "[PROPOSER] Promise discarded as %lu < %lu "
-				"(lowest non closed)\n",
+		fbr_log_d(&mctx->fbr, "Promise discarded as %lu < %lu "
+				"(lowest non closed)",
 				data->i,
 				mctx->pxs.pro.lowest_non_closed);
 		return;

@@ -28,7 +28,6 @@
 #include <mersenne/proposer.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/sharedmem.h>
-#include <mersenne/log.h>
 
 static inline int acceptor_predicate(struct me_peer *peer, void *context)
 {
@@ -112,7 +111,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
 		if(NULL == fb) {
 			assert(FBR_ENOFIBER == mctx->fbr.f_errno);
-			log(LL_ALERT, "proposer not found\n");
+			fbr_log_e(&mctx->fbr, "proposer not found");
 			abort();
 		}
 		pro_msg = fbr_buffer_alloc_prepare(&mctx->fbr, fb,

@@ -47,7 +47,6 @@
 #include <mersenne/client.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/cmdline.h>
-#include <mersenne/log.h>
 
 #define LISTEN_BACKLOG 50
 
@@ -95,13 +94,13 @@ static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sock
 	XDR xdrs;
 
 	if(addr->sa_family != AF_INET) {
-		log(LL_WARNING, "unsupported address family: %d\n", (addr->sa_family));
+		fbr_log_w(&mctx->fbr, "unsupported address family: %d", (addr->sa_family));
 		return;
 	}
 
 	p = find_peer(ME_A_ (struct sockaddr_in *)addr);
 	if(!p) {
-		log(LL_WARNING, "got message from unknown peer --- ignoring\n");
+		fbr_log_w(&mctx->fbr, "got message from unknown peer --- ignoring");
 		return;
 	}
 
@@ -169,36 +168,27 @@ static void set_up_client_socket(ME_P)
 
 static void setup_logging(ME_P)
 {
-	enum log_level log_level;
+	enum fbr_log_level log_level;
 	switch(mctx->args_info.log_level_arg) {
-		case log_level_arg_emerg:
-			log_level = LL_EMERG;
-			break;
-		case log_level_arg_alert:
-			log_level = LL_ALERT;
-			break;
-		case log_level_arg_crit:
-			log_level = LL_CRIT;
-			break;
-		case log_level_arg_err:
-			log_level = LL_ERR;
+		case log_level_arg_error:
+			log_level = FBR_LOG_ERROR;
 			break;
 		case log_level_arg_warning:
-			log_level = LL_WARNING;
+			log_level = FBR_LOG_WARNING;
 			break;
 		case log_level_arg_notice:
-			log_level = LL_NOTICE;
+			log_level = FBR_LOG_NOTICE;
 			break;
 		case log_level_arg_info:
-			log_level = LL_INFO;
+			log_level = FBR_LOG_INFO;
 			break;
 		case log_level_arg_debug:
-			log_level = LL_DEBUG;
+			log_level = FBR_LOG_DEBUG;
 			break;
 		case log_level__NULL:
 			errx(EXIT_FAILURE, "invalid log level");
 	}
-	log_set_level(log_level);
+	fbr_set_log_level(&mctx->fbr, log_level);
 }
 
 static void sigint_cb (EV_P_ ev_signal *w, int revents)
@@ -281,6 +271,7 @@ int main(int argc, char *argv[])
 
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
+	fbr_init(&mctx->fbr, mctx->loop);
 	TAILQ_INIT(&mctx->learners);
 
 	setup_logging(ME_A);
@@ -301,7 +292,6 @@ int main(int argc, char *argv[])
 	ev_signal_start(mctx->loop, &sighup_watcher);
 	signal(SIGPIPE, SIG_IGN);
 
-	fbr_init(&mctx->fbr, mctx->loop);
 	pxs_fiber_init(ME_A);
 
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
@@ -316,12 +306,12 @@ int main(int argc, char *argv[])
 	snprintf(profile_filename, sizeof(profile_filename), "cpu_profile.%d",
 			mctx->me->index);
 	ProfilerStart(profile_filename);
-	log(LL_INFO, "Starting main loop (cpu profiling is ON)\n");
+	fbr_log_i(&mctx->fbr, "Starting main loop (cpu profiling is ON)");
 #else
-	log(LL_INFO, "Starting main loop\n");
+	fbr_log_i(&mctx->fbr, "Starting main loop");
 #endif
 	ev_loop(context.loop, 0);
-	log(LL_INFO, "Exiting\n");
+	fbr_log_i(&mctx->fbr, "Exiting");
 #if _USE_PROFILER
 	ProfilerStop();
 #endif

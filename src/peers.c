@@ -99,9 +99,9 @@ void load_peer_list(ME_P_ int my_index)
 			p->pxs.is_acceptor = 1;
 		if(i == my_index) {
 			mctx->me = p;
-			printf("My ip is %s\n", line_buf);
+			fbr_log_i(&mctx->fbr, "My ip is %s", line_buf);
 			if(p->pxs.is_acceptor)
-				printf("I am an acceptor\n");
+				fbr_log_i(&mctx->fbr, "I am an acceptor");
 		}
 		add_peer(ME_A_ p);
 		i++;

@@ -31,7 +31,6 @@
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
-#include <mersenne/log.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 //#define WINDOW_DUMP
@@ -106,10 +105,10 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
 	struct fbr_buffer *buffer = context->arg->buffer;
 
 	assert(LIS_CLOSED == instance->state);
-	if(log_level_match(LL_DEBUG)) {
+	if(fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
 		snprintf(buf, instance->v->size1 + 1, "%s", instance->v->ptr);
-		log(LL_DEBUG, "[LEARNER] Instance #%ld is delivered at ballot "
-				"#%ld vith value ``%s'' size %d\n",
+		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
+				"#%ld vith value ``%s'' size %d",
 				instance->iid, instance->b, buf,
 				instance->v->size1);
 	}
@@ -134,8 +133,8 @@ static void send_retransmit(ME_P_ struct learner_context *context, uint64_t
 	data->me_paxos_msg_data_u.retransmit.from = from;
 	data->me_paxos_msg_data_u.retransmit.to = to;
 	pxs_send_acceptors(ME_A_ &msg);
-	log(LL_DEBUG, "[LEARNER] requesting retransmits from %lu to %lu,"
-			" highest seen is %lu\n", from, to,
+	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu,"
+			" highest seen is %lu", from, to,
 			context->highest_seen);
 }
 
@@ -190,7 +189,7 @@ static void try_deliver(ME_P_ struct learner_context *context)
 	}
 	if(j < LEA_INSTANCE_WINDOW)
 		return;
-	log(LL_DEBUG, "[LEARNER] while window is in wait, requesting retransmit\n");
+	fbr_log_d(&mctx->fbr, "while window is in wait, requesting retransmit");
 	retransmit_window(ME_A_ context);
 }
 
@@ -209,9 +208,9 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	if(data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		if(data->i > context->highest_seen)
 			context->highest_seen = data->i;
-		log(LL_DEBUG, "[LEARNER] value out of instance windows, discarding\n");
-		log(LL_DEBUG, "[LEARNER] data->i == %lu while "
-				"context->first_non_delivered == %lu\n", data->i,
+		fbr_log_d(&mctx->fbr, "value out of instance windows, discarding");
+		fbr_log_d(&mctx->fbr, "data->i == %lu while "
+				"context->first_non_delivered == %lu", data->i,
 				context->first_non_delivered);
 		return;
 	}

@@ -23,7 +23,6 @@
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/sharedmem.h>
-#include <mersenne/log.h>
 
 static inline int p_peer(struct me_peer *peer, void *context)
 {
@@ -60,12 +59,11 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(!predicate(p, context))
 			continue;
-		//printf("Sending predicated msg to %d\n", p->index);
 		retval = sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
 		if (retval < size)
-			log(LL_NOTICE, "message got truncated from %d to %d while sending", size, retval);
+			fbr_log_n(&mctx->fbr, "message got truncated from %d to %d while sending", size, retval);
 	}
 	xdr_destroy(&xdrs);
 }

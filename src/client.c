@@ -28,7 +28,6 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
 #include <mersenne/sharedmem.h>
-#include <mersenne/log.h>
 
 static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
@@ -44,7 +43,7 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	msg.cl_message_u.learned_value.value = buffer;
 	xdrmem_create(&xdrs, buf, ME_MAX_XDR_MESSAGE_LEN, XDR_ENCODE);
 	if(!xdr_cl_message(&xdrs, &msg)) {
-		log(LL_WARNING, "[CLIENT] xdr_cl_message: unable to encode\n");
+		fbr_log_w(&mctx->fbr, "xdr_cl_message: unable to encode");
 		retval = -1;
 		goto finish;
 	}
@@ -54,13 +53,13 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	send_size = htons(size);
 	retval = fbr_write_all(&mctx->fbr, fd, &send_size, sizeof(uint16_t));
 	if(-1 == retval) {
-		log(LL_WARNING, "[CLIENT] fbr_write_all: %s\n",
+		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
 				strerror(errno));
 		goto finish;
 	}
 	retval = fbr_write_all(&mctx->fbr, fd, buf, size);
 	if(-1 == retval) {
-		log(LL_WARNING, "[CLIENT] fbr_write_all: %s\n",
+		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
 				strerror(errno));
 		goto finish;
 	}
@@ -98,7 +97,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 		fbr_buffer_read_advance(&mctx->fbr, lea_arg.buffer);
 
 		if(-1 == retval)
-			log(LL_WARNING, "[CLIENT] informing of a client has"
+			fbr_log_w(&mctx->fbr, "informing of a client has"
 					" failed");
 	}
 }
@@ -123,28 +122,28 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 			client_informer_fiber, &fd, 0);
 	fbr_transfer(&mctx->fbr, informer);
 
-	log(LL_INFO, "[CLIENT] Connection fiber has started\n");
+	fbr_log_i(&mctx->fbr, "Connection fiber has started");
 	for(;;) {
 		retval = fbr_read_all(&mctx->fbr, fd, &size, sizeof(uint16_t));
 		if(-1 == retval) {
-			log(LL_WARNING, "fbr_read_all: %s\n", strerror(errno));
+			fbr_log_w(&mctx->fbr, "fbr_read_all: %s", strerror(errno));
 			goto conn_finish;
 		}
 		if(retval < sizeof(uint16_t)) {
-			log(LL_DEBUG, "[CLIENT] fbr_read_all returned less "
-					"bytes (%lu) than expected (%lu)\n",
+			fbr_log_d(&mctx->fbr, "fbr_read_all returned less "
+					"bytes (%lu) than expected (%lu)",
 					retval, sizeof(uint16_t));
 			goto conn_finish;
 		}
 		size = ntohs(size);
 		retval = fbr_read_all(&mctx->fbr, fd, buf, size);
 		if(-1 == retval) {
-			log(LL_WARNING, "[CLIENT] fbr_read_all: %s\n", strerror(errno));
+			fbr_log_w(&mctx->fbr, "fbr_read_all: %s", strerror(errno));
 			goto conn_finish;
 		}
 		if(retval < size) {
-			log(LL_DEBUG, "[CLIENT] fbr_read_all returned less "
-					"bytes (%lu) than expected (%hu)\n",
+			fbr_log_d(&mctx->fbr, "fbr_read_all returned less "
+					"bytes (%lu) than expected (%hu)",
 					retval, size);
 			goto conn_finish;
 		}
@@ -152,19 +151,19 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		xdrmem_create(&xdrs, buf, size, XDR_DECODE);
 		memset(&msg, 0, sizeof(msg));
 		if(!xdr_cl_message(&xdrs, &msg)) {
-			log(LL_WARNING, "[CLIENT] xdr_cl_message: unable to decode\n");
+			fbr_log_w(&mctx->fbr, "xdr_cl_message: unable to decode");
 			xdr_destroy(&xdrs);
 			goto conn_finish;
 		}
 		if(CL_NEW_VALUE != msg.type) {
-			log(LL_DEBUG, "[CLIENT] msg.type (%d) != CL_NEW_VALUE\n", msg.type);
+			fbr_log_d(&mctx->fbr, "msg.type (%d) != CL_NEW_VALUE", msg.type);
 			goto conn_finish;
 		}
 		value = buf_sm_steal(msg.cl_message_u.new_value.value);
-		if(log_level_match(LL_DEBUG)) {
+		if(fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
 			memcpy(buf, value->ptr, value->size1);
 			buf[value->size1] = '\0';
-			log(LL_DEBUG, "[CLIENT] Got value: ``%s''\n", buf);
+			fbr_log_d(&mctx->fbr, "Got value: ``%s''", buf);
 		}
 		pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
 		assert(NULL != pro_buf);
@@ -178,7 +177,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		xdr_destroy(&xdrs);
 	}
 conn_finish:
-	log(LL_INFO, "[CLIENT] Connection fiber has finished\n");
+	fbr_log_i(&mctx->fbr, "Connection fiber has finished");
 	close(fd);
 }
 
