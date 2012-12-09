@@ -82,7 +82,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	lea_arg.buffer = fbr_buffer_create(&mctx->fbr, 1);
 	lea_arg.starting_iid = 0;
-	learner = fbr_create(&mctx->fbr, "client/informer/learner", lea_fiber,
+	learner = fbr_create(&mctx->fbr, "informer/learner", lea_fiber,
 			&lea_arg, 0);
 	retval = fbr_transfer(&mctx->fbr, learner);
 	assert(0 == retval);
@@ -118,7 +118,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	informer = fbr_create(&mctx->fbr, "client/informer",
+	informer = fbr_create(&mctx->fbr, "informer",
 			client_informer_fiber, &fd, 0);
 	fbr_transfer(&mctx->fbr, informer);
 
@@ -196,7 +196,7 @@ void clt_fiber(struct fbr_context *fiber_context, void *_arg)
 				(struct	sockaddr *)&addr, &addrlen);
 		if(-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed");
-		fiber = fbr_create(&mctx->fbr, "client_fiber",
+		fiber = fbr_create(&mctx->fbr, "client",
 				connection_fiber, &sockfd, 0);
 		fbr_transfer(&mctx->fbr, fiber);
 	}

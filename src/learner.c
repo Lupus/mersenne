@@ -68,32 +68,31 @@ static inline struct lea_instance * get_instance(struct learner_context *context
 #ifdef WINDOW_DUMP
 static void print_window(ME_P_ struct learner_context *context)
 {
-       int j;
-       int hw;
-       struct lea_instance *instance;
-       char buf[LEA_INSTANCE_WINDOW + 1];
-       char *ptr = buf;
-       fprintf(stderr, "%lu\t", context->first_non_delivered);
-       for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
-               instance = context->instances + j;
-	       switch(instance->state) {
-		       case LIS_WAITING:
-			       hw = bm_hweight(instance->acks);
-			       if(hw)
-				       snprintf(ptr++, 2, "%d", hw);
-			       else
-				       *ptr++ = '.';
-			       break;
-		       case LIS_CLOSED:
-			       *ptr++ = 'X';
-			       break;
-		       case LIS_DELIVERED:
-			       *ptr++ = 'D';
-			       break;
-	       }
-       }
-       *ptr++ = '\0';
-       fprintf(stderr, "%s\n", buf);
+	int j;
+	int hw;
+	struct lea_instance *instance;
+	char buf[LEA_INSTANCE_WINDOW + 1];
+	char *ptr = buf;
+	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
+		instance = context->instances + j;
+		switch(instance->state) {
+		case LIS_WAITING:
+			hw = bm_hweight(instance->acks);
+			if(hw)
+				snprintf(ptr++, 2, "%d", hw);
+			else
+				*ptr++ = '.';
+			break;
+		case LIS_CLOSED:
+			*ptr++ = 'X';
+			break;
+		case LIS_DELIVERED:
+			*ptr++ = 'D';
+			break;
+		}
+	}
+	*ptr++ = '\0';
+	fbr_log_d(&mctx->fbr, "%lu\t%s", context->first_non_delivered, buf);
 }
 #endif
 
@@ -149,7 +148,7 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 		instance = get_instance(context, i);
 		if(collecting_gap) {
 			if(LIS_WAITING != instance->state) {
-				send_retransmit(ME_A_ context, from, i - 1);
+				send_retransmit(ME_A_ context, from, i);
 				collecting_gap = 0;
 			}
 
@@ -160,6 +159,8 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 		if(i == context->highest_seen)
 			break;
 	}
+	if(collecting_gap)
+		send_retransmit(ME_A_ context, from, i);
 }
 
 static void try_deliver(ME_P_ struct learner_context *context)

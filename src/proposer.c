@@ -688,7 +688,7 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	proposer_init(ME_A);
 
 	lea_arg.buffer = lea_fb;
-	lea_arg.starting_iid = 1;
+	lea_arg.starting_iid = 0;
 	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
 
