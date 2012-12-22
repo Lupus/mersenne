@@ -33,25 +33,19 @@
 #include <mersenne/sharedmem.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
-//#define WINDOW_DUMP
-
-enum lea_instance_state {
-	LIS_WAITING = 0,
-	LIS_CLOSED,
-	LIS_DELIVERED,
-};
 
 struct lea_instance {
 	uint64_t iid;
 	uint64_t b;
 	struct buffer *v;
 	struct bm_mask *acks;
-	enum lea_instance_state state;
+	int closed;
 };
 
 struct learner_context {
 	uint64_t first_non_delivered;
 	uint64_t highest_seen;
+	uint64_t next_retransmit;
 	struct lea_instance *instances;
 	struct me_context *mctx;
 	struct lea_fiber_arg *arg;
@@ -59,7 +53,8 @@ struct learner_context {
 	struct fiber_tailq_i item;
 };
 
-static inline struct lea_instance * get_instance(struct learner_context *context, uint64_t iid)
+static inline struct lea_instance * get_instance(struct learner_context
+		*context, uint64_t iid)
 {
 	struct me_context *mctx = context->mctx;
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
@@ -74,21 +69,15 @@ static void print_window(ME_P_ struct learner_context *context)
 	char buf[LEA_INSTANCE_WINDOW + 1];
 	char *ptr = buf;
 	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
-		instance = context->instances + j;
-		switch(instance->state) {
-		case LIS_WAITING:
+		instance = context->instances +j;
+		if(instance->closed) {
+			*ptr++ = 'X';
+		} else {
 			hw = bm_hweight(instance->acks);
 			if(hw)
 				snprintf(ptr++, 2, "%d", hw);
 			else
 				*ptr++ = '.';
-			break;
-		case LIS_CLOSED:
-			*ptr++ = 'X';
-			break;
-		case LIS_DELIVERED:
-			*ptr++ = 'D';
-			break;
 		}
 	}
 	*ptr++ = '\0';
@@ -97,13 +86,12 @@ static void print_window(ME_P_ struct learner_context *context)
 #endif
 
 static void do_deliver(ME_P_ struct learner_context *context, struct
-               lea_instance *instance)
+		lea_instance *instance)
 {
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct lea_instance_info *info;
 	struct fbr_buffer *buffer = context->arg->buffer;
 
-	assert(LIS_CLOSED == instance->state);
 	if(fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
 		snprintf(buf, instance->v->size1 + 1, "%s", instance->v->ptr);
 		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
@@ -116,14 +104,9 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
 	info->iid = instance->iid;
 	info->buffer = sm_in_use(instance->v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
-	instance->state = LIS_DELIVERED;
-#ifdef WINDOW_DUMP
-	print_window(ME_A_ context);
-#endif
 }
 
-static void send_retransmit(ME_P_ struct learner_context *context, uint64_t
-		from, uint64_t to)
+static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
@@ -132,66 +115,39 @@ static void send_retransmit(ME_P_ struct learner_context *context, uint64_t
 	data->me_paxos_msg_data_u.retransmit.from = from;
 	data->me_paxos_msg_data_u.retransmit.to = to;
 	pxs_send_acceptors(ME_A_ &msg);
-	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu,"
-			" highest seen is %lu", from, to,
-			context->highest_seen);
 }
 
-static void retransmit_window(ME_P_ struct learner_context *context)
+static void retransmit_next_window(ME_P_ struct learner_context *context)
 {
-	uint64_t i, j;
-	uint64_t start = context->first_non_delivered;
-	uint64_t from = 0;
-	struct lea_instance *instance;
-	int collecting_gap = 0;
-	for(i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
-		instance = get_instance(context, i);
-		if(collecting_gap) {
-			if(LIS_WAITING != instance->state) {
-				send_retransmit(ME_A_ context, from, i);
-				collecting_gap = 0;
-			}
-
-		} else if(LIS_WAITING == instance->state) {
-			from = i;
-			collecting_gap = 1;
-		}
-		if(i == context->highest_seen)
-			break;
-	}
-	if(collecting_gap)
-		send_retransmit(ME_A_ context, from, i);
+	context->next_retransmit = min(
+		context->first_non_delivered + LEA_INSTANCE_WINDOW,
+		context->highest_seen);
+	send_retransmit(ME_A_ context->first_non_delivered,
+			min(context->highest_seen, context->next_retransmit));
+	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu, highest seen is %lu",
+		context->first_non_delivered, context->next_retransmit,
+		context->highest_seen);
 }
 
 static void try_deliver(ME_P_ struct learner_context *context)
 {
-	uint64_t i;
-	int j;
+	int i, j;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for(j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(context, i);
-		assert(LIS_DELIVERED != instance->state);
-		if(LIS_WAITING == instance->state)
-			break;
+		if(!instance->closed)
+			return;
 		do_deliver(ME_A_ context, instance);
-		instance->state = LIS_WAITING;
+		context->first_non_delivered = i + 1;
+
+		instance->closed = 0;
 		bm_init(instance->acks, peer_count(ME_A));
 		sm_free(instance->v);
 		instance->v = NULL;
-		instance->iid = i + LEA_INSTANCE_WINDOW;
-		context->first_non_delivered = i + 1;
+		if(context->first_non_delivered == context->next_retransmit)
+			retransmit_next_window(ME_A_ context);
 	}
-	return;
-	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
-		if(LIS_WAITING != context->instances[j].state) {
-			break;
-		}
-	}
-	if(j < LEA_INSTANCE_WINDOW)
-		return;
-	fbr_log_d(&mctx->fbr, "while window is in wait, requesting retransmit");
-	retransmit_window(ME_A_ context);
 }
 
 static void do_learn(ME_P_ struct learner_context *context, struct
@@ -217,8 +173,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	}
 
 	instance = get_instance(context, data->i);
-	assert(LIS_DELIVERED != instance->state);
-	if(LIS_CLOSED == instance->state)
+	if(instance->closed)
 		return;
 	if(NULL == instance->v) {
 		instance->iid = data->i;
@@ -234,7 +189,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	bm_set_bit(instance->acks, from->index, 1);
 	num = bm_hweight(instance->acks);
 	if(pxs_is_acc_majority(ME_A_ num)) {
-		instance->state = LIS_CLOSED;
+		instance->closed = 1;
 		try_deliver(ME_A_ context);
 	}
 }
@@ -247,9 +202,11 @@ static void do_last_accepted(ME_P_ struct learner_context *context, struct
 	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
 	if(data->i < context->first_non_delivered)
 		return;
-	if(data->i > context->highest_seen)
-		context->highest_seen = data->i;
-	retransmit_window(ME_A_ context);
+	if(data->i > context->first_non_delivered) {
+		if(data->i > context->highest_seen)
+			context->highest_seen = data->i;
+		retransmit_next_window(ME_A_ context);
+	}
 }
 
 void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
@@ -281,7 +238,7 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 
 	context->item.id = fbr_self(&mctx->fbr);
 	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
-
+	context->next_retransmit = ~0UL; // "infinity"
 	context->instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW *
 			sizeof(struct lea_instance));
 	context->highest_seen = context->first_non_delivered;
@@ -289,7 +246,7 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
 		instance = context->instances + i;
 		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
-		instance->state = LIS_WAITING;
+		instance->closed = 0;
 		bm_init(instance->acks, nbits);
 		instance->v = NULL;
 	}
