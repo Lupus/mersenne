@@ -271,14 +271,18 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		info = fbr_buffer_read_address(&mctx->fbr, fb,
 				sizeof(struct msg_info));
 
+		fbr_log_d(&mctx->fbr, "got something on my buffer");
+
 		pmsg = &info->msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
 				buf = info->buf;
+				fbr_log_d(&mctx->fbr, "got learn message");
 				do_learn(ME_A_ context, pmsg, buf, info->from);
 				sm_free(info->buf);
 				break;
 			case ME_PAXOS_LAST_ACCEPTED:
+				fbr_log_d(&mctx->fbr, "got last accepted message");
 				do_last_accepted(ME_A_ context, pmsg, info->from);
 				break;
 			default:
@@ -287,6 +291,7 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
 		sm_free(info->msg);
+		fbr_log_d(&mctx->fbr, "freed incoming message");
 
 		fbr_buffer_read_advance(&mctx->fbr, fb);
 	}

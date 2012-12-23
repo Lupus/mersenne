@@ -185,7 +185,7 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 	uint16_t size;
 	XDR xdrs;
 	struct buffer *value;
-	//char str_buf[ME_MAX_XDR_MESSAGE_LEN];
+	char str_buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 
@@ -207,11 +207,11 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 		if(CL_LEARNED_VALUE != msg.type)
 			errx(EXIT_FAILURE, "Mersenne has sent unexpected message");
 		value = msg.cl_message_u.learned_value.value;
-		/*
+
 		snprintf(str_buf, value->size1 + 1, "%s", value->ptr);
 		printf("Mersenne has closed an instance #%lu with value: ``%s''\n",
 				msg.cl_message_u.learned_value.i, str_buf);
-				*/
+
 		next_value(cc, value);
 		xdr_free((xdrproc_t)xdr_cl_message, (caddr_t)&msg);
 		xdr_destroy(&xdrs);

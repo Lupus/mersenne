@@ -20,9 +20,14 @@
  ********************************************************************/
 
 #include <err.h>
+#include <arpa/inet.h>
+#include <stdio.h>
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/me_protocol.h>
+#include <mersenne/me_protocol.strenum.h>
+#include <mersenne/util.h>
 
 static inline int p_peer(struct me_peer *peer, void *context)
 {
@@ -42,6 +47,152 @@ static inline int p_all(struct me_peer *peer, void *context)
 void msg_send_all(ME_P_ struct me_message *msg)
 {
 	msg_send_matching(ME_A_ msg, &p_all, NULL);
+}
+
+static void format_buffer(struct buffer *buffer, char *out, size_t out_size)
+{
+	char tmp[8];
+	size_t size;
+	if (NULL == buffer) {
+		snprintf(out, out_size, "(null)");
+		return;
+	}
+	size = min(sizeof(tmp) - 1, buffer->size1);
+	memcpy(tmp, buffer->ptr, size);
+	tmp[size] = '\0';
+	snprintf(out, out_size, "{size=%u, ptr='%s'}", buffer->size1, tmp);
+}
+
+void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct sockaddr_in *addr)
+{
+	char *type, *subtype;
+	char str[INET_ADDRSTRLEN];
+	char *direction = dir ? ">>>>" : "<<<<";
+	char *data = NULL;
+	char buf[512];
+	int retval;
+	struct me_leader_message *lmsg;
+	struct me_paxos_message *pmsg;
+	if (!fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG))
+		return;
+	switch (msg->super_type) {
+	case ME_LEADER:
+		type = "LEADER";
+		lmsg = &msg->me_message_u.leader_message;
+		switch (lmsg->data.type) {
+		case ME_LEADER_OK:
+			subtype = "OK";
+			bm_displayhex(buf, sizeof(buf),
+					lmsg->data.me_leader_msg_data_u.ok.trust);
+			retval = asprintf(&data, "k = %d, trust=%s",
+					lmsg->data.me_leader_msg_data_u.ok.k,
+					buf);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_LEADER_START:
+			subtype = "START";
+			retval = asprintf(&data, "k = %d",
+					lmsg->data.me_leader_msg_data_u.round.k);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_LEADER_ACK:
+			subtype = "ACK";
+			retval = asprintf(&data, "k = %d",
+					lmsg->data.me_leader_msg_data_u.round.k);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		}
+		break;
+	case ME_PAXOS:
+		type = "PAXOS";
+		pmsg = &msg->me_message_u.paxos_message;
+		switch (pmsg->data.type) {
+		case ME_PAXOS_PREPARE:
+			subtype = "PREPARE";
+			retval = asprintf(&data, "i = %lu, b = %lu",
+					pmsg->data.me_paxos_msg_data_u.prepare.i,
+					pmsg->data.me_paxos_msg_data_u.prepare.b);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_PROMISE:
+			subtype = "PROMISE";
+			format_buffer(pmsg->data.me_paxos_msg_data_u.promise.v,
+					buf, sizeof(buf));
+			retval = asprintf(&data, "i = %lu, b = %lu, v=%s, vb=%lu",
+					pmsg->data.me_paxos_msg_data_u.promise.i,
+					pmsg->data.me_paxos_msg_data_u.promise.b,
+					buf,
+					pmsg->data.me_paxos_msg_data_u.promise.vb);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_ACCEPT:
+			subtype = "ACCEPT";
+			format_buffer(pmsg->data.me_paxos_msg_data_u.accept.v,
+					buf, sizeof(buf));
+			retval = asprintf(&data, "i = %lu, b = %lu, v=%s",
+					pmsg->data.me_paxos_msg_data_u.accept.i,
+					pmsg->data.me_paxos_msg_data_u.accept.b,
+					buf);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_REJECT:
+			subtype = "REJECT";
+			retval = asprintf(&data, "i = %lu, b = %lu",
+					pmsg->data.me_paxos_msg_data_u.reject.i,
+					pmsg->data.me_paxos_msg_data_u.reject.b);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_LAST_ACCEPTED:
+			subtype = "LAST_ACCEPTED";
+			retval = asprintf(&data, "i = %lu",
+					pmsg->data.me_paxos_msg_data_u.last_accepted.i);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_LEARN:
+			subtype = "LEARN";
+			format_buffer(pmsg->data.me_paxos_msg_data_u.learn.v,
+					buf, sizeof(buf));
+			retval = asprintf(&data, "i = %lu, b = %lu, v=%s",
+					pmsg->data.me_paxos_msg_data_u.learn.i,
+					pmsg->data.me_paxos_msg_data_u.learn.b,
+					buf);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_RETRANSMIT:
+			subtype = "RETRANSMIT";
+			retval = asprintf(&data, "from = %lu, to = %lu",
+					pmsg->data.me_paxos_msg_data_u.retransmit.from,
+					pmsg->data.me_paxos_msg_data_u.retransmit.to);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		case ME_PAXOS_CLIENT_VALUE:
+			subtype = "CLIENT_VALUE";
+			format_buffer(pmsg->data.me_paxos_msg_data_u.client_value.v,
+					buf, sizeof(buf));
+			retval = asprintf(&data, "v=%s", buf);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
+		}
+		break;
+	}
+	if (NULL == inet_ntop(AF_INET, &addr->sin_addr.s_addr, str, INET_ADDRSTRLEN))
+		err(EXIT_FAILURE, "inet_ntop failed");
+	if (NULL == data)
+		data = strdup("(null)");
+	fbr_log_d(&mctx->fbr, "%s message of type %s (%s) to %s {%s}",
+			direction, type, subtype, str, data);
+	free(data);
 }
 
 void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
@@ -64,6 +215,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 			err(EXIT_FAILURE, "failed to send message");
 		if (retval < size)
 			fbr_log_n(&mctx->fbr, "message got truncated from %d to %d while sending", size, retval);
+		msg_dump(ME_A_ msg, 1, &p->addr);
 	}
 	xdr_destroy(&xdrs);
 }

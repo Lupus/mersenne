@@ -33,8 +33,14 @@ struct msg_info {
 	struct buffer *buf;
 };
 
+enum msg_direction {
+	MSG_DIR_RECEIVED = 0,
+	MSG_DIR_SENT = 1,
+};
+
 void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
 void msg_send_all(ME_P_ struct me_message *msg);
 void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context);
+void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct sockaddr_in *addr);
 
 #endif

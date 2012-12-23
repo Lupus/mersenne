@@ -63,6 +63,7 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 				strerror(errno));
 		goto finish;
 	}
+	fbr_log_d(&mctx->fbr, "informed client about instance %lu", iid);
 	retval = 0;
 finish:
 	sm_free(buffer);

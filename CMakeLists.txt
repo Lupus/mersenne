@@ -34,6 +34,8 @@ find_package(LibEVfibers REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 
+add_definitions(-D_GNU_SOURCE)
+
 option (USE_PROFILER "Use Google cpu profiling tool" OFF)
 if(USE_PROFILER)
 	set(PROFILER_LIBS "profiler")

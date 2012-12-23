@@ -63,6 +63,7 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 	struct me_message *msg;
 	struct fbr_buffer *fb;
 	struct msg_info *info;
+	struct me_paxos_message *pmsg;
 
 	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor,
 			NULL);
@@ -70,6 +71,8 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 	if(!xdr_me_message(xdrs, msg))
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a "
 				"message at %d", pos);
+
+	msg_dump(ME_A_ msg, MSG_DIR_RECEIVED, &from->addr);
 
 	switch(msg->super_type) {
 		case ME_LEADER:
@@ -81,6 +84,9 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 			fbr_buffer_alloc_commit(&mctx->fbr, fb);
 			break;
 		case ME_PAXOS:
+			pmsg = &msg->me_message_u.paxos_message;
+			if (pmsg->data.type == ME_PAXOS_LEARN)
+				fbr_log_d(&mctx->fbr, "received learn message on socket");
 			pxs_do_message(ME_A_ msg, from);
 			break;
 	}
