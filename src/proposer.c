@@ -272,7 +272,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			fbr_log_d(&mctx->fbr, "Processing promise for instance %lu at vb %lu "
 					"from peer #%d", p->data->i,
 					p->data->vb, p->from->index);
-			if(p->data->v && p->data->vb > instance->p1.vb) {
+			if (p->data->v && p->data->vb > instance->p1.vb) {
 				if(instance->p1.v) sm_free(instance->p1.v);
 				instance->p1.v = buf_sm_steal(p->data->v);
 				instance->p1.vb = p->data->vb;
@@ -282,7 +282,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			}
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			num = bm_hweight(instance->p1.acks);
-			if(pxs_is_acc_majority(ME_A_ num)) {
+			if (pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
 				if(NULL != instance->p1.v) {
 					new_base.type = IE_R1;
@@ -388,7 +388,9 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_TO:
-			fbr_log_d(&mctx->fbr, "Phase 2 timeout for instance #%lu at ballot #%lu", instance->iid, instance->b);
+			fbr_log_d(&mctx->fbr, "Phase 2 timeout for instance"
+					" #%lu at ballot #%lu", instance->iid,
+					instance->b);
 			switch_instance(ME_A_ instance,
 					IS_P1_PENDING,
 					base);
