@@ -11,38 +11,27 @@ case $1 in
 	clang)
 		export LD=/usr/bin/clang
 		export CC=/usr/bin/clang
-		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=Debug ..
-		;;
-	clang-prof)
-		export LD=/usr/bin/clang
-		export CC=/usr/bin/clang
-		cmake -DUSE_PROFILER=YES -DCMAKE_BUILD_TYPE=Debug ..
+		cmake -DCMAKE_BUILD_TYPE=Debug ..
 		;;
 	clang-release)
 		export LD=/usr/bin/clang
 		export CC=/usr/bin/clang
-		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+		cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 		;;
 	gcc)
 		export LD=/usr/bin/gcc
 		export CC=/usr/bin/gcc
-		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=Debug ..
-		;;
-	gcc-prof)
-		export LD=/usr/bin/gcc
-		export CC=/usr/bin/gcc
-		cmake -DUSE_PROFILER=YES -DCMAKE_BUILD_TYPE=Debug ..
+		cmake -DCMAKE_BUILD_TYPE=Debug ..
 		;;
 	gcc-release)
 		export LD=/usr/bin/gcc
 		export CC=/usr/bin/gcc
-		cmake -DUSE_PROFILER=NO -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+		cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 		;;
 	libevfibers)
 		export LD=/usr/bin/clang
 		export CC=/usr/bin/clang
-		cmake -DUSE_PROFILER=YES \
-			-DCMAKE_BUILD_TYPE=Debug \
+		cmake -DCMAKE_BUILD_TYPE=Debug \
 			-DLIBEVFIBERS_INCLUDE_PATH=~/git/libevfibers/include \
 			-DLIBEVFIBERS_LIBDIR=~/git/libevfibers/build \
 			..
