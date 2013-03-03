@@ -655,10 +655,11 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct lea_fiber_arg lea_arg;
 	struct fbr_ev_cond_var ev_fb;
 	struct fbr_ev_cond_var ev_lea_fb;
-	struct fbr_ev_base *ev;
 	struct proposer_context *proposer_context;
 	struct fbr_mutex *fb_mutex;
 	struct fbr_mutex *lea_fb_mutex;
+	struct fbr_ev_base *fb_events[3];
+	int n_events;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
@@ -691,25 +692,24 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	lea_arg.starting_iid = 0;
 	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
+	fb_events[0] = &ev_fb.ev_base;
+	fb_events[1] = &ev_lea_fb.ev_base;
+	fb_events[2] = NULL;
 
 	for(;;) {
 		fbr_mutex_lock(&mctx->fbr, fb_mutex);
 		fbr_mutex_lock(&mctx->fbr, lea_fb_mutex);
-		ev = fbr_ev_wait(&mctx->fbr, (struct fbr_ev_base*[]){
-				&ev_fb.ev_base,
-				&ev_lea_fb.ev_base,
-				NULL
-				});
-		if(ev == &ev_fb.ev_base) {
-			fbr_mutex_unlock(&mctx->fbr, fb_mutex);
+		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
+		if (!n_events)
+			continue;
+		if (ev_fb.ev_base.arrived) {
 			process_fb(ME_A_ fb);
-		} else {
-			assert(ev == &ev_lea_fb.ev_base);
-			fbr_mutex_unlock(&mctx->fbr, lea_fb_mutex);
-			process_lea_fb(ME_A_ lea_fb);
+			fbr_mutex_unlock(&mctx->fbr, fb_mutex);
 		}
-
-
+		if (ev_lea_fb.ev_base.arrived) {
+			process_lea_fb(ME_A_ lea_fb);
+			fbr_mutex_unlock(&mctx->fbr, lea_fb_mutex);
+		}
 	}
 }
 
