@@ -190,7 +190,7 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 		err(EXIT_FAILURE, "inet_ntop failed");
 	if (NULL == data)
 		data = strdup("(null)");
-	fbr_log_d(&mctx->fbr, "%s message of type %s (%s) to %s {%s}",
+	fbr_log_d(&mctx->fbr, "%s message of type %s (%s) addr %s {%s}",
 			direction, type, subtype, str, data);
 	free(data);
 }
