@@ -608,11 +608,18 @@ static void context_destructor(struct fbr_context *fiber_context, void *ptr,
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 {
 	struct lea_instance_info *instance_info;
-	instance_info = fbr_buffer_read_address(&mctx->fbr, lea_fb,
-			sizeof(struct lea_instance_info));
-	do_delivered_value(ME_A_ instance_info->iid, instance_info->buffer);
-	sm_free(instance_info->buffer);
-	fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+	size_t x;
+
+	for (;;) {
+		x = sizeof(struct lea_instance_info);
+		if (fbr_buffer_bytes(&mctx->fbr, lea_fb) < x)
+			return;
+		instance_info = fbr_buffer_read_address(&mctx->fbr, lea_fb, x);
+		do_delivered_value(ME_A_ instance_info->iid,
+				instance_info->buffer);
+		sm_free(instance_info->buffer);
+		fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+	}
 }
 
 static void process_fb(ME_P_ struct fbr_buffer *fb)
@@ -622,28 +629,38 @@ static void process_fb(ME_P_ struct fbr_buffer *fb)
 	struct pro_msg_me_message *pro_msg;
 	struct msg_info *msg_info;
 	struct pro_msg_client_value *pro_client;
-	base = fbr_buffer_read_address(&mctx->fbr, fb,
-			sizeof(struct pro_msg_base));
-	type = base->type;
-	fbr_buffer_read_discard(&mctx->fbr, fb);
-	switch(type) {
+	size_t x;
+
+	for (;;) {
+		x =  sizeof(struct pro_msg_base);
+		if (fbr_buffer_bytes(&mctx->fbr, fb) < x)
+			return;
+		base = fbr_buffer_read_address(&mctx->fbr, fb, x);
+		type = base->type;
+		fbr_buffer_read_discard(&mctx->fbr, fb);
+		switch(type) {
 		case PRO_MSG_ME_MESSAGE:
-			pro_msg = fbr_buffer_read_address(&mctx->fbr, fb,
-					sizeof(struct pro_msg_me_message));
+			x = sizeof(struct pro_msg_me_message);
+			if (fbr_buffer_bytes(&mctx->fbr, fb) < x)
+				return;
+			pro_msg = fbr_buffer_read_address(&mctx->fbr, fb, x);
 			msg_info = &pro_msg->info;
 			do_message(ME_A_ msg_info->msg, msg_info->from);
 			sm_free(msg_info->msg);
 			fbr_buffer_read_advance(&mctx->fbr, fb);
 			break;
 		case PRO_MSG_CLIENT_VALUE:
-			pro_client = fbr_buffer_read_address(&mctx->fbr, fb,
-					sizeof(struct pro_msg_client_value));
+			x = sizeof(struct pro_msg_client_value);
+			if (fbr_buffer_bytes(&mctx->fbr, fb) < x)
+				return;
+			pro_client = fbr_buffer_read_address(&mctx->fbr, fb, x);
 			do_client_value(ME_A_ pro_client->value);
 			sm_free(pro_client->value);
 			fbr_buffer_read_advance(&mctx->fbr, fb);
 			break;
 		default:
 			abort();
+		}
 	}
 }
 
