@@ -202,6 +202,9 @@ static void adjust_window(ME_P)
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if(IS_DELIVERED != instance->state)
 			return;
+	}
+	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		mctx->pxs.pro.lowest_non_closed = i + 1;
 		reclaim_instance(ME_A_ instance);
 	}
