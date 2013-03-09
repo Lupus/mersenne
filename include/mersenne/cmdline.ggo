@@ -14,6 +14,7 @@ option "proposer-timeout-1" - "Timeout for phase 1 (s)" double default="0.1" opt
 option "proposer-timeout-2" - "Timeout for phase 2 (s)" double default="0.1" optional
 option "proposer-queue-size" - "Size for pending value queue" int default="100" optional
 option "learner-instance-window" - "Instance window size for learner" int default="5" optional
+option "learner-retransmit-age" - "Instance retransmit age" double default="0.25" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
 option "acceptor-storage-module" - "Module that provides acceptor storage" string required
 option "acceptor-storage-options" - "Command line options for acceptor storage" string optional

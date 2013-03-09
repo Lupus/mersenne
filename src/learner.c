@@ -40,6 +40,7 @@ struct lea_instance {
 	struct buffer *v;
 	struct bm_mask *acks;
 	int closed;
+	ev_tstamp modified;
 };
 
 struct learner_context {
@@ -117,6 +118,15 @@ static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 	pxs_send_acceptors(ME_A_ &msg);
 }
 
+static ev_tstamp age(ME_P_ struct lea_instance *instance)
+{
+	ev_tstamp old_age = mctx->args_info.learner_retransmit_age_arg;
+	ev_tstamp age = ev_now(mctx->loop) - instance->modified +old_age;
+	if (age < 0)
+		return 0;
+	return 1;
+}
+
 static void retransmit_window(ME_P_ struct learner_context *context)
 {
 	uint64_t i, j;
@@ -132,11 +142,11 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 		}
 		instance = get_instance(context, i);
 		if (collecting_gap) {
-			if (instance->closed) {
+			if (instance->closed || !age(ME_A_ instance)) {
 				send_retransmit(ME_A_ from, i - 1);
 				collecting_gap = 0;
 			}
-		} else if(!instance->closed) {
+		} else if(!instance->closed || age(ME_A_ instance)) {
 			from = i;
 			collecting_gap = 1;
 		}
@@ -171,6 +181,7 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		bm_init(instance->acks, peer_count(ME_A));
 		sm_free(instance->v);
 		instance->v = NULL;
+		instance->modified = ev_now(mctx->loop);
 		if (context->first_non_delivered == context->next_retransmit)
 			retransmit_next_window(ME_A_ context);
 	}
@@ -212,7 +223,10 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		//assert(instance->b == data->b);
 		assert(0 == buf_cmp(instance->v, buf));
 	}
+	if (bm_get_bit(instance->acks, from->index))
+		return;
 	bm_set_bit(instance->acks, from->index, 1);
+	instance->modified = ev_now(mctx->loop);
 	num = bm_hweight(instance->acks);
 	if (pxs_is_acc_majority(ME_A_ num)) {
 		instance->closed = 1;
@@ -230,23 +244,41 @@ static void do_last_accepted(ME_P_ struct learner_context *context, struct
 		context->highest_seen = data->i;
 }
 
+static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
+{
+	uint64_t i, j;
+	uint64_t start = context->first_non_delivered;
+	struct lea_instance *instance;
+	ev_tstamp m = mctx->args_info.learner_retransmit_age_arg;
+	ev_tstamp instance_age;
+	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
+		if (i == context->highest_seen)
+			break;
+		instance = get_instance(context, i);
+		instance_age = age(ME_A_ instance);
+		if (instance_age < m)
+			m = instance_age;
+	}
+	return m;
+}
 static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 		void *_arg)
 {
 	struct me_context *mctx;
 	struct learner_context *context = _arg;
+	ev_tstamp next_aged;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	for (;;) {
-		fbr_sleep(&mctx->fbr, 0.5);
+		next_aged = min_window_age(ME_A_ context);
+		fbr_sleep(&mctx->fbr, next_aged);
 		if (context->highest_seen > context->first_non_delivered +
 				LEA_INSTANCE_WINDOW) {
 			fbr_log_i(&mctx->fbr, "learner is lagging behind,"
 					" highest seen: %zu, highest delivered:"
 					" %zu", context->highest_seen,
 					context->first_non_delivered - 1);
-			retransmit_window(ME_A_ context);
 			retransmit_next_window(ME_A_ context);
 		} else if(context->highest_seen > context->first_non_delivered) {
 			fbr_log_i(&mctx->fbr, "learner is out of sync, highest"
