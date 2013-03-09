@@ -131,6 +131,7 @@ int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 				r->v = buf_sm_steal(r->v);
 				free(tmp);
 			}
+			free(record);
 	}
 	*rptr = r;
 	return found;
