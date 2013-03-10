@@ -32,6 +32,7 @@
 #include <mersenne/sharedmem.h>
 
 static const char key[] = "highest_accepted";
+static const char key2[] = "highest_finalized";
 
 struct context {
 	TCHDB *db;
@@ -43,7 +44,8 @@ static bool_t xdr_instance_record(XDR *xdrs, struct acc_instance_record *record)
 		xdr_uint64_t(xdrs, &record->b) &&
 		xdr_pointer(xdrs, (char **)&record->v, sizeof(struct buffer),
 				(xdrproc_t)xdr_buffer) &&
-		xdr_uint64_t(xdrs, &record->vb);
+		xdr_uint64_t(xdrs, &record->vb) &&
+		xdr_int(xdrs, &record->is_final);
 }
 
 
@@ -98,6 +100,29 @@ void set_highest_accepted(void *context, uint64_t iid)
 	result = tchdbput(ctx->db, key, sizeof(key), &iid, sizeof(iid));
 	if (!result)
 		errx(EXIT_FAILURE, "failed to set highest accepted");
+}
+
+uint64_t get_highest_finalized(void *context)
+{
+	struct context *ctx = (struct context *)context;
+	uint64_t iid;
+	int result;
+
+	result = tchdbget3(ctx->db, key2, sizeof(key2), &iid, sizeof(iid));
+	if (-1 == result)
+		return 0ULL;
+
+	assert(sizeof(iid) == result);
+	return iid;
+}
+
+void set_highest_finalized(void *context, uint64_t iid)
+{
+	struct context *ctx = (struct context *)context;
+	int result;
+	result = tchdbput(ctx->db, key2, sizeof(key2), &iid, sizeof(iid));
+	if (!result)
+		errx(EXIT_FAILURE, "failed to set highest finalized");
 }
 
 int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,

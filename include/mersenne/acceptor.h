@@ -38,23 +38,26 @@ struct acc_context {
 	acs_initialize_func initialize_func;
 	acs_get_highest_accepted_func get_highest_accepted_func;
 	acs_set_highest_accepted_func set_highest_accepted_func;
+	acs_get_highest_finalized_func get_highest_finalized_func;
+	acs_set_highest_finalized_func set_highest_finalized_func;
 	acs_find_record_func find_record_func;
-	acs_set_record_value_func set_record_value_func;
 	acs_store_record_func store_record_func;
 	acs_free_record_func free_record_func;
 	acs_destroy_func destroy_func;
 };
 
-#define ACC_CONTEXT_INITIALIZER { \
-	.handle = NULL, \
-	.context = NULL, \
-	.initialize_func = NULL, \
-	.get_highest_accepted_func = NULL, \
-	.set_highest_accepted_func = NULL, \
-	.find_record_func = NULL, \
-	.store_record_func = NULL, \
-	.free_record_func = NULL, \
-	.destroy_func = NULL, \
+#define ACC_CONTEXT_INITIALIZER {           \
+	.handle = NULL,                     \
+	.context = NULL,                    \
+	.initialize_func = NULL,            \
+	.get_highest_accepted_func = NULL,  \
+	.set_highest_accepted_func = NULL,  \
+	.get_highest_finalized_func = NULL, \
+	.set_highest_finalized_func = NULL, \
+	.find_record_func = NULL,           \
+	.store_record_func = NULL,          \
+	.free_record_func = NULL,           \
+	.destroy_func = NULL,               \
 }
 
 void acc_fiber(struct fbr_context *fiber_context, void *_arg);

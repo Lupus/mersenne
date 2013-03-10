@@ -513,7 +513,6 @@ static void instances_destructor(struct fbr_context *fiber_context, void *ptr,
 	}
 }
 
-
 static void proposer_init(ME_P)
 {
 	int i;

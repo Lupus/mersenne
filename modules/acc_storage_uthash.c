@@ -40,9 +40,10 @@ struct acc_instance_wrapper {
 struct context {
 	struct acc_instance_wrapper *instances;
 	uint64_t highest_accepted;
+	uint64_t highest_finalized;
 };
 
-void * initialize(int argc, char *argv[])
+void *initialize(int argc, char *argv[])
 {
 	struct context *ctx = malloc(sizeof(struct context));
 	ctx->instances = NULL;
@@ -62,13 +63,25 @@ void set_highest_accepted(void *context, uint64_t iid)
 	ctx->highest_accepted = iid;
 }
 
+uint64_t get_highest_finalized(void *context)
+{
+	struct context *ctx = (struct context *)context;
+	return ctx->highest_finalized;
+}
+
+void set_highest_finalized(void *context, uint64_t iid)
+{
+	struct context *ctx = (struct context *)context;
+	ctx->highest_finalized = iid;
+}
+
 int find_record(void *context, struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {
 	struct context *ctx = (struct context *)context;
 	struct acc_instance_wrapper *w = NULL;
 	int found = 1;
-	
+
 	HASH_FIND_WIID(ctx->instances, &iid, w);
 	if(NULL == w) {
 		found = 0;

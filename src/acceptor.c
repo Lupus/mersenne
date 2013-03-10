@@ -103,6 +103,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r->b = data->b;
 		r->v = NULL;
 		r->vb = 0;
+		r->is_final = 0;
 		DL_CALL(store_record_func, r);
 	}
 	if(data->b < r->b) {
@@ -189,46 +190,134 @@ static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
-void acc_fiber(struct fbr_context *fiber_context, void *_arg)
+static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 {
-	struct me_context *mctx;
+	struct acc_instance_record *r = NULL;
+
+	if (0 == DL_CALL(find_record_func, &r, iid, ACS_FM_CREATE)) {
+		r->iid = iid;
+		r->b = 0ULL;
+		r->v = buffer;
+		r->vb = 0ULL;
+		r->is_final = 0;
+	}
+	if (0 == r->is_final) {
+		r->is_final = 1;
+		DL_CALL(store_record_func, r);
+	}
+	DL_CALL(set_highest_finalized_func, iid);
+	DL_CALL(free_record_func, r);
+}
+
+static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
+{
+	struct lea_instance_info *instance_info;
+	size_t x;
+
+	for (;;) {
+		x = sizeof(struct lea_instance_info);
+		if (fbr_buffer_bytes(&mctx->fbr, lea_fb) < x)
+			return;
+		instance_info = fbr_buffer_read_address(&mctx->fbr, lea_fb, x);
+		do_delivered_value(ME_A_ instance_info->iid,
+				instance_info->buffer);
+		fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+	}
+}
+
+static void process_fb(ME_P_ struct fbr_buffer *fb)
+{
 	struct msg_info *info;
 	struct me_paxos_message *pmsg;
-	fbr_id_t repeater;
-	struct fbr_buffer *buffer;
+	size_t x;
+	const char *s;
 
-	mctx = container_of(fiber_context, struct me_context, fbr);
-
-	buffer = fbr_buffer_create(&mctx->fbr, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), buffer);
-
-	repeater = fbr_create(&mctx->fbr, "acceptor_repeater", repeater_fiber,
-			NULL, 0);
-	fbr_transfer(&mctx->fbr, repeater);
-
-	for(;;) {
-		info = fbr_buffer_read_address(&mctx->fbr, buffer,
-				sizeof(struct msg_info));
+	for (;;) {
+		x = sizeof(struct msg_info);
+		if (fbr_buffer_bytes(&mctx->fbr, fb) < x)
+			return;
+		info = fbr_buffer_read_address(&mctx->fbr, fb, x);
 
 		pmsg = &info->msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
-			case ME_PAXOS_PREPARE:
-				do_prepare(ME_A_ pmsg, info->from);
-				break;
-			case ME_PAXOS_ACCEPT:
-				do_accept(ME_A_ pmsg, info->from);
-				break;
-			case ME_PAXOS_RETRANSMIT:
-				do_retransmit(ME_A_ pmsg, info->from);
-				break;
-			default:
-				errx(EXIT_FAILURE,
-						"wrong message type for acceptor: %s",
-						strval_me_paxos_message_type(pmsg->data.type));
+		case ME_PAXOS_PREPARE:
+			do_prepare(ME_A_ pmsg, info->from);
+			break;
+		case ME_PAXOS_ACCEPT:
+			do_accept(ME_A_ pmsg, info->from);
+			break;
+		case ME_PAXOS_RETRANSMIT:
+			do_retransmit(ME_A_ pmsg, info->from);
+			break;
+		default:
+			s = strval_me_paxos_message_type(pmsg->data.type);
+			errx(EXIT_FAILURE, "wrong message type for acceptor:"
+					" %s", s);
 		}
 		sm_free(info->msg);
 
-		fbr_buffer_read_advance(&mctx->fbr, buffer);
+		fbr_buffer_read_advance(&mctx->fbr, fb);
+	}
+}
+
+void acc_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	fbr_id_t repeater;
+	fbr_id_t learner;
+	struct lea_fiber_arg lea_arg;
+	struct fbr_ev_cond_var ev_fb;
+	struct fbr_ev_cond_var ev_lea_fb;
+	struct fbr_mutex *fb_mutex;
+	struct fbr_mutex *lea_fb_mutex;
+	struct fbr_buffer *fb, *lea_fb;
+	struct fbr_ev_base *fb_events[3];
+	int n_events;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+
+	fb = fbr_buffer_create(&mctx->fbr, 0);
+	assert(NULL != fb);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), fb);
+	fb_mutex = fbr_mutex_create(&mctx->fbr);
+	lea_fb = fbr_buffer_create(&mctx->fbr, 0);
+	assert(NULL != lea_fb);
+	lea_fb_mutex = fbr_mutex_create(&mctx->fbr);
+
+	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
+			NULL, 0);
+	fbr_transfer(&mctx->fbr, repeater);
+
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
+			fbr_buffer_cond_read(&mctx->fbr, fb),
+			fb_mutex);
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
+			fbr_buffer_cond_read(&mctx->fbr, lea_fb),
+			lea_fb_mutex);
+
+	lea_arg.buffer = lea_fb;
+	lea_arg.starting_iid = DL_CALL(get_highest_finalized_func);
+	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
+			&lea_arg, 0);
+	fbr_transfer(&mctx->fbr, learner);
+
+	fb_events[0] = &ev_fb.ev_base;
+	fb_events[1] = &ev_lea_fb.ev_base;
+	fb_events[2] = NULL;
+
+	for (;;) {
+		fbr_mutex_lock(&mctx->fbr, fb_mutex);
+		fbr_mutex_lock(&mctx->fbr, lea_fb_mutex);
+		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
+		assert(-1 != n_events);
+		if (ev_fb.ev_base.arrived) {
+			process_fb(ME_A_ fb);
+			fbr_mutex_unlock(&mctx->fbr, fb_mutex);
+		}
+		if (ev_lea_fb.ev_base.arrived) {
+			process_lea_fb(ME_A_ lea_fb);
+			fbr_mutex_unlock(&mctx->fbr, lea_fb_mutex);
+		}
 	}
 }
 
@@ -245,27 +334,42 @@ void acc_init_storage(ME_P)
 	wordexp_t we;
 	const int buf_size = 1024;
 	char buf[buf_size];
-	mctx->pxs.acc.handle = dlopen(mctx->args_info.acceptor_storage_module_arg, RTLD_NOW);
+	mctx->pxs.acc.handle =
+		dlopen(mctx->args_info.acceptor_storage_module_arg, RTLD_NOW);
 	if (!mctx->pxs.acc.handle)
                errx(EXIT_FAILURE, "dlopen: %s", dlerror());
-	dlerror();
+
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func,
+			"initialize");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func,
+			"get_highest_accepted");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func,
+			"set_highest_accepted");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_finalized_func,
+			"get_highest_finalized");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_finalized_func,
+			"set_highest_finalized");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.find_record_func,
+			"find_record");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func,
+			"store_record");
+	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func,
+			"free_record");
 	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.destroy_func, "destroy");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.find_record_func, "find_record");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func, "get_highest_accepted");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func, "initialize");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func, "set_highest_accepted");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func, "store_record");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func, "free_record");
-	if(mctx->args_info.acceptor_storage_options_given) {
+	if (mctx->args_info.acceptor_storage_options_given) {
 		snprintf(buf, buf_size, "%s %s",
 				mctx->args_info.acceptor_storage_module_arg,
 				mctx->args_info.acceptor_storage_options_arg);
 		if(0 != wordexp(buf, &we, WRDE_NOCMD))
-			errx(EXIT_FAILURE, "wordexp failed to parse acceptor storage command line");
-		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(we.we_wordc, we.we_wordv);
+			errx(EXIT_FAILURE, "wordexp failed to parse acceptor"
+					" storage command line");
+		mctx->pxs.acc.context =
+			(*mctx->pxs.acc.initialize_func)(we.we_wordc,
+					we.we_wordv);
 		wordfree(&we);
 	} else {
-		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(0, NULL);
+		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(0,
+				NULL);
 	}
 }
 
