@@ -266,35 +266,33 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct lea_fiber_arg lea_arg;
 	struct fbr_ev_cond_var ev_fb;
 	struct fbr_ev_cond_var ev_lea_fb;
-	struct fbr_mutex *fb_mutex;
-	struct fbr_mutex *lea_fb_mutex;
-	struct fbr_buffer *fb, *lea_fb;
+	struct fbr_mutex fb_mutex;
+	struct fbr_mutex lea_fb_mutex;
+	struct fbr_buffer fb, lea_fb;
 	struct fbr_ev_base *fb_events[3];
 	int n_events;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	fb = fbr_buffer_create(&mctx->fbr, 0);
-	assert(NULL != fb);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), fb);
-	fb_mutex = fbr_mutex_create(&mctx->fbr);
-	lea_fb = fbr_buffer_create(&mctx->fbr, 0);
-	assert(NULL != lea_fb);
-	lea_fb_mutex = fbr_mutex_create(&mctx->fbr);
+	fbr_buffer_init(&mctx->fbr, &fb, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &fb);
+	fbr_mutex_init(&mctx->fbr, &fb_mutex);
+	fbr_buffer_init(&mctx->fbr, &lea_fb, 0);
+	fbr_mutex_init(&mctx->fbr, &lea_fb_mutex);
 
 	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
 			NULL, 0);
 	fbr_transfer(&mctx->fbr, repeater);
 
 	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
-			fbr_buffer_cond_read(&mctx->fbr, fb),
-			fb_mutex);
+			fbr_buffer_cond_read(&mctx->fbr, &fb),
+			&fb_mutex);
 	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
-			fbr_buffer_cond_read(&mctx->fbr, lea_fb),
-			lea_fb_mutex);
+			fbr_buffer_cond_read(&mctx->fbr, &lea_fb),
+			&lea_fb_mutex);
 
-	lea_arg.buffer = lea_fb;
-	lea_arg.starting_iid = DL_CALL(get_highest_finalized_func);
+	lea_arg.buffer = &lea_fb;
+	lea_arg.starting_iid = ACC_DL_CALL(get_highest_finalized_func);
 	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
 			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
@@ -304,17 +302,17 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	fb_events[2] = NULL;
 
 	for (;;) {
-		fbr_mutex_lock(&mctx->fbr, fb_mutex);
-		fbr_mutex_lock(&mctx->fbr, lea_fb_mutex);
+		fbr_mutex_lock(&mctx->fbr, &fb_mutex);
+		fbr_mutex_lock(&mctx->fbr, &lea_fb_mutex);
 		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
 		assert(-1 != n_events);
 		if (ev_fb.ev_base.arrived) {
-			process_fb(ME_A_ fb);
-			fbr_mutex_unlock(&mctx->fbr, fb_mutex);
+			process_fb(ME_A_ &fb);
+			fbr_mutex_unlock(&mctx->fbr, &fb_mutex);
 		}
 		if (ev_lea_fb.ev_base.arrived) {
-			process_lea_fb(ME_A_ lea_fb);
-			fbr_mutex_unlock(&mctx->fbr, lea_fb_mutex);
+			process_lea_fb(ME_A_ &lea_fb);
+			fbr_mutex_unlock(&mctx->fbr, &lea_fb_mutex);
 		}
 	}
 }

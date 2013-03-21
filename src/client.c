@@ -78,10 +78,12 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	int retval;
 	struct lea_fiber_arg lea_arg;
 	struct lea_instance_info *instance;
+	struct fbr_buffer lea_buffer;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	lea_arg.buffer = fbr_buffer_create(&mctx->fbr, 1);
+	fbr_buffer_init(&mctx->fbr, &lea_buffer, 1);
+	lea_arg.buffer = &lea_buffer;
 	lea_arg.starting_iid = 0;
 	learner = fbr_create(&mctx->fbr, "informer/learner", lea_fiber,
 			&lea_arg, 0);

@@ -50,7 +50,7 @@ struct learner_context {
 	struct lea_instance *instances;
 	struct me_context *mctx;
 	struct lea_fiber_arg *arg;
-	struct fbr_buffer *buffer;
+	struct fbr_buffer buffer;
 	struct fiber_tailq_i item;
 };
 
@@ -298,7 +298,7 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
 	struct me_context *mctx = context;
 	struct learner_context *lcontext = ptr;
 	TAILQ_REMOVE(&mctx->learners, &lcontext->item, entries);
-	fbr_buffer_free(&mctx->fbr, lcontext->buffer);
+	fbr_buffer_destroy(&mctx->fbr, &lcontext->buffer);
 }
 
 static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
@@ -316,8 +316,8 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->mctx = mctx;
 	context->arg = arg;
 
-	context->buffer = fbr_buffer_create(&mctx->fbr, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), context->buffer);
+	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &context->buffer);
 
 	context->item.id = fbr_self(&mctx->fbr);
 	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
@@ -350,7 +350,7 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	context = init_context(ME_A_ _arg);
-	fb = context->buffer;
+	fb = &context->buffer;
 
 	hole_checker = fbr_create(&mctx->fbr, "learner/hole_checker",
 			lea_hole_checker_fiber, context, 0);

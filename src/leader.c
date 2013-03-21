@@ -363,12 +363,12 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	struct msg_info *info;
-	struct fbr_buffer *buffer;
+	struct fbr_buffer buffer;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	buffer = fbr_buffer_create(&mctx->fbr, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), buffer);
+	fbr_buffer_init(&mctx->fbr, &buffer, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &buffer);
 
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
 			TIME_DELTA / 1000.);
@@ -378,15 +378,15 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 	start_round(ME_A_ 0);
 
 	for(;;) {
-		info = fbr_buffer_read_address(&mctx->fbr, buffer,
+		info = fbr_buffer_read_address(&mctx->fbr, &buffer,
 				sizeof(struct msg_info));
 
-		if(is_expired(ME_A_ info->msg)) {
+		if (is_expired(ME_A_ info->msg)) {
 			fbr_log_w(&mctx->fbr, "got expired message");
 			sm_free(info->msg);
 			continue;
 		}
-		if(!config_match(ME_A_ info->msg)) {
+		if (!config_match(ME_A_ info->msg)) {
 			fbr_log_w(&mctx->fbr, "sender configuration does not match "
 					"mine, ignoring message");
 			sm_free(info->msg);
@@ -396,6 +396,6 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 		do_message(ME_A_ info->msg, info->from);
 		sm_free(info->msg);
 
-		fbr_buffer_read_advance(&mctx->fbr, buffer);
+		fbr_buffer_read_advance(&mctx->fbr, &buffer);
 	}
 }

@@ -283,12 +283,12 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	struct client_context *cc;
 	struct my_value *value, **vptr;
 	fbr_id_t reader, stats;
-	struct fbr_buffer *fb;
+	struct fbr_buffer fb;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 
-	fb = fbr_buffer_create(&cc->fbr, 0);
-	fbr_set_user_data(&cc->fbr, fbr_self(&cc->fbr), fb);
+	fbr_buffer_init(&cc->fbr, &fb, 0);
+	fbr_set_user_data(&cc->fbr, fbr_self(&cc->fbr), &fb);
 
 	set_up_socket(cc);
 	init_values(cc);
@@ -299,9 +299,9 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	fbr_transfer(&cc->fbr, stats);
 
 	for(;;) {
-		vptr = fbr_buffer_read_address(&cc->fbr, fb, sizeof(void *));
+		vptr = fbr_buffer_read_address(&cc->fbr, &fb, sizeof(void *));
 		value = *vptr;
-		fbr_buffer_read_advance(&cc->fbr, fb);
+		fbr_buffer_read_advance(&cc->fbr, &fb);
 		cc->stats.timeouts++;
 		submit_value(cc, value);
 		ev_timer_again(cc->loop, &value->timer);
@@ -310,6 +310,7 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 
 int main(int argc, char *argv[]) {
 	struct client_context cc;
+	struct fbr_mutex mutex;
 
 	signal(SIGPIPE, SIG_IGN);
 
@@ -323,7 +324,8 @@ int main(int argc, char *argv[]) {
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
-	cc.mutex = fbr_mutex_create(&cc.fbr);
+	fbr_mutex_init(&cc.fbr, &mutex);
+	cc.mutex = &mutex;
 
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);
 	fbr_transfer(&cc.fbr, cc.main);
