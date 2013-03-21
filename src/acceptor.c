@@ -32,8 +32,6 @@
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
 
-#define DL_CALL(func,...) (*mctx->pxs.acc.func)(mctx->pxs.acc.context, ##__VA_ARGS__)
-
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 		*to)
 {
@@ -72,7 +70,7 @@ static void send_highest_accepted(ME_P)
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 	uint64_t iid;
-	iid = DL_CALL(get_highest_accepted_func);
+	iid = ACC_DL_CALL(get_highest_accepted_func);
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LAST_ACCEPTED;
 	data->me_paxos_msg_data_u.last_accepted.i = iid;
@@ -98,13 +96,13 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
+	if(0 == ACC_DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
 		r->v = NULL;
 		r->vb = 0;
 		r->is_final = 0;
-		DL_CALL(store_record_func, r);
+		ACC_DL_CALL(store_record_func, r);
 	}
 	if(data->b < r->b) {
 		send_reject(ME_A_ r, from);
@@ -114,7 +112,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	fbr_log_d(&mctx->fbr, "Promised not to accept ballots lower that %lu for instance %lu", data->b, data->i);
 	send_promise(ME_A_ r, from);
 cleanup:
-	DL_CALL(free_record_func, r);
+	ACC_DL_CALL(free_record_func, r);
 }
 
 static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -126,7 +124,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
-	if(0 == DL_CALL(find_record_func, &r, data->i, ACS_FM_JUST_FIND)) {
+	if(0 == ACC_DL_CALL(find_record_func, &r, data->i, ACS_FM_JUST_FIND)) {
 		//TODO: Add automatic accept of ballot 0
 		return;
 	}
@@ -150,12 +148,12 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 			fbr_log_e(&mctx->fbr, "Current value sized %d is: ``%s''", r->v->size1, buf);
 			abort();
 		}
-	if(r->iid > DL_CALL(get_highest_accepted_func))
-		 DL_CALL(set_highest_accepted_func, r->iid);
-	DL_CALL(store_record_func, r);
+	if(r->iid > ACC_DL_CALL(get_highest_accepted_func))
+		 ACC_DL_CALL(set_highest_accepted_func, r->iid);
+	ACC_DL_CALL(store_record_func, r);
 	send_learn(ME_A_ r, NULL);
 cleanup:
-	DL_CALL(free_record_func, r);
+	ACC_DL_CALL(free_record_func, r);
 }
 
 static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -167,15 +165,15 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
 	for(iid = data->from; iid <= data->to; iid++) {
-		if(0 == DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
+		if(0 == ACC_DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
 			continue;
 		if(NULL == r->v) {
 			//FIXME: Not absolutely sure about this...
-			DL_CALL(free_record_func, r);
+			ACC_DL_CALL(free_record_func, r);
 			continue;
 		}
 		send_learn(ME_A_ r, from);
-		DL_CALL(free_record_func, r);
+		ACC_DL_CALL(free_record_func, r);
 	}
 }
 
@@ -194,7 +192,7 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 {
 	struct acc_instance_record *r = NULL;
 
-	if (0 == DL_CALL(find_record_func, &r, iid, ACS_FM_CREATE)) {
+	if (0 == ACC_DL_CALL(find_record_func, &r, iid, ACS_FM_CREATE)) {
 		r->iid = iid;
 		r->b = 0ULL;
 		r->v = buffer;
@@ -203,10 +201,10 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	}
 	if (0 == r->is_final) {
 		r->is_final = 1;
-		DL_CALL(store_record_func, r);
+		ACC_DL_CALL(store_record_func, r);
 	}
-	DL_CALL(set_highest_finalized_func, iid);
-	DL_CALL(free_record_func, r);
+	ACC_DL_CALL(set_highest_finalized_func, iid);
+	ACC_DL_CALL(free_record_func, r);
 }
 
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
@@ -375,7 +373,7 @@ void acc_init_storage(ME_P)
 
 void acc_free_storage(ME_P)
 {
-	DL_CALL(destroy_func);
+	ACC_DL_CALL(destroy_func);
 	if(0 != dlclose(mctx->pxs.acc.handle))
                errx(EXIT_FAILURE, "dlclose: %s", dlerror());
 }

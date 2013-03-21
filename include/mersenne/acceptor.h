@@ -46,6 +46,9 @@ struct acc_context {
 	acs_destroy_func destroy_func;
 };
 
+#define ACC_DL_CALL(func,...) \
+	(*mctx->pxs.acc.func)(mctx->pxs.acc.context, ##__VA_ARGS__)
+
 #define ACC_CONTEXT_INITIALIZER {           \
 	.handle = NULL,                     \
 	.context = NULL,                    \
