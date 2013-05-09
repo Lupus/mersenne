@@ -22,7 +22,11 @@
 #ifndef _ACC_STORAGE_H_
 #define _ACC_STORAGE_H_
 
+#include <stdio.h>
+#include <uthash.h>
+
 #include <stdint.h>
+#include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
 
 struct acc_instance_record {
@@ -31,21 +35,38 @@ struct acc_instance_record {
 	struct buffer *v;
 	uint64_t vb;
 	int is_final;
+	int stored;
+	UT_hash_handle hh;
 };
+
+struct acs_context {
+	FILE *wal;
+	struct acc_instance_record *instances;
+	uint64_t highest_accepted;
+	uint64_t highest_finalized;
+};
+
+#define ACS_CONTEXT_INITIALIZER { \
+	.wal = NULL,              \
+	.instances = NULL,        \
+	.highest_accepted = 0,    \
+	.highest_finalized = 0,   \
+}
 
 enum acs_find_mode {
 	ACS_FM_CREATE = 0,
 	ACS_FM_JUST_FIND
 };
 
-typedef void *(*acs_initialize_func)();
-typedef uint64_t (*acs_get_highest_accepted_func)(void *context);
-typedef void (*acs_set_highest_accepted_func)(void *context, uint64_t iid);
-typedef uint64_t (*acs_get_highest_finalized_func)(void *context);
-typedef void (*acs_set_highest_finalized_func)(void *context, uint64_t iid);
-typedef int (*acs_find_record_func)(void *context, struct acc_instance_record **record_ptr, uint64_t iid, enum acs_find_mode mode);
-typedef void (*acs_store_record_func)(void *context, struct acc_instance_record *record);
-typedef void (*acs_free_record_func)(void *context, struct acc_instance_record *record);
-typedef void (*acs_destroy_func)(void *context);
+void acs_initialize(ME_P);
+uint64_t acs_get_highest_accepted(ME_P);
+void acs_set_highest_accepted(ME_P_ uint64_t iid);
+uint64_t acs_get_highest_finalized(ME_P);
+void acs_set_highest_finalized(ME_P_ uint64_t iid);
+int acs_find_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
+		enum acs_find_mode mode);
+void acs_store_record(ME_P_ struct acc_instance_record *record);
+void acs_free_record(ME_P_ struct acc_instance_record *record);
+void acs_destroy(ME_P);
 
 #endif

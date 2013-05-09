@@ -44,7 +44,8 @@ static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 	data->me_paxos_msg_data_u.promise.v = r->v;
 	data->me_paxos_msg_data_u.promise.vb = r->vb;
 	msg_send_to(ME_A_ &msg, to->index);
-	fbr_log_d(&mctx->fbr, "Sent promise for instance %lu with value size %u", r->iid, r->v ? r->v->size1 : 0);
+	fbr_log_d(&mctx->fbr, "Sent promise for instance %lu with value size"
+			" %u", r->iid, r->v ? r->v->size1 : 0);
 }
 
 static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
@@ -70,7 +71,7 @@ static void send_highest_accepted(ME_P)
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 	uint64_t iid;
-	iid = ACC_DL_CALL(get_highest_accepted_func);
+	iid = acs_get_highest_accepted(ME_A);
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_LAST_ACCEPTED;
 	data->me_paxos_msg_data_u.last_accepted.i = iid;
@@ -96,13 +97,13 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	if(0 == ACC_DL_CALL(find_record_func, &r, data->i, ACS_FM_CREATE)) {
+	if(0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
 		r->v = NULL;
 		r->vb = 0;
 		r->is_final = 0;
-		ACC_DL_CALL(store_record_func, r);
+		acs_store_record(ME_A_ r);
 	}
 	if(data->b < r->b) {
 		send_reject(ME_A_ r, from);
@@ -112,7 +113,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	fbr_log_d(&mctx->fbr, "Promised not to accept ballots lower that %lu for instance %lu", data->b, data->i);
 	send_promise(ME_A_ r, from);
 cleanup:
-	ACC_DL_CALL(free_record_func, r);
+	acs_free_record(ME_A_ r);
 }
 
 static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -124,7 +125,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
-	if(0 == ACC_DL_CALL(find_record_func, &r, data->i, ACS_FM_JUST_FIND)) {
+	if(0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_JUST_FIND)) {
 		//TODO: Add automatic accept of ballot 0
 		return;
 	}
@@ -148,12 +149,12 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 			fbr_log_e(&mctx->fbr, "Current value sized %d is: ``%s''", r->v->size1, buf);
 			abort();
 		}
-	if(r->iid > ACC_DL_CALL(get_highest_accepted_func))
-		 ACC_DL_CALL(set_highest_accepted_func, r->iid);
-	ACC_DL_CALL(store_record_func, r);
+	if(r->iid > acs_get_highest_accepted(ME_A))
+		acs_set_highest_accepted(ME_A_ r->iid);
+	acs_store_record(ME_A_ r);
 	send_learn(ME_A_ r, NULL);
 cleanup:
-	ACC_DL_CALL(free_record_func, r);
+	acs_free_record(ME_A_ r);
 }
 
 static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -165,15 +166,15 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
 	for(iid = data->from; iid <= data->to; iid++) {
-		if(0 == ACC_DL_CALL(find_record_func, &r, iid, ACS_FM_JUST_FIND))
+		if(0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND))
 			continue;
 		if(NULL == r->v) {
 			//FIXME: Not absolutely sure about this...
-			ACC_DL_CALL(free_record_func, r);
+			acs_free_record(ME_A_ r);
 			continue;
 		}
 		send_learn(ME_A_ r, from);
-		ACC_DL_CALL(free_record_func, r);
+		acs_free_record(ME_A_ r);
 	}
 }
 
@@ -192,7 +193,7 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 {
 	struct acc_instance_record *r = NULL;
 
-	if (0 == ACC_DL_CALL(find_record_func, &r, iid, ACS_FM_CREATE)) {
+	if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_CREATE)) {
 		r->iid = iid;
 		r->b = 0ULL;
 		r->v = buffer;
@@ -201,10 +202,10 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	}
 	if (0 == r->is_final) {
 		r->is_final = 1;
-		ACC_DL_CALL(store_record_func, r);
+		acs_store_record(ME_A_ r);
 	}
-	ACC_DL_CALL(set_highest_finalized_func, iid);
-	ACC_DL_CALL(free_record_func, r);
+	acs_set_highest_finalized(ME_A_ iid);
+	acs_free_record(ME_A_ r);
 }
 
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
@@ -292,7 +293,7 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			&lea_fb_mutex);
 
 	lea_arg.buffer = &lea_fb;
-	lea_arg.starting_iid = ACC_DL_CALL(get_highest_finalized_func);
+	lea_arg.starting_iid = acs_get_highest_finalized(ME_A);
 	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
 			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
@@ -317,61 +318,12 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
-static void attach_symbol(ME_P_ void **vptr, const char *symbol)
-{
-	char *error;
-	*vptr = dlsym(mctx->pxs.acc.handle, symbol);
-	if (NULL != (error = dlerror()))
-		errx(EXIT_FAILURE, "dlsym: %s", error);
-}
-
 void acc_init_storage(ME_P)
 {
-	wordexp_t we;
-	const int buf_size = 1024;
-	char buf[buf_size];
-	mctx->pxs.acc.handle =
-		dlopen(mctx->args_info.acceptor_storage_module_arg, RTLD_NOW);
-	if (!mctx->pxs.acc.handle)
-               errx(EXIT_FAILURE, "dlopen: %s", dlerror());
-
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.initialize_func,
-			"initialize");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_accepted_func,
-			"get_highest_accepted");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_accepted_func,
-			"set_highest_accepted");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.get_highest_finalized_func,
-			"get_highest_finalized");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.set_highest_finalized_func,
-			"set_highest_finalized");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.find_record_func,
-			"find_record");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.store_record_func,
-			"store_record");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.free_record_func,
-			"free_record");
-	attach_symbol(ME_A_ (void **)&mctx->pxs.acc.destroy_func, "destroy");
-	if (mctx->args_info.acceptor_storage_options_given) {
-		snprintf(buf, buf_size, "%s %s",
-				mctx->args_info.acceptor_storage_module_arg,
-				mctx->args_info.acceptor_storage_options_arg);
-		if(0 != wordexp(buf, &we, WRDE_NOCMD))
-			errx(EXIT_FAILURE, "wordexp failed to parse acceptor"
-					" storage command line");
-		mctx->pxs.acc.context =
-			(*mctx->pxs.acc.initialize_func)(we.we_wordc,
-					we.we_wordv);
-		wordfree(&we);
-	} else {
-		mctx->pxs.acc.context = (*mctx->pxs.acc.initialize_func)(0,
-				NULL);
-	}
+	acs_initialize(ME_A);
 }
 
 void acc_free_storage(ME_P)
 {
-	ACC_DL_CALL(destroy_func);
-	if(0 != dlclose(mctx->pxs.acc.handle))
-               errx(EXIT_FAILURE, "dlclose: %s", dlerror());
+	acs_destroy(ME_A);
 }

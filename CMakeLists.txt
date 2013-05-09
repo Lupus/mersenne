@@ -3,11 +3,13 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 cmake_minimum_required(VERSION 2.6)
 project(mersenne C)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+
 include(CheckIncludeFiles)
 include(CheckLibraryExists)
 include(FindPkgConfig)
 
-add_subdirectory(tools) 
+add_subdirectory(tools)
 
 MACRO(GENSTRENUM INDIR INFILE DEPS)
 	GET_FILENAME_COMPONENT(SRCPATH "${INFILE}" PATH)
@@ -33,6 +35,7 @@ find_package(LibEV REQUIRED)
 find_package(LibEVfibers REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
+find_package(ProtoBufC REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 
@@ -44,6 +47,17 @@ include_directories(
 	)
 
 set(CMAKE_C_FLAGS "-Wall -Werror")
+set(MERSENNE_PROTO "src/acc.proto")
+add_custom_command(
+	OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
+	       "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne/acc.pb-c.h"
+	COMMAND mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne"
+	COMMAND mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/src"
+	COMMAND protoc-c -I "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/${MERSENNE_PROTO}" --c_out "${CMAKE_CURRENT_BINARY_DIR}/src"
+	COMMAND cp "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.h" "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne/acc.pb-c.h"
+	DEPENDS ${MERSENNE_PROTO}
+	COMMENT "Generating Protobuf-C from ${MERSENNE_PROTO}"
+	)
 
 GENSTRENUM(${CMAKE_CURRENT_SOURCE_DIR} "/include/mersenne/proposer_prv.h" "include/mersenne/me_protocol.h")
 GENSTRENUM(${CMAKE_CURRENT_SOURCE_DIR} "/include/mersenne/fiber_args.h" "")
@@ -73,6 +87,7 @@ set(MERSENNE_GEN_SOURCES
 	"include/mersenne/fiber_args.strenum.c"
 	"include/mersenne/me_protocol.strenum.h"
 	"include/mersenne/me_protocol.strenum.c"
+	"${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
 	)
 
 add_executable(mersenne
@@ -83,7 +98,11 @@ add_executable(mersenne
 	${GGO_GEN_SOURCES}
 	${LIBCORO_SOURCES}
 	)
-target_link_libraries(mersenne ${LIBEVFIBERS_LDFLAGS} ${LIBEV_LDFLAGS} crypto)
+target_link_libraries(mersenne
+	${LIBEVFIBERS_LDFLAGS}
+	${LIBEV_LDFLAGS}
+	${PROTOBUFC_LIBRARIES}
+	crypto
+	)
 
-subdirs(modules)
 subdirs(testing)
