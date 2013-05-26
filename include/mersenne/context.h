@@ -44,7 +44,6 @@ struct me_context {
 	struct gengetopt_args_info args_info;
 	struct ev_loop *loop;
 	int counter;
-	ev_io socket_watcher;
 	int fd;
 	int client_fd;
 	struct me_peer *peers;
@@ -53,6 +52,7 @@ struct me_context {
 	struct pxs_context pxs;
 	struct fbr_context fbr;
 	fbr_id_t fiber_main;
+	fbr_id_t fiber_listener;
 	fbr_id_t fiber_leader;
 	fbr_id_t fiber_acceptor;
 	fbr_id_t fiber_proposer;
@@ -67,9 +67,10 @@ struct me_context {
 	.me = NULL, \
 	.ldr = LDR_CONTEXT_INITIALIZER, \
 	.pxs = PXS_CONTEXT_INITIALIZER, \
-	.fiber_main = 0, \
-	.fiber_leader = 0, \
-	.fiber_proposer = 0, \
+	.fiber_main = FBR_ID_NULL, \
+	.fiber_leader = FBR_ID_NULL, \
+	.fiber_listener = FBR_ID_NULL, \
+	.fiber_proposer = FBR_ID_NULL, \
 }
 
 #define ME_P struct me_context *mctx

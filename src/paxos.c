@@ -69,7 +69,9 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		if(!mctx->me->pxs.is_acceptor)
 			break;
 		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_acceptor);
-		assert(NULL != fb);
+		if (NULL == fb)
+			/* Acceptor is not yet ready to handle anything */
+			break;
 		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 				sizeof(struct msg_info));
 		info->msg = sm_in_use(msg);
@@ -109,11 +111,9 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	case ME_PAXOS_PROMISE:
 	case ME_PAXOS_REJECT:
 		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
-		if(NULL == fb) {
-			assert(FBR_ENOFIBER == mctx->fbr.f_errno);
-			fbr_log_e(&mctx->fbr, "proposer not found");
-			abort();
-		}
+		if (NULL == fb)
+			/* Proposer is not available */
+			break;
 		pro_msg = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 				sizeof(*pro_msg));
 		pro_msg->base.type = PRO_MSG_ME_MESSAGE;
@@ -126,9 +126,10 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 
 void pxs_fiber_init(ME_P)
 {
-	acc_init_storage(ME_A);
-	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber, NULL, 0);
-	mctx->fiber_proposer = 0;
+	acs_initialize(ME_A);
+	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber,
+			NULL, 0);
+	mctx->fiber_proposer = FBR_ID_NULL;
 
 	fbr_transfer(&mctx->fbr, mctx->fiber_acceptor);
 	pro_stop(ME_A);
@@ -136,8 +137,7 @@ void pxs_fiber_init(ME_P)
 
 void pxs_fiber_shutdown(ME_P)
 {
-	acc_free_storage(ME_A);
-	fbr_reclaim(&mctx->fbr, mctx->fiber_acceptor);
 	pro_stop(ME_A);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_acceptor);
 }

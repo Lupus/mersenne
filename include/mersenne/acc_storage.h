@@ -39,18 +39,47 @@ struct acc_instance_record {
 	UT_hash_handle hh;
 };
 
+struct acs_log_dir {
+	char *dirname;
+	char *ext;
+	uint64_t *lsn_arr;
+	size_t lsn_arr_len;
+	size_t lsn_arr_size;
+	uint64_t max_lsn;
+};
+
+struct wal_log;
+
 struct acs_context {
-	FILE *wal;
+	struct acs_log_dir wal_dir;
+	struct acs_log_dir snap_dir;
+	uint64_t confirmed_lsn;
+	struct wal_log *wal;
 	struct acc_instance_record *instances;
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
 };
 
-#define ACS_CONTEXT_INITIALIZER { \
-	.wal = NULL,              \
-	.instances = NULL,        \
-	.highest_accepted = 0,    \
-	.highest_finalized = 0,   \
+#define ACS_CONTEXT_INITIALIZER {  \
+	.wal_dir = {               \
+		.ext = ".wal",     \
+		.lsn_arr = NULL,   \
+		.lsn_arr_len = 0,  \
+		.lsn_arr_size = 0, \
+		.max_lsn = 0,      \
+	},                         \
+	.snap_dir = {              \
+		.ext = ".snap",    \
+		.lsn_arr = NULL,   \
+		.lsn_arr_len = 0,  \
+		.lsn_arr_size = 0, \
+		.max_lsn = 0,      \
+	},                         \
+	.confirmed_lsn = 0,        \
+	.wal = NULL,               \
+	.instances = NULL,         \
+	.highest_accepted = 0,     \
+	.highest_finalized = 0,    \
 }
 
 enum acs_find_mode {
@@ -59,6 +88,8 @@ enum acs_find_mode {
 };
 
 void acs_initialize(ME_P);
+void acs_batch_start(ME_P);
+void acs_batch_finish(ME_P);
 uint64_t acs_get_highest_accepted(ME_P);
 void acs_set_highest_accepted(ME_P_ uint64_t iid);
 uint64_t acs_get_highest_finalized(ME_P);

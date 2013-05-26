@@ -97,7 +97,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	if(0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
+	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
 		r->v = NULL;
@@ -105,11 +105,12 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r->is_final = 0;
 		acs_store_record(ME_A_ r);
 	}
-	if(data->b < r->b) {
+	if (data->b < r->b) {
 		send_reject(ME_A_ r, from);
 		goto cleanup;
 	}
 	r->b = data->b;
+	acs_store_record(ME_A_ r);
 	fbr_log_d(&mctx->fbr, "Promised not to accept ballots lower that %lu for instance %lu", data->b, data->i);
 	send_promise(ME_A_ r, from);
 cleanup:
@@ -211,51 +212,58 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 {
 	struct lea_instance_info *instance_info;
-	size_t x;
+	const size_t lii_size = sizeof(struct lea_instance_info);
 
-	for (;;) {
-		x = sizeof(struct lea_instance_info);
-		if (fbr_buffer_bytes(&mctx->fbr, lea_fb) < x)
-			return;
-		instance_info = fbr_buffer_read_address(&mctx->fbr, lea_fb, x);
-		do_delivered_value(ME_A_ instance_info->iid,
-				instance_info->buffer);
-		fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
+		acs_batch_start(ME_A);
+		while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
+			instance_info = fbr_buffer_read_address(&mctx->fbr,
+					lea_fb, lii_size);
+			do_delivered_value(ME_A_ instance_info->iid,
+					instance_info->buffer);
+			fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+		}
+		acs_batch_finish(ME_A);
 	}
+}
+
+static void do_acceptor_msg(ME_P_ struct msg_info *info)
+{
+	struct me_paxos_message *pmsg;
+	const char *s;
+	pmsg = &info->msg->me_message_u.paxos_message;
+	switch(pmsg->data.type) {
+	case ME_PAXOS_PREPARE:
+		do_prepare(ME_A_ pmsg, info->from);
+		break;
+	case ME_PAXOS_ACCEPT:
+		do_accept(ME_A_ pmsg, info->from);
+		break;
+	case ME_PAXOS_RETRANSMIT:
+		do_retransmit(ME_A_ pmsg, info->from);
+		break;
+	default:
+		s = strval_me_paxos_message_type(pmsg->data.type);
+		errx(EXIT_FAILURE, "wrong message type for acceptor:"
+				" %s", s);
+	}
+	sm_free(info->msg);
 }
 
 static void process_fb(ME_P_ struct fbr_buffer *fb)
 {
 	struct msg_info *info;
-	struct me_paxos_message *pmsg;
-	size_t x;
-	const char *s;
+	const size_t msg_size = sizeof(struct msg_info);
 
-	for (;;) {
-		x = sizeof(struct msg_info);
-		if (fbr_buffer_bytes(&mctx->fbr, fb) < x)
-			return;
-		info = fbr_buffer_read_address(&mctx->fbr, fb, x);
-
-		pmsg = &info->msg->me_message_u.paxos_message;
-		switch(pmsg->data.type) {
-		case ME_PAXOS_PREPARE:
-			do_prepare(ME_A_ pmsg, info->from);
-			break;
-		case ME_PAXOS_ACCEPT:
-			do_accept(ME_A_ pmsg, info->from);
-			break;
-		case ME_PAXOS_RETRANSMIT:
-			do_retransmit(ME_A_ pmsg, info->from);
-			break;
-		default:
-			s = strval_me_paxos_message_type(pmsg->data.type);
-			errx(EXIT_FAILURE, "wrong message type for acceptor:"
-					" %s", s);
+	while (fbr_buffer_can_read(&mctx->fbr, fb, msg_size)) {
+		acs_batch_start(ME_A);
+		while (fbr_buffer_can_read(&mctx->fbr, fb, msg_size)) {
+			info = fbr_buffer_read_address(&mctx->fbr, fb,
+					msg_size);
+			do_acceptor_msg(ME_A_ info);
+			fbr_buffer_read_advance(&mctx->fbr, fb);
 		}
-		sm_free(info->msg);
-
-		fbr_buffer_read_advance(&mctx->fbr, fb);
+		acs_batch_finish(ME_A);
 	}
 }
 
@@ -302,10 +310,11 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	fb_events[1] = &ev_lea_fb.ev_base;
 	fb_events[2] = NULL;
 
+	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 	for (;;) {
 		fbr_mutex_lock(&mctx->fbr, &fb_mutex);
 		fbr_mutex_lock(&mctx->fbr, &lea_fb_mutex);
-		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
+		n_events = fbr_ev_wait_to(&mctx->fbr, fb_events, 0.25);
 		assert(-1 != n_events);
 		if (ev_fb.ev_base.arrived) {
 			process_fb(ME_A_ &fb);
@@ -315,15 +324,10 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			process_lea_fb(ME_A_ &lea_fb);
 			fbr_mutex_unlock(&mctx->fbr, &lea_fb_mutex);
 		}
+		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
+			break;
 	}
-}
-
-void acc_init_storage(ME_P)
-{
-	acs_initialize(ME_A);
-}
-
-void acc_free_storage(ME_P)
-{
 	acs_destroy(ME_A);
+	fbr_reclaim(&mctx->fbr, repeater);
+	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }

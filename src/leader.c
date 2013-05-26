@@ -36,7 +36,7 @@
 #define TIME_DELTA mctx->args_info.leader_delta_arg
 #define TIME_EPSILON mctx->args_info.leader_epsilon_arg
 
-struct bm_mask * get_trust(ME_P)
+struct bm_mask *get_trust(ME_P)
 {
 	struct bm_mask *bmp;
 	struct me_peer *p;
@@ -377,6 +377,7 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
 
+	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 	for(;;) {
 		info = fbr_buffer_read_address(&mctx->fbr, &buffer,
 				sizeof(struct msg_info));
@@ -397,5 +398,9 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 		sm_free(info->msg);
 
 		fbr_buffer_read_advance(&mctx->fbr, &buffer);
+		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
+			break;
 	}
+	ev_timer_stop(mctx->loop, &mctx->ldr.delta_timer);
+	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }

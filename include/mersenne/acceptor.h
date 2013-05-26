@@ -41,7 +41,5 @@ struct acc_context {
 }
 
 void acc_fiber(struct fbr_context *fiber_context, void *_arg);
-void acc_init_storage(ME_P);
-void acc_free_storage(ME_P);
 
 #endif

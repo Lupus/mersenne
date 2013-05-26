@@ -33,7 +33,7 @@ void buf_init(struct buffer *buf, size_t size)
 	buf->size1 = size;
 }
 
-struct buffer * buf_sm_steal(struct buffer *xdr_buf)
+struct buffer *buf_sm_steal(struct buffer *xdr_buf)
 {
 	struct buffer *buf;
 	buf = sm_alloc_ext(sizeof(struct buffer), buffer_sm_destructor, NULL);
@@ -41,6 +41,17 @@ struct buffer * buf_sm_steal(struct buffer *xdr_buf)
 	xdr_buf->ptr = NULL;
 	buf->size1 = xdr_buf->size1;
 	xdr_buf->size1 = 0;
+	return buf;
+}
+
+struct buffer *buf_sm_copy(void *ptr, size_t size)
+{
+	struct buffer *buf;
+	buf = sm_alloc_ext(sizeof(struct buffer), buffer_sm_destructor, NULL);
+	buf->ptr = malloc(size);
+	assert(buf->ptr);
+	memcpy(buf->ptr, ptr, size);
+	buf->size1 = size;
 	return buf;
 }
 

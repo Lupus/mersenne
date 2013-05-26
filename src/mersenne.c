@@ -112,7 +112,7 @@ static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sock
 	xdr_destroy(&xdrs);
 }
 
-static void fiber_main(struct fbr_context *fiber_context, void *_arg)
+static void fiber_listener(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	int nbytes;
@@ -127,7 +127,8 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 				&client_addrlen);
 		if (nbytes < 0 && errno != EINTR)
 				err(1, "recvfrom");
-		process_message_buf(ME_A_ msgbuf, nbytes, &client_addr, client_addrlen);
+		process_message_buf(ME_A_ msgbuf, nbytes, &client_addr,
+				client_addrlen);
 	}
 }
 
@@ -226,6 +227,125 @@ static void sigsegv_handler(int signum)
 		exit(EXIT_FAILURE);
 }
 
+static void ev_signal_dtor(struct fbr_context *fiber_context, void *arg)
+{
+	struct me_context *mctx;
+	ev_signal *s = arg;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ev_signal_stop(mctx->loop, s);
+}
+
+static void mersenne_start(ME_P)
+{
+	TAILQ_INIT(&mctx->learners);
+
+	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
+
+	set_up_udp_socket(ME_A);
+	set_up_client_socket(ME_A);
+
+	pxs_fiber_init(ME_A);
+
+	mctx->fiber_listener = fbr_create(&mctx->fbr, "listener",
+			fiber_listener, NULL, 0);
+	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, NULL,
+			0);
+	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, NULL,
+			0);
+
+	fbr_transfer(&mctx->fbr, mctx->fiber_listener);
+	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
+	fbr_transfer(&mctx->fbr, mctx->fiber_client);
+}
+
+static void mersenne_stop(ME_P)
+{
+	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_listener);
+	pxs_fiber_shutdown(ME_A);
+	destroy_peer_list(ME_A);
+	ev_break(mctx->loop, EVBREAK_ALL);
+}
+
+static void fiber_main(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	ev_signal sigint_watcher;
+	ev_signal sigterm_watcher;
+	ev_signal sighup_watcher;
+	struct fbr_ev_watcher evw_sigint;
+	struct fbr_ev_watcher evw_sigterm;
+	struct fbr_ev_watcher evw_sighup;
+	struct fbr_destructor sigint_dtor = FBR_DESTRUCTOR_INITIALIZER;
+	struct fbr_destructor sigterm_dtor = FBR_DESTRUCTOR_INITIALIZER;
+	struct fbr_destructor sighup_dtor = FBR_DESTRUCTOR_INITIALIZER;
+	struct fbr_ev_base *fb_events[4];
+	int n_events;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+
+	ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
+	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
+	ev_signal_init(&sighup_watcher, sighup_cb, SIGHUP);
+	fbr_ev_watcher_init(&mctx->fbr, &evw_sigint,
+			(struct ev_watcher *)&sigint_watcher);
+	fbr_ev_watcher_init(&mctx->fbr, &evw_sigterm,
+			(struct ev_watcher *)&sigterm_watcher);
+	fbr_ev_watcher_init(&mctx->fbr, &evw_sighup,
+			(struct ev_watcher *)&sighup_watcher);
+	sigint_dtor.func = ev_signal_dtor;
+	sigint_dtor.arg = &sigint_watcher;
+	sigterm_dtor.func = ev_signal_dtor;
+	sigterm_dtor.arg = &sigterm_watcher;
+	sighup_dtor.func = ev_signal_dtor;
+	sighup_dtor.arg = &sighup_watcher;
+
+	if (!RUNNING_ON_VALGRIND) {
+		fb_events[0] = &evw_sigint.ev_base;
+		fb_events[1] = &evw_sigterm.ev_base;
+		fb_events[2] = &evw_sighup.ev_base;
+		fb_events[3] = NULL;
+	} else {
+		fb_events[0] = &evw_sigterm.ev_base;
+		fb_events[1] = &evw_sighup.ev_base;
+		fb_events[2] = NULL;
+	}
+
+	mersenne_start(ME_A);
+
+	for(;;) {
+		if (!RUNNING_ON_VALGRIND)
+			ev_signal_start(mctx->loop, &sigint_watcher);
+		ev_signal_start(mctx->loop, &sigterm_watcher);
+		ev_signal_start(mctx->loop, &sighup_watcher);
+		fbr_destructor_add(&mctx->fbr, &sigint_dtor);
+		fbr_destructor_add(&mctx->fbr, &sigterm_dtor);
+		fbr_destructor_add(&mctx->fbr, &sighup_dtor);
+		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
+		assert(n_events > 0);
+		if (!n_events)
+			continue;
+		fbr_destructor_remove(&mctx->fbr, &sigint_dtor, 1 /* Call? */);
+		fbr_destructor_remove(&mctx->fbr, &sigterm_dtor, 1 /* Call? */);
+		fbr_destructor_remove(&mctx->fbr, &sighup_dtor, 1 /* Call? */);
+		if (evw_sigint.ev_base.arrived) {
+			fbr_log_d(&mctx->fbr, "got SIGINT");
+			break;
+		}
+		if (evw_sigterm.ev_base.arrived) {
+			fbr_log_d(&mctx->fbr, "got SIGTERM");
+			break;
+		}
+		if (evw_sighup.ev_base.arrived) {
+			/* Nothing here for now */
+		}
+	}
+
+	mersenne_stop(ME_A);
+}
+
 static int does_file_exists(const char *filename)
 {
 	struct stat st;
@@ -245,9 +365,9 @@ int main(int argc, char *argv[])
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
 
-	ev_signal sigint_watcher;
-	ev_signal sigterm_watcher;
-	ev_signal sighup_watcher;
+	if (!RUNNING_ON_VALGRIND)
+		signal(SIGSEGV, sigsegv_handler);
+	signal(SIGPIPE, SIG_IGN);
 
 	params = cmdline_parser_params_create();
 
@@ -255,7 +375,7 @@ int main(int argc, char *argv[])
 	params->print_errors = 1;
 	params->check_required = 0;
 
-	if(does_file_exists("mersenne.conf")) {
+	if (does_file_exists("mersenne.conf")) {
 		if(0 != cmdline_parser_config_file("mersenne.conf",
 					&mctx->args_info, params))
 			exit(EXIT_FAILURE + 1);
@@ -273,42 +393,14 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
 	fbr_init(&mctx->fbr, mctx->loop);
-	TAILQ_INIT(&mctx->learners);
-
 	setup_logging(ME_A);
 
-	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
-
-	set_up_udp_socket(ME_A);
-	set_up_client_socket(ME_A);
-
-	if(!RUNNING_ON_VALGRIND) {
-		ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
-		ev_signal_start(mctx->loop, &sigint_watcher);
-		signal(SIGSEGV, sigsegv_handler);
-	}
-	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
-	ev_signal_start(mctx->loop, &sigterm_watcher);
-	ev_signal_init(&sighup_watcher, sighup_cb, SIGHUP);
-	ev_signal_start(mctx->loop, &sighup_watcher);
-	signal(SIGPIPE, SIG_IGN);
-
-	pxs_fiber_init(ME_A);
-
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
-	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, NULL, 0);
-	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, NULL, 0);
-
 	fbr_transfer(&mctx->fbr, mctx->fiber_main);
-	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
-	fbr_transfer(&mctx->fbr, mctx->fiber_client);
 
 	fbr_log_i(&mctx->fbr, "Starting main loop");
 	ev_loop(context.loop, 0);
 	fbr_log_i(&mctx->fbr, "Exiting");
-
-	destroy_peer_list(ME_A);
-	pxs_fiber_shutdown(ME_A);
 
 	fbr_destroy(&mctx->fbr);
 

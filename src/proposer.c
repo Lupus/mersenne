@@ -790,19 +790,19 @@ static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 
 void pro_start(ME_P)
 {
-	if(0 != mctx->fiber_proposer)
+	if (!fbr_id_isnull(mctx->fiber_proposer))
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, NULL, 0);
-	assert(0 != mctx->fiber_proposer);
+	assert(!fbr_id_isnull(mctx->fiber_proposer));
 	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
 }
 
 void pro_stop(ME_P)
 {
-	if(0 != mctx->fiber_proposer)
+	if (!fbr_id_isnull(mctx->fiber_proposer))
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer_proxy",
 			proxy_fiber, NULL, 0);
-	assert(0 != mctx->fiber_proposer);
+	assert(!fbr_id_isnull(mctx->fiber_proposer));
 	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
 }
