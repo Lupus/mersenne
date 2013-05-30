@@ -22,6 +22,8 @@
 #ifndef _MESSAGE_H_
 #define _MESSAGE_H_
 
+#include <ev.h>
+
 #include <mersenne/me_protocol.h>
 #include <mersenne/context_fwd.h>
 
@@ -31,6 +33,7 @@ struct msg_info {
 	struct me_message *msg;
 	struct me_peer *from;
 	struct buffer *buf;
+	ev_tstamp received_ts;
 };
 
 enum msg_direction {

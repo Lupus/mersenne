@@ -81,19 +81,17 @@ void message_init(ME_P_ struct me_message *msg)
 	hdr->count = mctx->counter++;
 	ptr = hdr->config_checksum;
 	get_config_checksum(ME_A_ ptr, NULL);
-	gettimeofday(&hdr->sent, NULL);
+	hdr->sent = ev_now(mctx->loop);
 }
 
-int is_expired(ME_P_ struct me_message *msg)
+int is_expired(ME_P_ struct msg_info *info)
 {
-	struct timeval now;
+	struct me_message *msg = info->msg;
 	struct me_leader_msg_header *hdr;
-	int delta;
+	ev_tstamp delta;
 
 	hdr = &msg->me_message_u.leader_message.header;
-	gettimeofday(&now, NULL);
-	delta = (now.tv_sec - hdr->sent.tv_sec) * 1000;
-	delta += (now.tv_usec - hdr->sent.tv_usec) / 1000;
+	delta = info->received_ts - hdr->sent;
 	if(delta > TIME_DELTA + 2 * TIME_EPSILON)
 		return 1;
 	else
@@ -359,11 +357,19 @@ int ldr_round_length(ME_P)
 	return TIME_DELTA / 1000.;
 }
 
+static void timer_dtor(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ev_timer_stop(mctx->loop, &mctx->ldr.delta_timer);
+}
+
 void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct msg_info *info;
+	struct msg_info info, *ptr;
 	struct fbr_buffer buffer;
+	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
@@ -372,35 +378,33 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
 			TIME_DELTA / 1000.);
+	ev_set_priority(&mctx->ldr.delta_timer, 1);
 	ev_timer_start(mctx->loop, &mctx->ldr.delta_timer);
+	dtor.func = timer_dtor;
+	fbr_destructor_add(&mctx->fbr, &dtor);
 
 	mctx->ldr.leader = -1;
 	start_round(ME_A_ 0);
 
-	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 	for(;;) {
-		info = fbr_buffer_read_address(&mctx->fbr, &buffer,
+		ptr = fbr_buffer_read_address(&mctx->fbr, &buffer,
 				sizeof(struct msg_info));
+		memcpy(&info, ptr, sizeof(struct msg_info));
+		fbr_buffer_read_advance(&mctx->fbr, &buffer);
 
-		if (is_expired(ME_A_ info->msg)) {
+		if (is_expired(ME_A_ &info)) {
 			fbr_log_w(&mctx->fbr, "got expired message");
-			sm_free(info->msg);
+			sm_free(info.msg);
 			continue;
 		}
-		if (!config_match(ME_A_ info->msg)) {
+		if (!config_match(ME_A_ info.msg)) {
 			fbr_log_w(&mctx->fbr, "sender configuration does not match "
 					"mine, ignoring message");
-			sm_free(info->msg);
+			sm_free(info.msg);
 			continue;
 		}
 
-		do_message(ME_A_ info->msg, info->from);
-		sm_free(info->msg);
-
-		fbr_buffer_read_advance(&mctx->fbr, &buffer);
-		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
-			break;
+		do_message(ME_A_ info.msg, info.from);
+		sm_free(info.msg);
 	}
-	ev_timer_stop(mctx->loop, &mctx->ldr.delta_timer);
-	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }

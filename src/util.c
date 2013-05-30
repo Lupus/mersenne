@@ -23,6 +23,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <mersenne/util.h>
+#include <mersenne/context.h>
 
 void make_socket_non_blocking(int fd)
 {
@@ -36,4 +37,19 @@ void make_socket_non_blocking(int fd)
 	s = fcntl(fd, F_SETFL, flags);
 	if (-1 == s)
 		errx(EXIT_FAILURE, "fcntl failed");
+}
+
+void buffer_ensure_writable(ME_P_ struct fbr_buffer *fb, size_t size)
+{
+	size_t current_size;
+	int retval;
+	if (fbr_buffer_can_write(&mctx->fbr, fb, size))
+		return;
+	current_size = fbr_buffer_size(&mctx->fbr, fb);
+	retval = fbr_buffer_resize(&mctx->fbr, fb, current_size * 2);
+	if (0 != retval)
+		errx(EXIT_FAILURE, "failed to resize fbr buffer to %zd bytes",
+				current_size * 2);
+	fbr_log_i(&mctx->fbr, "buffer %p resized to %zd bytes", fb,
+			current_size * 2);
 }

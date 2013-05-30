@@ -72,6 +72,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		if (NULL == fb)
 			/* Acceptor is not yet ready to handle anything */
 			break;
+		buffer_ensure_writable(ME_A_ fb, sizeof(struct msg_info));
 		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 				sizeof(struct msg_info));
 		info->msg = sm_in_use(msg);
@@ -85,6 +86,8 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		TAILQ_FOREACH(item, &mctx->learners, entries) {
 			fb = fbr_get_user_data(&mctx->fbr, item->id);
 			assert(NULL != fb);
+			buffer_ensure_writable(ME_A_ fb,
+					sizeof(struct msg_info));
 			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 					sizeof(struct msg_info));
 			info->msg = sm_in_use(msg);
@@ -99,6 +102,8 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		TAILQ_FOREACH(item, &mctx->learners, entries) {
 			fb = fbr_get_user_data(&mctx->fbr, item->id);
 			assert(NULL != fb);
+			buffer_ensure_writable(ME_A_ fb,
+					sizeof(struct msg_info));
 			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 					sizeof(struct msg_info));
 			info->msg = sm_in_use(msg);
@@ -114,6 +119,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		if (NULL == fb)
 			/* Proposer is not available */
 			break;
+		buffer_ensure_writable(ME_A_ fb, sizeof(*pro_msg));
 		pro_msg = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 				sizeof(*pro_msg));
 		pro_msg->base.type = PRO_MSG_ME_MESSAGE;

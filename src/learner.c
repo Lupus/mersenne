@@ -100,6 +100,7 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
 				instance->iid, instance->b, buf,
 				instance->v->size1);
 	}
+	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = instance->iid;
@@ -345,7 +346,7 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct buffer *buf;
 	struct learner_context *context;
 	struct fbr_buffer *fb;
-	struct msg_info *info;
+	struct msg_info info, *ptr;
 	fbr_id_t hole_checker;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -357,31 +358,31 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_transfer(&mctx->fbr, hole_checker);
 
 	for (;;) {
-		info = fbr_buffer_read_address(&mctx->fbr, fb,
+		ptr = fbr_buffer_read_address(&mctx->fbr, fb,
 				sizeof(struct msg_info));
+		memcpy(&info, ptr, sizeof(struct msg_info));
+		fbr_buffer_read_advance(&mctx->fbr, fb);
 
 		fbr_log_d(&mctx->fbr, "got something on my buffer");
 
-		pmsg = &info->msg->me_message_u.paxos_message;
+		pmsg = &info.msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
-				buf = info->buf;
+				buf = info.buf;
 				fbr_log_d(&mctx->fbr, "got learn message");
-				do_learn(ME_A_ context, pmsg, buf, info->from);
-				sm_free(info->buf);
+				do_learn(ME_A_ context, pmsg, buf, info.from);
+				sm_free(info.buf);
 				break;
 			case ME_PAXOS_LAST_ACCEPTED:
 				fbr_log_d(&mctx->fbr, "got last accepted message");
-				do_last_accepted(ME_A_ context, pmsg, info->from);
+				do_last_accepted(ME_A_ context, pmsg, info.from);
 				break;
 			default:
 				errx(EXIT_FAILURE,
 						"wrong message type for learner: %s",
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
-		sm_free(info->msg);
+		sm_free(info.msg);
 		fbr_log_d(&mctx->fbr, "freed incoming message");
-
-		fbr_buffer_read_advance(&mctx->fbr, fb);
 	}
 }

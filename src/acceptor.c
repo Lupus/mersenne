@@ -211,17 +211,20 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 {
-	struct lea_instance_info *instance_info;
+	struct lea_instance_info instance_info, *ptr;
 	const size_t lii_size = sizeof(struct lea_instance_info);
+	size_t count, i;
 
 	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
 		acs_batch_start(ME_A);
-		while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
-			instance_info = fbr_buffer_read_address(&mctx->fbr,
+		count = fbr_buffer_bytes(&mctx->fbr, lea_fb) / lii_size;
+		for (i = 0; i < count; i++) {
+			ptr = fbr_buffer_read_address(&mctx->fbr,
 					lea_fb, lii_size);
-			do_delivered_value(ME_A_ instance_info->iid,
-					instance_info->buffer);
+			memcpy(&instance_info, ptr, lii_size);
 			fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+			do_delivered_value(ME_A_ instance_info.iid,
+					instance_info.buffer);
 		}
 		acs_batch_finish(ME_A);
 	}
@@ -252,16 +255,19 @@ static void do_acceptor_msg(ME_P_ struct msg_info *info)
 
 static void process_fb(ME_P_ struct fbr_buffer *fb)
 {
-	struct msg_info *info;
+	struct msg_info info, *ptr;
 	const size_t msg_size = sizeof(struct msg_info);
+	size_t count, i;
 
 	while (fbr_buffer_can_read(&mctx->fbr, fb, msg_size)) {
 		acs_batch_start(ME_A);
-		while (fbr_buffer_can_read(&mctx->fbr, fb, msg_size)) {
-			info = fbr_buffer_read_address(&mctx->fbr, fb,
+		count = fbr_buffer_bytes(&mctx->fbr, fb) / msg_size;
+		for (i = 0; i < count; i++) {
+			ptr = fbr_buffer_read_address(&mctx->fbr, fb,
 					msg_size);
-			do_acceptor_msg(ME_A_ info);
+			memcpy(&info, ptr, msg_size);
 			fbr_buffer_read_advance(&mctx->fbr, fb);
+			do_acceptor_msg(ME_A_ &info);
 		}
 		acs_batch_finish(ME_A);
 	}
@@ -314,7 +320,7 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	for (;;) {
 		fbr_mutex_lock(&mctx->fbr, &fb_mutex);
 		fbr_mutex_lock(&mctx->fbr, &lea_fb_mutex);
-		n_events = fbr_ev_wait_to(&mctx->fbr, fb_events, 0.25);
+		n_events = fbr_ev_wait_to(&mctx->fbr, fb_events, 0.5);
 		assert(-1 != n_events);
 		if (ev_fb.ev_base.arrived) {
 			process_fb(ME_A_ &fb);
@@ -324,6 +330,8 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			process_lea_fb(ME_A_ &lea_fb);
 			fbr_mutex_unlock(&mctx->fbr, &lea_fb_mutex);
 		}
+		process_fb(ME_A_ &fb);
+		process_lea_fb(ME_A_ &lea_fb);
 		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
 			break;
 	}

@@ -42,7 +42,7 @@ enum me_leader_message_type {
 
 struct me_leader_msg_header {
 	int count;
-	struct timeval sent;
+	double sent;
 	opaque config_checksum[EVP_MAX_MD_SIZE];
 };
 

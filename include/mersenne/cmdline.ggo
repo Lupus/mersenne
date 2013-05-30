@@ -18,4 +18,5 @@ option "learner-retransmit-age" - "Instance retransmit age" double default="0.25
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
 option "acceptor-wal-dir" - "Directory, containing acceptor WAL files" string default="/var/lib/mersenne" optional
 option "acceptor-wal-rotate" - "Number of records per WAL" int default="10000" optional
+option "acceptor-wal-snap" - "Number of records per snapshot" int default="50000" optional
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off

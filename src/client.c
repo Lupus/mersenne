@@ -77,7 +77,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	int fd = *(int *)_arg;
 	int retval;
 	struct lea_fiber_arg lea_arg;
-	struct lea_instance_info *instance;
+	struct lea_instance_info instance, *instance_ptr;
 	struct fbr_buffer lea_buffer;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -91,13 +91,14 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	assert(0 == retval);
 
 	for (;;) {
-		instance = fbr_buffer_read_address(&mctx->fbr, lea_arg.buffer,
-				sizeof(struct lea_instance_info));
-
-		retval = inform_client(ME_A_ fd, instance->iid, instance->buffer);
-
-		sm_free(instance->buffer);
+		instance_ptr = fbr_buffer_read_address(&mctx->fbr,
+				lea_arg.buffer, sizeof(instance));
+		memcpy(&instance, instance_ptr, sizeof(instance));
 		fbr_buffer_read_advance(&mctx->fbr, lea_arg.buffer);
+
+		retval = inform_client(ME_A_ fd, instance.iid, instance.buffer);
+
+		sm_free(instance.buffer);
 
 		if(-1 == retval)
 			fbr_log_w(&mctx->fbr, "informing of a client has"
@@ -159,7 +160,11 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 			goto conn_finish;
 		}
 		if(CL_NEW_VALUE != msg.type) {
-			fbr_log_d(&mctx->fbr, "msg.type (%d) != CL_NEW_VALUE", msg.type);
+			fbr_log_w(&mctx->fbr, "msg.type (%d) != CL_NEW_VALUE", msg.type);
+			goto conn_finish;
+		}
+		if (NULL == msg.cl_message_u.new_value.value) {
+			fbr_log_w(&mctx->fbr, "got NULL value");
 			goto conn_finish;
 		}
 		value = buf_sm_steal(msg.cl_message_u.new_value.value);
@@ -170,6 +175,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		}
 		pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
 		assert(NULL != pro_buf);
+		buffer_ensure_writable(ME_A_ pro_buf,
+				sizeof(struct pro_msg_client_value));
 		msg_client_value = fbr_buffer_alloc_prepare(&mctx->fbr,
 				pro_buf, sizeof(struct pro_msg_client_value));
 		msg_client_value->base.type = PRO_MSG_CLIENT_VALUE;

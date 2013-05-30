@@ -74,10 +74,13 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 	switch(msg->super_type) {
 		case ME_LEADER:
 			fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_leader);
+			buffer_ensure_writable(ME_A_ fb,
+					sizeof(struct msg_info));
 			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
 					sizeof(struct msg_info));
 			info->msg = sm_in_use(msg);
 			info->from = from;
+			info->received_ts = ev_now(mctx->loop);
 			fbr_buffer_alloc_commit(&mctx->fbr, fb);
 			break;
 		case ME_PAXOS:

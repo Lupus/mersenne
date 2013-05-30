@@ -38,12 +38,13 @@
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size1,add)
 
-#define VALUE_TO 1.0
+#define VALUE_TO 5.0
 #define VALUE_SIZE 1400
 
 struct my_value {
 	struct buffer *v;
 	struct ev_timer timer;
+	int timed_out;
 	UT_hash_handle hh;
 };
 
@@ -61,6 +62,7 @@ struct client_context {
 	struct ev_loop *loop;
 	fbr_id_t mersenne_read;
 	fbr_id_t main;
+	struct fbr_cond_var timeouts_cond;
 	struct my_value *values;
 	struct fbr_mutex *mutex;
 	int concurrency;
@@ -166,14 +168,10 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
 	struct client_context *cc = (struct client_context *)w->data;
-	struct my_value *value, **vptr;
-	struct fbr_buffer *fb;
+	struct my_value *value;
 	value = container_of(w, struct my_value, timer);
-	fb = fbr_get_user_data(&cc->fbr, cc->main);
-	assert(NULL != fb);
-	vptr = fbr_buffer_alloc_prepare(&cc->fbr, fb, sizeof(void *));
-	*vptr = value;
-	fbr_buffer_alloc_commit(&cc->fbr, fb);
+	value->timed_out = 1;
+	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
 }
 
 void fiber_reader(struct fbr_context *fiber_context, void *_arg)
@@ -263,6 +261,7 @@ static void init_values(struct client_context *cc)
 {
 	int i;
 	struct my_value *values = calloc(sizeof(struct my_value), cc->concurrency);
+	assert(values);
 	cc->values = NULL;
 	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
 	for(i = 0; i < cc->concurrency; i++) {
@@ -275,15 +274,17 @@ static void init_values(struct client_context *cc)
 		submit_value(cc, values + i);
 		ev_timer_start(cc->loop, &(values[i].timer));
 	}
+	cc->values = values;
 }
 
 
 void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
-	struct my_value *value, **vptr;
 	fbr_id_t reader, stats;
 	struct fbr_buffer fb;
+	struct fbr_mutex mutex;
+	struct my_value *v;
 
 	cc = container_of(fiber_context, struct client_context, fbr);
 
@@ -293,18 +294,26 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	set_up_socket(cc);
 	init_values(cc);
 
+	fbr_mutex_init(&cc->fbr, &mutex);
+
 	reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, NULL, 0);
 	fbr_transfer(&cc->fbr, reader);
 	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, NULL, 0);
 	fbr_transfer(&cc->fbr, stats);
 
-	for(;;) {
-		vptr = fbr_buffer_read_address(&cc->fbr, &fb, sizeof(void *));
-		value = *vptr;
-		fbr_buffer_read_advance(&cc->fbr, &fb);
-		cc->stats.timeouts++;
-		submit_value(cc, value);
-		ev_timer_again(cc->loop, &value->timer);
+	for (;;) {
+		fbr_mutex_lock(&cc->fbr, &mutex);
+		fbr_cond_wait(&cc->fbr, &cc->timeouts_cond, &mutex);
+		fbr_mutex_unlock(&cc->fbr, &mutex);
+
+		for (v = cc->values; v != NULL; v = v->hh.next) {
+			if (0 == v->timed_out)
+				continue;
+			cc->stats.timeouts++;
+			submit_value(cc, v);
+			ev_timer_again(cc->loop, &v->timer);
+			v->timed_out = 0;
+		}
 	}
 }
 
@@ -325,6 +334,7 @@ int main(int argc, char *argv[]) {
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
 	fbr_mutex_init(&cc.fbr, &mutex);
+	fbr_cond_init(&cc.fbr, &cc.timeouts_cond);
 	cc.mutex = &mutex;
 
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);

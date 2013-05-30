@@ -29,6 +29,7 @@
 #include <mersenne/acc_storage.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/context.h>
+#include <mersenne/util.h>
 #include <mersenne/acc.pb-c.h>
 
 static const uint32_t WAL_MAGIC = 0xcf52754d;
@@ -93,7 +94,7 @@ static void scan_log_dir(ME_P_ struct acs_log_dir *dir)
 
 	if (NULL == dir->lsn_arr) {
 		dir->lsn_arr_size = 128;
-		dir->lsn_arr = malloc(dir->lsn_arr_size);
+		dir->lsn_arr = malloc(dir->lsn_arr_size * sizeof(uint64_t));
 		if (NULL == dir->lsn_arr)
 			err(EXIT_FAILURE, "malloc");
 	}
@@ -118,7 +119,8 @@ static void scan_log_dir(ME_P_ struct acs_log_dir *dir)
 		if (i > dir->lsn_arr_size) {
 			while (i > dir->lsn_arr_size)
 				dir->lsn_arr_size *= 2;
-			dir->lsn_arr = realloc(dir->lsn_arr, dir->lsn_arr_size);
+			dir->lsn_arr = realloc(dir->lsn_arr,
+					dir->lsn_arr_size * sizeof(uint64_t));
 			if (NULL == dir->lsn_arr)
 				err(EXIT_FAILURE, "realloc");
 		}
@@ -394,6 +396,7 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 	char *formatted_filename = wal_lsn_to_filename(dir, lsn, in_progress);
 	const char *open_mode;
 	ssize_t retval;
+	memset(log, 0x00, sizeof(*log));
 	strncpy(log->filename, formatted_filename, PATH_MAX);
 	log->mode = mode;
 	log->dir = dir;
@@ -473,7 +476,10 @@ void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 	uint32_t magic = REC_MAGIC;
 	ssize_t retval;
 	assert(WLM_RW == log->mode);
-	header.lsn = ctx->confirmed_lsn++;
+	if (ALK_WAL == log->dir->kind)
+		header.lsn = ctx->confirmed_lsn++;
+	else
+		header.lsn = 0;
 	header.size = size;
 	header.tstamp = ev_now(mctx->loop);
 	header.checksum = crc32(0L, Z_NULL, 0);
@@ -495,7 +501,7 @@ void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 				fbr_strerror(&mctx->fbr,
 					mctx->fbr.f_errno));
 	log->rows++;
-	if (1 == log->rows)
+	if (1 == log->rows && ALK_WAL == log->dir->kind)
 		in_progress_rename(log);
 }
 
@@ -516,15 +522,16 @@ void wal_log_close(ME_P_ struct wal_log *log)
 			errx(EXIT_FAILURE, "async fsync failed: %s",
 					fbr_strerror(&mctx->fbr,
 						mctx->fbr.f_errno));
-		if (log->in_progress) {
-			if (1 == log->rows)
-				in_progress_rename(log);
-			else if(0 == log->rows)
-				in_progress_unlink(log->filename);
-			else
-				errx(EXIT_FAILURE, "In-progress log with %zd"
-						" rows", log->rows);
-		}
+	}
+
+	if (log->in_progress) {
+		if (1 == log->rows)
+			in_progress_rename(log);
+		else if(0 == log->rows)
+			in_progress_unlink(log->filename);
+		else
+			errx(EXIT_FAILURE, "In-progress log with %zd"
+					" rows", log->rows);
 	}
 
 	fbr_async_fclose(&mctx->fbr, log->as);
@@ -626,13 +633,17 @@ static void recover_wal(ME_P_ struct wal_log *log)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 
 	wal_iter_open(ME_A_ &iter, log);
-	fbr_log_d(&mctx->fbr, "recovering %s", log->filename);
+	fbr_log_i(&mctx->fbr, "recovering %s", log->filename);
 
 	while ((size = wal_iter_read(ME_A_ &iter, &lsn, &ptr, &buf_size))) {
+		if (ALK_SNAP == log->dir->kind) {
+			replay_rec(ME_A_ ptr, size);
+			continue;
+		}
 		if (lsn > 0 && lsn <= ctx->confirmed_lsn) {
-			fbr_log_d(&mctx->fbr, "skipping lsn less than current,"
+			/* fbr_log_d(&mctx->fbr, "skipping lsn less than current,"
 					" (%zd <= %zd)", lsn,
-					ctx->confirmed_lsn);
+					ctx->confirmed_lsn); */
 			continue;
 		}
 		if (lsn > ctx->confirmed_lsn + 1) {
@@ -696,6 +707,7 @@ last_wal:
 		}
 		recover_wal(ME_A_ &log);
 		wal_log_close(ME_A_ &log);
+		fbr_log_i(&mctx->fbr, "Recovered in-progress WAL");
 	} else {
 		retval = wal_log_open_ro(ME_A_ &log, dir, last_lsn, 0);
 		if (-1 == retval)
@@ -717,7 +729,7 @@ void wal_rotate(ME_P_ struct wal_log *log, struct acs_log_dir *dir)
 {
 	struct wal_log new_log;
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	uint64_t lsn = ctx->confirmed_lsn + 1;
+	uint64_t lsn = ctx->confirmed_lsn;
 	ssize_t retval;
 
 	retval = wal_log_open_rw(ME_A_ &new_log, dir, lsn, 1);
@@ -725,6 +737,121 @@ void wal_rotate(ME_P_ struct wal_log *log, struct acs_log_dir *dir)
 		errx(EXIT_FAILURE, "unable to rotate log at lsn %zd", lsn);
 	wal_log_close(ME_A_ log);
 	*log = new_log;
+}
+
+static void wal_write_state_to(ME_P_ struct acs_context *ctx,
+		struct wal_log *log)
+{
+	WalRec wal_rec = WAL_REC__INIT;
+	WalState wal_state = WAL_STATE__INIT;
+	void *buf;
+	size_t len;
+
+	wal_rec.type = WAL_REC_TYPE__State;
+	wal_rec.state = &wal_state;
+	wal_state.highest_accepted = ctx->highest_accepted;
+	wal_state.highest_finalized = ctx->highest_finalized;
+	len = wal_rec__get_packed_size(&wal_rec);
+	assert(len < UINT16_MAX);
+	buf = malloc(len);
+	assert(buf);
+	wal_rec__pack(&wal_rec, buf);
+	wal_log_write(ME_A_ log, buf, len);
+	ctx->writes_per_sync++;
+	free(buf);
+}
+
+static void wal_write_state(ME_P_ struct acs_context *ctx)
+{
+	struct acs_context *me_ctx = &mctx->pxs.acc.acs;
+	wal_write_state_to(ME_A_ ctx, me_ctx->wal);
+}
+
+static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
+		struct wal_log *log)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	WalRec wal_rec = WAL_REC__INIT;
+	WalValue wal_value = WAL_VALUE__INIT;
+	void *buf;
+	size_t len;
+
+	wal_rec.type = WAL_REC_TYPE__Value;
+	wal_rec.value = &wal_value;
+	wal_value.iid = r->iid;
+	wal_value.b = r->b;
+	if (r->v) {
+		wal_value.content.data = (uint8_t *)r->v->ptr;
+		wal_value.content.len = r->v->size1;
+		wal_value.has_content = 1;
+		wal_value.vb = r->vb;
+		wal_value.has_vb = 1;
+	}
+	len = wal_rec__get_packed_size(&wal_rec);
+	assert(len < UINT16_MAX);
+	buf = malloc(len);
+	assert(buf);
+	wal_rec__pack(&wal_rec, buf);
+	wal_log_write(ME_A_ log, buf, len);
+	ctx->writes_per_sync++;
+	free(buf);
+}
+
+static void wal_write_value(ME_P_ struct acc_instance_record *r)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	wal_write_value_to(ME_A_ r, ctx->wal);
+}
+
+static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct acs_context *ctx;
+	uint64_t lsn;
+	struct acc_instance_record *r, *x;
+	struct wal_log snap;
+	ssize_t retval;
+	struct acs_context snap_acs_ctx;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ctx = &mctx->pxs.acc.acs;
+	lsn = ctx->confirmed_lsn - 1;
+
+	/* Take the snapshot */
+	SLIST_INIT(&ctx->snap_instances);
+	for (r = ctx->instances; r != NULL; r = r->hh.next) {
+		r->is_cow = 1;
+		SLIST_INSERT_HEAD(&ctx->snap_instances, r, entries);
+	}
+	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
+
+	/* Write the snapshot */
+	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
+	if (-1 == retval)
+		errx(EXIT_FAILURE, "unable to create a new snashot");
+	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
+	SLIST_FOREACH_SAFE(r, &ctx->snap_instances, entries, x) {
+		wal_write_value_to(ME_A_ r, &snap);
+		if (0 == r->is_cow)
+			free(r);
+	}
+	for (r = ctx->instances; r != NULL; r = r->hh.next) {
+		r->is_cow = 0;
+	}
+	in_progress_rename(&snap);
+	wal_log_close(ME_A_ &snap);
+	ctx->snap_dir.max_lsn = lsn;
+	ctx->snapshot_fiber = FBR_ID_NULL;
+}
+
+static void create_snapshot(ME_P)
+{
+	struct acs_context* ctx = &mctx->pxs.acc.acs;
+	if (!fbr_id_isnull(ctx->snapshot_fiber))
+		return;
+	ctx->snapshot_fiber = fbr_create(&mctx->fbr, "acceptor/take_snapshot",
+			snapshot_fiber, NULL, 0);
+	fbr_transfer(&mctx->fbr, ctx->snapshot_fiber);
 }
 
 static void recover_snapshot(ME_P)
@@ -751,6 +878,7 @@ static void recover_snapshot(ME_P)
 				ctx->snap_dir.max_lsn);
 	recover_wal(ME_A_ &log);
 	wal_log_close(ME_A_ &log);
+	ctx->confirmed_lsn = ctx->snap_dir.max_lsn;
 }
 
 static void recover(ME_P)
@@ -762,83 +890,41 @@ static void recover(ME_P)
 	scan_log_dir(ME_A_ &ctx->wal_dir);
 	recover_snapshot(ME_A);
 	recover_remaining_wals(ME_A);
+	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepter = %zd,"
+			" highest finalized = %zd", ctx->highest_accepted,
+			ctx->highest_finalized);
 }
 
 void acs_initialize(ME_P)
 {
-	char wal_buf[512];
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	snprintf(wal_buf, sizeof(wal_buf), "%s/0.wal",
-			mctx->args_info.acceptor_wal_dir_arg);
 	ctx->wal = malloc(sizeof(*ctx->wal));
 	if (NULL == ctx->wal)
 		err(EXIT_FAILURE, "malloc");
 	recover(ME_A);
 }
 
-static int writes_per_sync;
 
 void acs_batch_start(ME_P)
 {
-	writes_per_sync = 0;
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	ctx->writes_per_sync = 0;
 }
 
 void acs_batch_finish(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	if (0 == writes_per_sync)
+	uint64_t rows_per_snap;
+	if (0 == ctx->writes_per_sync)
 		return;
-	wal_log_sync(ME_A_ ctx->wal);
-	fbr_log_i(&mctx->fbr, "Flushed %d writes", writes_per_sync);
-}
-
-static void wal_write_state(ME_P)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	WalRec wal_rec = WAL_REC__INIT;
-	WalState wal_state = WAL_STATE__INIT;
-	void *buf;
-	size_t len;
-
-	wal_rec.type = WAL_REC_TYPE__State;
-	wal_rec.state = &wal_state;
-	wal_state.highest_accepted = ctx->highest_accepted;
-	wal_state.highest_finalized = ctx->highest_finalized;
-	len = wal_rec__get_packed_size(&wal_rec);
-	assert(len < UINT16_MAX);
-	buf = malloc(len);
-	assert(buf);
-	wal_rec__pack(&wal_rec, buf);
-	wal_log_write(ME_A_ ctx->wal, buf, len);
-	free(buf);
-}
-
-static void wal_write_value(ME_P_ struct acc_instance_record *r)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	WalRec wal_rec = WAL_REC__INIT;
-	WalValue wal_value = WAL_VALUE__INIT;
-	void *buf;
-	size_t len;
-
-	wal_rec.type = WAL_REC_TYPE__Value;
-	wal_rec.value = &wal_value;
-	wal_value.iid = r->iid;
-	wal_value.b = r->b;
-	if (r->v) {
-		wal_value.content.data = (uint8_t *)r->v->ptr;
-		wal_value.content.len = r->v->size1;
-		wal_value.has_content = 1;
-		wal_value.vb = r->vb;
-		wal_value.has_vb = 1;
-	}
-	len = wal_rec__get_packed_size(&wal_rec);
-	assert(len < UINT16_MAX);
-	buf = malloc(len);
-	assert(buf);
-	wal_rec__pack(&wal_rec, buf);
-	wal_log_write(ME_A_ ctx->wal, buf, len);
-	free(buf);
+	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
+		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
+	else
+		wal_log_sync(ME_A_ ctx->wal);
+	fbr_log_d(&mctx->fbr, "Flushed %zd writes", ctx->writes_per_sync);
+	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
+	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
+		create_snapshot(ME_A);
 }
 
 uint64_t acs_get_highest_accepted(ME_P)
@@ -849,7 +935,7 @@ uint64_t acs_get_highest_accepted(ME_P)
 void acs_set_highest_accepted(ME_P_ uint64_t iid)
 {
 	mctx->pxs.acc.acs.highest_accepted = iid;
-	wal_write_state(ME_A);
+	wal_write_state(ME_A_ &mctx->pxs.acc.acs);
 }
 
 uint64_t acs_get_highest_finalized(ME_P)
@@ -860,10 +946,10 @@ uint64_t acs_get_highest_finalized(ME_P)
 void acs_set_highest_finalized(ME_P_ uint64_t iid)
 {
 	mctx->pxs.acc.acs.highest_finalized = iid;
-	wal_write_state(ME_A);
+	wal_write_state(ME_A_ &mctx->pxs.acc.acs);
 }
 
-int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
+int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
@@ -871,7 +957,7 @@ int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	int found = 1;
 
 	HASH_FIND_WIID(ctx->instances, &iid, w);
-	if(NULL == w) {
+	if (NULL == w) {
 		found = 0;
 		if(mode == ACS_FM_CREATE) {
 			w = malloc(sizeof(*w));
@@ -880,6 +966,37 @@ int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	}
 	*rptr = w;
 	return found;
+}
+
+int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
+		enum acs_find_mode mode)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	struct acc_instance_record *r, *r_copy;
+	int result;
+	result = find_record(ME_A_ &r, iid, mode);
+	if (1 == result && r->is_cow) {
+		r_copy = malloc(sizeof(*r_copy));
+		if (NULL == r_copy)
+			err(EXIT_FAILURE, "malloc");
+		memcpy(r_copy, r, sizeof(*r));
+		HASH_DEL(ctx->instances, r);
+		r->is_cow = 0;
+		HASH_ADD_WIID(ctx->instances, iid, r_copy);
+		r_copy->is_cow = 0;
+		r = r_copy;
+	}
+	*rptr = r;
+	return result;
+}
+
+const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid)
+{
+	struct acc_instance_record *r;
+	int result = find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND);
+	if (1 == result)
+		return r;
+	return NULL;
 }
 
 void acs_store_record(ME_P_ struct acc_instance_record *record)
