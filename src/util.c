@@ -53,3 +53,26 @@ void buffer_ensure_writable(ME_P_ struct fbr_buffer *fb, size_t size)
 	fbr_log_i(&mctx->fbr, "buffer %p resized to %zd bytes", fb,
 			current_size * 2);
 }
+
+void *find_majority_element(void *arr, size_t size, size_t el_size,
+		int (*eq)(void *a, void *b)) {
+	size_t count = 0;
+	void *i, *majority_element;
+	void *end = arr + ((size + 1) * el_size);
+	for (i = arr; i < end; i+= el_size) {
+		if (count == 0)
+			majority_element = i;
+		if (eq(i, majority_element))
+			count++;
+		else
+			count--;
+	}
+	count = 0;
+	for (i = arr; i < end; i+= el_size)
+		if (eq(i, majority_element))
+			count++;
+	if (count > size / 2)
+		return majority_element;
+	else
+		return NULL;
+}

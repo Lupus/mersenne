@@ -34,6 +34,7 @@ struct sockaddr_in;
 
 struct me_peer {
 	int index;
+	int acc_index;
 	struct sockaddr_in addr;
 	int ack_ttl;
 	struct pxs_peer_info pxs;

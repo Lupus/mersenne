@@ -34,11 +34,15 @@
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 
-struct lea_instance {
-	uint64_t iid;
+struct lea_ack {
 	uint64_t b;
 	struct buffer *v;
-	struct bm_mask *acks;
+};
+
+struct lea_instance {
+	uint64_t iid;
+	struct lea_ack *acks;
+	struct lea_ack *chosen;
 	int closed;
 	ev_tstamp modified;
 };
@@ -94,17 +98,18 @@ static void do_deliver(ME_P_ struct learner_context *context, struct
 	struct fbr_buffer *buffer = context->arg->buffer;
 
 	if(fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
-		snprintf(buf, instance->v->size1 + 1, "%s", instance->v->ptr);
+		snprintf(buf, instance->chosen->v->size1 + 1, "%s",
+				instance->chosen->v->ptr);
 		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
 				"#%ld vith value ``%s'' size %d",
-				instance->iid, instance->b, buf,
-				instance->v->size1);
+				instance->iid, instance->chosen->b, buf,
+				instance->chosen->v->size1);
 	}
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = instance->iid;
-	info->buffer = sm_in_use(instance->v);
+	info->buffer = sm_in_use(instance->chosen->v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
 
@@ -169,6 +174,7 @@ static void retransmit_next_window(ME_P_ struct learner_context *context)
 static void try_deliver(ME_P_ struct learner_context *context)
 {
 	int i, j;
+	int k;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
@@ -179,13 +185,42 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		context->first_non_delivered = i + 1;
 
 		instance->closed = 0;
-		bm_init(instance->acks, peer_count(ME_A));
-		sm_free(instance->v);
-		instance->v = NULL;
+		for (k = 0; k < pxs_acceptors_count(ME_A); k++) {
+			sm_free(instance->acks[k].v);
+			instance->acks[k].v = NULL;
+			instance->acks[k].b = 0;
+		}
+		instance->chosen = NULL;
 		instance->modified = ev_now(mctx->loop);
+		instance->iid = i + LEA_INSTANCE_WINDOW;
 		if (context->first_non_delivered == context->next_retransmit)
 			retransmit_next_window(ME_A_ context);
 	}
+}
+
+static int ack_eq(void *_a, void *_b) {
+	struct lea_ack *a = _a;
+	struct lea_ack *b = _b;
+	if (a == b)
+		return 1;
+	if (a->b != b->b)
+		return 0;
+	if (!a->v ^ !b->v)
+		return 0;
+	if (NULL == a->v && NULL == b->v)
+		return 1;
+	if (buf_cmp(a->v, b->v))
+		return 0;
+	return 1;
+}
+
+static inline int count_acks(ME_P_ struct lea_ack *acks)
+{
+	int i;
+	int count = 0;
+	for (i = 0; i < pxs_acceptors_count(ME_A); i++)
+		count += (NULL != acks[i].v);
+	return count;
 }
 
 static void do_learn(ME_P_ struct learner_context *context, struct
@@ -195,6 +230,8 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	struct lea_instance *instance;
 	struct me_paxos_learn_data *data;
 	int num;
+	struct lea_ack *maj_ack;
+	struct lea_ack *ack;
 
 	data = &pmsg->data.me_paxos_msg_data_u.learn;
 
@@ -211,28 +248,33 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 	}
 
 	instance = get_instance(context, data->i);
+	assert(instance->iid == data->i);
 	if (instance->closed)
 		return;
-	if (NULL == instance->v) {
-		instance->iid = data->i;
-		instance->b = data->b;
+	ack = instance->acks + from->acc_index;
+	if (NULL == ack->v) {
+		ack->b = data->b;
 		assert(buf->size1 > 0);
-		instance->v = sm_in_use(buf);
+		ack->v = sm_in_use(buf);
 	} else {
-		assert(instance->iid == data->i);
-		//FIXME: Find out why does it fails the following:
-		//assert(instance->b == data->b);
-		assert(0 == buf_cmp(instance->v, buf));
+		if (data->b <= ack->b)
+			return;
+		ack->b = data->b;
+		sm_free(ack->v);
+		ack->v = sm_in_use(buf);
 	}
-	if (bm_get_bit(instance->acks, from->index))
-		return;
-	bm_set_bit(instance->acks, from->index, 1);
 	instance->modified = ev_now(mctx->loop);
-	num = bm_hweight(instance->acks);
-	if (pxs_is_acc_majority(ME_A_ num)) {
-		instance->closed = 1;
-		try_deliver(ME_A_ context);
-	}
+	num = count_acks(ME_A_ instance->acks);
+	if (!pxs_is_acc_majority(ME_A_ num))
+		return;
+	maj_ack = find_majority_element(instance->acks,
+			pxs_acceptors_count(ME_A),
+			sizeof(struct lea_ack), ack_eq);
+	if (NULL == maj_ack)
+		return;
+	instance->closed = 1;
+	instance->chosen = maj_ack;
+	try_deliver(ME_A_ context);
 }
 
 static void do_last_accepted(ME_P_ struct learner_context *context, struct
@@ -304,12 +346,11 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
 
 static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 {
-	int i;
-	int nbits;
+	int i, j;
 	struct lea_instance *instance;
 	struct learner_context *context;
+	uint64_t start;
 
-	nbits = peer_count(ME_A);
 	context = fbr_alloc(&mctx->fbr, sizeof(struct learner_context));
 	fbr_alloc_set_destructor(&mctx->fbr, context, lea_context_destructor,
 			mctx);
@@ -323,17 +364,21 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->item.id = fbr_self(&mctx->fbr);
 	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
 	context->next_retransmit = ~0ULL; // "infinity"
-	context->instances = fbr_alloc(&mctx->fbr, LEA_INSTANCE_WINDOW *
+	context->instances = fbr_calloc(&mctx->fbr, LEA_INSTANCE_WINDOW,
 			sizeof(struct lea_instance));
 	context->highest_seen = context->first_non_delivered;
 
-	for(i = 0; i < LEA_INSTANCE_WINDOW; i++) {
-		instance = context->instances + i;
-		instance->acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
+	start = round_down(context->first_non_delivered, LEA_INSTANCE_WINDOW);
+	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
+		instance = context->instances + j;
 		instance->closed = 0;
-		bm_init(instance->acks, nbits);
-		instance->v = NULL;
+		instance->acks = fbr_calloc(&mctx->fbr,
+				pxs_acceptors_count(ME_A),
+				sizeof(struct lea_ack));
 		instance->modified = ev_now(mctx->loop);
+		instance->iid = i;
+		if (i < context->first_non_delivered)
+			instance->iid += LEA_INSTANCE_WINDOW;
 	}
 
 	return context;
@@ -363,18 +408,14 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		memcpy(&info, ptr, sizeof(struct msg_info));
 		fbr_buffer_read_advance(&mctx->fbr, fb);
 
-		fbr_log_d(&mctx->fbr, "got something on my buffer");
-
 		pmsg = &info.msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
 				buf = info.buf;
-				fbr_log_d(&mctx->fbr, "got learn message");
 				do_learn(ME_A_ context, pmsg, buf, info.from);
 				sm_free(info.buf);
 				break;
 			case ME_PAXOS_LAST_ACCEPTED:
-				fbr_log_d(&mctx->fbr, "got last accepted message");
 				do_last_accepted(ME_A_ context, pmsg, info.from);
 				break;
 			default:
@@ -383,6 +424,5 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 						strval_me_paxos_message_type(pmsg->data.type));
 		}
 		sm_free(info.msg);
-		fbr_log_d(&mctx->fbr, "freed incoming message");
 	}
 }

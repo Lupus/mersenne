@@ -85,8 +85,6 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 			break;
 		case ME_PAXOS:
 			pmsg = &msg->me_message_u.paxos_message;
-			if (pmsg->data.type == ME_PAXOS_LEARN)
-				fbr_log_d(&mctx->fbr, "received learn message on socket");
 			pxs_do_message(ME_A_ msg, from);
 			break;
 	}

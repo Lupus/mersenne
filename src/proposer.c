@@ -287,12 +287,19 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			num = bm_hweight(instance->p1.acks);
 			if (pxs_is_acc_majority(ME_A_ num)) {
 				ev_timer_stop(mctx->loop, &instance->timer);
-				if(NULL != instance->p1.v) {
+				if (NULL != instance->p1.v) {
+					fbr_log_d(&mctx->fbr, "Collected %d"
+							" responses, safe"
+							" value has been found",
+							num);
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_WITH_VALUE,
 							&new_base);
 				} else {
+					fbr_log_d(&mctx->fbr, "Collected %d"
+							" responses, no safe"
+							" value found", num);
 					new_base.type = IE_R0;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_NO_VALUE,

@@ -47,7 +47,17 @@
 			(var) = (tvar))
 #endif
 
+static inline uint64_t round_down(uint64_t n, uint64_t m) {
+	return n / m * m;
+}
+
+static inline uint64_t round_up(uint64_t n, uint64_t m) {
+	return (n + m - 1) / m;
+}
+
 void make_socket_non_blocking(int fd);
 void buffer_ensure_writable(ME_P_ struct fbr_buffer *fb, size_t size);
+void *find_majority_element(void *arr, size_t size, size_t el_size,
+		int (*eq)(void *a, void *b));
 
 #endif

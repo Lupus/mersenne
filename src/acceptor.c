@@ -122,7 +122,6 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 	struct acc_instance_record *r = NULL;
 	struct me_paxos_accept_data *data;
-	char buf[ME_MAX_XDR_MESSAGE_LEN];
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
@@ -136,21 +135,17 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 	r->b = data->b;
 	r->vb = data->b;
-	if(NULL == r->v) {
+	if (NULL == r->v) {
 		r->v = buf_sm_steal(data->v);
 		assert(r->v->size1 > 0);
-	} else
-		//FIXME: Find the cause of this as it's a violation of the
-		//FIXME: crutial safety property
-		if(0 != buf_cmp(r->v, data->v)) {
-			fbr_log_e(&mctx->fbr, "Conflict while accepting a value for instance %lu ballot %lu", r->iid, r->b);
-			snprintf(buf, data->v->size1 + 1, "%s", data->v->ptr);
-			fbr_log_e(&mctx->fbr, "Suggested value sized %d is: ``%s''", data->v->size1, buf);
-			snprintf(buf, r->v->size1 + 1, "%s", r->v->ptr);
-			fbr_log_e(&mctx->fbr, "Current value sized %d is: ``%s''", r->v->size1, buf);
-			abort();
-		}
-	if(r->iid > acs_get_highest_accepted(ME_A))
+	} else if (0 != buf_cmp(r->v, data->v)) {
+		fbr_log_d(&mctx->fbr, "Replacing value for instance %lu"
+				" ballot %lu", r->iid, r->b);
+		sm_free(r->v);
+		r->v = buf_sm_steal(data->v);
+		assert(r->v->size1 > 0);
+	}
+	if (r->iid > acs_get_highest_accepted(ME_A))
 		acs_set_highest_accepted(ME_A_ r->iid);
 	acs_store_record(ME_A_ r);
 	send_learn(ME_A_ r, NULL);

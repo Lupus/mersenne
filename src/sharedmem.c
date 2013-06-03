@@ -101,6 +101,8 @@ void * sm_in_use(void *ptr)
 void sm_free(void *ptr)
 {
 	struct sm_block_info *block;
+	if (NULL == ptr)
+		return;
 	block = get_block(ptr);
 	block->references--;
 	if(0 == block->references) {

@@ -64,23 +64,24 @@ void load_peer_list(ME_P_ int my_index)
 	static regex_t rx_config_line;
 	regmatch_t match[4];
 	int retval;
+	int last_acc_index = 0;
 
 	peers_file = fopen("peers", "r");
-	if(!peers_file)
+	if (!peers_file)
 		err(1, "fopen");
-	if(regcomp(&rx_config_line, "^\\([[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\)\\(\\:\\(a\\)\\)\\?", 0))
+	if (regcomp(&rx_config_line, "^\\([[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\.[[:digit:]]\\+\\)\\(\\:\\(a\\)\\)\\?", 0))
 		err(EXIT_FAILURE, "%s", "regcomp failed");
 	i = 0;
-	while(1) {
+	while (1) {
 		fgets(line_buf, 255, peers_file);
-		if(feof(peers_file))
+		if (feof(peers_file))
 			break;
 		p = malloc(sizeof(struct me_peer));
 		memset(p, 0, sizeof(struct me_peer));
 		p->index = i;
-		
+
 		retval = regexec(&rx_config_line, line_buf, 4, match, 0);
-		if(retval) {
+		if (retval) {
 			if(REG_NOMATCH != retval)
 				errx(EXIT_FAILURE, "%s", "regexec failed");
 			errx(EXIT_FAILURE, "Invalid config line: %s", line_buf);
@@ -92,17 +93,19 @@ void load_peer_list(ME_P_ int my_index)
 		}
 
 		p->addr.sin_family = AF_INET;
-		if(0 == inet_aton(addr, &p->addr.sin_addr))
+		if (0 == inet_aton(addr, &p->addr.sin_addr))
 			errx(EXIT_FAILURE, "invalid address: %s", line_buf);
 		p->addr.sin_port = htons(mctx->args_info.port_num_arg);
-		if('a' == flag[0])
+		if ('a' == flag[0])
 			p->pxs.is_acceptor = 1;
-		if(i == my_index) {
+		if (i == my_index) {
 			mctx->me = p;
 			fbr_log_i(&mctx->fbr, "My ip is %s", line_buf);
-			if(p->pxs.is_acceptor)
+			if (p->pxs.is_acceptor)
 				fbr_log_i(&mctx->fbr, "I am an acceptor");
 		}
+		if (p->pxs.is_acceptor)
+			p->acc_index = last_acc_index++;
 		add_peer(ME_A_ p);
 		i++;
 	}
