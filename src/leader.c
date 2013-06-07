@@ -260,7 +260,7 @@ void do_msg_ok(ME_P_ struct me_message *msg, struct me_peer *from)
 	}
 
 	if(!bm_get_bit(data->me_leader_msg_data_u.ok.trust, mctx->me->index)) {
-		fbr_log_d(&mctx->fbr, "Current leader does not trust me");
+		fbr_log_i(&mctx->fbr, "Current leader does not trust me");
 		start_round(ME_A_ mctx->ldr.r + 1);
 		return;
 	}
@@ -320,7 +320,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 
 	mctx->ldr.delta_count++;
 	if(mctx->ldr.delta_count > 2) {
-		fbr_log_d(&mctx->fbr, "Current leader timed out");
+		fbr_log_i(&mctx->fbr, "Current leader timed out");
 		start_round(ME_A_ mctx->ldr.r + 1);
 	}
 }
