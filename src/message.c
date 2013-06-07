@@ -22,12 +22,97 @@
 #include <err.h>
 #include <arpa/inet.h>
 #include <stdio.h>
+#include <errno.h>
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/util.h>
+
+static void message_destructor(void *context, void *ptr)
+{
+	xdr_free((xdrproc_t)xdr_me_message, ptr);
+}
+
+static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
+{
+	int pos;
+	struct me_message *msg;
+	struct fbr_buffer *fb;
+	struct msg_info *info;
+	struct me_paxos_message *pmsg;
+
+	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor,
+			NULL);
+	pos = xdr_getpos(xdrs);
+	if(!xdr_me_message(xdrs, msg))
+		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a "
+				"message at %d", pos);
+
+	msg_dump(ME_A_ msg, MSG_DIR_RECEIVED, &from->addr);
+
+	switch(msg->super_type) {
+		case ME_LEADER:
+			fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_leader);
+			buffer_ensure_writable(ME_A_ fb,
+					sizeof(struct msg_info));
+			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+					sizeof(struct msg_info));
+			info->msg = sm_in_use(msg);
+			info->from = from;
+			info->received_ts = ev_now(mctx->loop);
+			fbr_buffer_alloc_commit(&mctx->fbr, fb);
+			break;
+		case ME_PAXOS:
+			pmsg = &msg->me_message_u.paxos_message;
+			pxs_do_message(ME_A_ msg, from);
+			break;
+	}
+	sm_free(msg);
+}
+
+static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sockaddr *addr,
+		socklen_t addrlen)
+{
+	struct me_peer *p;
+	XDR xdrs;
+
+	if(addr->sa_family != AF_INET) {
+		fbr_log_w(&mctx->fbr, "unsupported address family: %d", (addr->sa_family));
+		return;
+	}
+
+	p = find_peer(ME_A_ (struct sockaddr_in *)addr);
+	if(!p) {
+		fbr_log_w(&mctx->fbr, "got message from unknown peer --- ignoring");
+		return;
+	}
+
+	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
+	process_message(ME_A_ &xdrs, p);
+	xdr_destroy(&xdrs);
+}
+
+void fiber_listener(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	int nbytes;
+	struct sockaddr client_addr;
+	socklen_t client_addrlen = sizeof(client_addr);
+	char msgbuf[ME_MAX_XDR_MESSAGE_LEN];
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	for(;;) {
+		nbytes = fbr_recvfrom(&mctx->fbr, mctx->fd, msgbuf,
+				ME_MAX_XDR_MESSAGE_LEN, 0, &client_addr,
+				&client_addrlen);
+		if (nbytes < 0 && errno != EINTR)
+				err(1, "recvfrom");
+		process_message_buf(ME_A_ msgbuf, nbytes, &client_addr,
+				client_addrlen);
+	}
+}
 
 static inline int p_peer(struct me_peer *peer, void *context)
 {
@@ -210,11 +295,19 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
 		if(!predicate(p, context))
 			continue;
-		retval = sendto(mctx->fd, buf, size, 0, (struct sockaddr *) &p->addr, sizeof(p->addr));
+		if (mctx->me == p) {
+			process_message_buf(ME_A_ buf, size,
+					(struct sockaddr *)&mctx->me->addr,
+					sizeof(mctx->me->addr));
+			continue;
+		}
+		retval = sendto(mctx->fd, buf, size, 0,
+				(struct sockaddr *)&p->addr, sizeof(p->addr));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
 		if (retval < size)
-			fbr_log_n(&mctx->fbr, "message got truncated from %d to %d while sending", size, retval);
+			fbr_log_n(&mctx->fbr, "message got truncated from %d to"
+					" %d while sending", size, retval);
 		msg_dump(ME_A_ msg, 1, &p->addr);
 	}
 	xdr_destroy(&xdrs);
