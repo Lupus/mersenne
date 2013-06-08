@@ -195,7 +195,7 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 		r->vb = 0ULL;
 		acs_store_record(ME_A_ r);
 	} else {
-		if (0 != buf_cmp(r->v, buffer)) {
+		if (NULL == r->v || 0 != buf_cmp(r->v, buffer)) {
 			r->v = buffer;
 			acs_store_record(ME_A_ r);
 		}
