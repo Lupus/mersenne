@@ -31,6 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/acc_storage.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 
@@ -90,27 +91,32 @@ static void print_window(ME_P_ struct learner_context *context)
 }
 #endif
 
-static void do_deliver(ME_P_ struct learner_context *context, struct
-		lea_instance *instance)
+static void deliver_v(ME_P_ struct learner_context *context, uint64_t iid,
+		uint64_t b, struct buffer *v)
 {
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct lea_instance_info *info;
 	struct fbr_buffer *buffer = context->arg->buffer;
 
-	if(fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
-		snprintf(buf, instance->chosen->v->size1 + 1, "%s",
-				instance->chosen->v->ptr);
+	if (fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
+		snprintf(buf, v->size1 + 1, "%s", v->ptr);
 		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
 				"#%ld vith value ``%s'' size %d",
-				instance->iid, instance->chosen->b, buf,
-				instance->chosen->v->size1);
+				iid, b, buf, v->size1);
 	}
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
-	info->iid = instance->iid;
-	info->buffer = sm_in_use(instance->chosen->v);
+	info->iid = iid;
+	info->buffer = sm_in_use(v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
+}
+
+static inline void do_deliver(ME_P_ struct learner_context *context,
+		struct lea_instance *instance)
+{
+	deliver_v(ME_A_ context, instance->iid, instance->chosen->b,
+			instance->chosen->v);
 }
 
 static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
@@ -335,6 +341,25 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 	}
 }
 
+static void try_local_delivery(ME_P_ struct learner_context *context)
+{
+	uint64_t i;
+	const struct acc_instance_record *r;
+	uint64_t start = context->first_non_delivered;
+	uint64_t highest_finalized;
+	if (!mctx->me->pxs.is_acceptor)
+		return;
+	highest_finalized = acs_get_highest_finalized(ME_A);
+	for (i = start; i < highest_finalized; i++) {
+		r = acs_find_record_ro(ME_A_ i);
+		if (NULL == r)
+			break;
+		deliver_v(ME_A_ context, r->iid, r->vb, r->v);
+		context->first_non_delivered = i + 1;
+	}
+	context->highest_seen = context->first_non_delivered;
+}
+
 void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
 		void *context)
 {
@@ -346,10 +371,7 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
 
 static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 {
-	int i, j;
-	struct lea_instance *instance;
 	struct learner_context *context;
-	uint64_t start;
 
 	context = fbr_alloc(&mctx->fbr, sizeof(struct learner_context));
 	fbr_alloc_set_destructor(&mctx->fbr, context, lea_context_destructor,
@@ -368,6 +390,14 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 			sizeof(struct lea_instance));
 	context->highest_seen = context->first_non_delivered;
 
+	return context;
+}
+
+static void init_window(ME_P_ struct learner_context *context)
+{
+	uint64_t i, j;
+	struct lea_instance *instance;
+	uint64_t start;
 	start = round_down(context->first_non_delivered, LEA_INSTANCE_WINDOW);
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = context->instances + j;
@@ -380,8 +410,6 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 		if (i < context->first_non_delivered)
 			instance->iid += LEA_INSTANCE_WINDOW;
 	}
-
-	return context;
 }
 
 void lea_fiber(struct fbr_context *fiber_context, void *_arg)
@@ -397,6 +425,9 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	context = init_context(ME_A_ _arg);
 	fb = &context->buffer;
+
+	try_local_delivery(ME_A_ context);
+	init_window(ME_A_ context);
 
 	hole_checker = fbr_create(&mctx->fbr, "learner/hole_checker",
 			lea_hole_checker_fiber, context, 0);

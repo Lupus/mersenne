@@ -58,7 +58,7 @@ void *find_majority_element(void *arr, size_t size, size_t el_size,
 		int (*eq)(void *a, void *b)) {
 	size_t count = 0;
 	void *i, *majority_element;
-	void *end = arr + ((size + 1) * el_size);
+	void *end = arr + (size * el_size);
 	for (i = arr; i < end; i+= el_size) {
 		if (count == 0)
 			majority_element = i;
