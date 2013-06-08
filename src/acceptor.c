@@ -102,7 +102,6 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r->b = data->b;
 		r->v = NULL;
 		r->vb = 0;
-		r->is_final = 0;
 		acs_store_record(ME_A_ r);
 	}
 	if (data->b < r->b) {
@@ -194,11 +193,12 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 		r->b = 0ULL;
 		r->v = buffer;
 		r->vb = 0ULL;
-		r->is_final = 0;
-	}
-	if (0 == r->is_final) {
-		r->is_final = 1;
 		acs_store_record(ME_A_ r);
+	} else {
+		if (0 != buf_cmp(r->v, buffer)) {
+			r->v = buffer;
+			acs_store_record(ME_A_ r);
+		}
 	}
 	acs_set_highest_finalized(ME_A_ iid);
 	acs_free_record(ME_A_ r);

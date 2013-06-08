@@ -36,7 +36,6 @@ struct acc_instance_record {
 	uint64_t b;
 	struct buffer *v;
 	uint64_t vb;
-	int is_final;
 	int is_cow;
 	int stored;
 	UT_hash_handle hh;

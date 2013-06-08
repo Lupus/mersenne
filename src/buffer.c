@@ -59,7 +59,7 @@ int buf_cmp(struct buffer *a, struct buffer *b)
 {
 	if(a->size1 != b->size1)
 		return a->size1 - b->size1;
-	return(memcmp(a->ptr, b->ptr, b->size1));
+	return memcmp(a->ptr, b->ptr, b->size1);
 }
 
 void buffer_sm_destructor(void *context, void *ptr)
