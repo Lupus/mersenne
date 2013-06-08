@@ -731,6 +731,7 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
 		if (!n_events)
 			continue;
+		/* Code that ought to work without workarounds */
 		if (ev_fb.ev_base.arrived) {
 			process_fb(ME_A_ &fb);
 			fbr_mutex_unlock(&mctx->fbr, &fb_mutex);
@@ -739,6 +740,12 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 			process_lea_fb(ME_A_ &lea_fb);
 			fbr_mutex_unlock(&mctx->fbr, &lea_fb_mutex);
 		}
+		/* Workaround for fbr_ev_wait bug: for some reason second event
+		 * does not get through, but since our buffer reads are
+		 * non-blocking, we can try to read from both...
+		 */
+		process_fb(ME_A_ &fb);
+		process_lea_fb(ME_A_ &lea_fb);
 	}
 }
 
