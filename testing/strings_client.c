@@ -236,7 +236,9 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 		last = last_stats.other + last_stats.received;
 		//printf("[STATS] Last = %d\n", last);
 		tx_per_second = (current - last) / interval;
-		printf("[STATS] %.3f transactions per second...\n", tx_per_second);
+		printf("[STATS] %.3f transactions per second, values received:"
+				" %d, other: %d\n", tx_per_second,
+				cc->stats.received, cc->stats.other);
 		last_stats = cc->stats;
 	}
 }
