@@ -662,7 +662,7 @@ static void recover_remaining_wals(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acs_log_dir *dir = &ctx->wal_dir;
-	uint64_t lsn, max_lsn, last_lsn;
+	uint64_t lsn, last_lsn;
 	size_t i;
 	struct wal_log log;
 	ssize_t retval;
@@ -680,7 +680,6 @@ static void recover_remaining_wals(ME_P)
 		goto last_wal;
 	}
 	lsn = ctx->confirmed_lsn;
-	max_lsn = ctx->wal_dir.max_lsn;
 
 	for (i = 0; i < dir->lsn_arr_len - 1; i++) {
 		if (dir->lsn_arr[i] <= lsn && lsn < dir->lsn_arr[i + 1])

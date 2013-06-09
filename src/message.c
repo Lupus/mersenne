@@ -41,7 +41,6 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 	struct me_message *msg;
 	struct fbr_buffer *fb;
 	struct msg_info *info;
-	struct me_paxos_message *pmsg;
 
 	msg = sm_calloc_ext(1, sizeof(struct me_message), message_destructor,
 			NULL);
@@ -65,7 +64,6 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 			fbr_buffer_alloc_commit(&mctx->fbr, fb);
 			break;
 		case ME_PAXOS:
-			pmsg = &msg->me_message_u.paxos_message;
 			pxs_do_message(ME_A_ msg, from);
 			break;
 	}
