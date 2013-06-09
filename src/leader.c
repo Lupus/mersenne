@@ -299,15 +299,10 @@ void do_msg_ack(ME_P_ struct me_message *msg, struct me_peer *from)
 		fbr_log_w(&mctx->fbr,  "got ACK from round higher than mine");
 }
 
-
-static void timeout_cb (EV_P_ ev_timer *w, int revents)
+static void process_timeout(ME_P)
 {
 	int n;
 	struct me_peer *p;
-	struct ldr_context *ldr;
-	struct me_context *mctx;
-	ldr = container_of(w, struct ldr_context, delta_timer);
-	mctx = container_of(ldr, struct me_context, ldr);
 
 	n = HASH_COUNT(mctx->peers);
 
@@ -357,11 +352,39 @@ int ldr_round_length(ME_P)
 	return TIME_DELTA / 1000.;
 }
 
-static void timer_dtor(struct fbr_context *fiber_context, void *_arg)
+static void leader_dtor(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	ev_timer_stop(mctx->loop, &mctx->ldr.delta_timer);
+	fbr_cond_destroy(&mctx->fbr, &mctx->ldr.timeout_cond);
+	fbr_mutex_destroy(&mctx->fbr, &mctx->ldr.mutex);
+}
+
+static void delta_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	for (;;) {
+		while (0 == mctx->ldr.timed_out) {
+			fbr_mutex_lock(&mctx->fbr, &mctx->ldr.mutex);
+			fbr_cond_wait(&mctx->fbr, &mctx->ldr.timeout_cond,
+					&mctx->ldr.mutex);
+			fbr_mutex_unlock(&mctx->fbr, &mctx->ldr.mutex);
+		}
+		process_timeout(ME_A);
+	}
+}
+
+static void timeout_cb (EV_P_ ev_timer *w, int revents)
+{
+	struct ldr_context *ldr;
+	struct me_context *mctx;
+	ldr = container_of(w, struct ldr_context, delta_timer);
+	mctx = container_of(ldr, struct me_context, ldr);
+
+	fbr_cond_signal(&mctx->fbr, &ldr->timeout_cond);
 }
 
 void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
@@ -370,17 +393,25 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct msg_info info, *ptr;
 	struct fbr_buffer buffer;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
+	fbr_id_t delta_fiber_id = FBR_ID_NULL;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	fbr_buffer_init(&mctx->fbr, &buffer, 0);
 	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &buffer);
+	fbr_mutex_init(&mctx->fbr, &mctx->ldr.mutex);
+	fbr_cond_init(&mctx->fbr, &mctx->ldr.timeout_cond);
+
+	delta_fiber_id = fbr_create(&mctx->fbr, "leader/delta_fiber", delta_fiber,
+			NULL, 0);
+	assert(!fbr_id_isnull(delta_fiber_id));
+	fbr_transfer(&mctx->fbr, delta_fiber_id);
 
 	ev_timer_init(&mctx->ldr.delta_timer, timeout_cb, TIME_DELTA / 1000.,
 			TIME_DELTA / 1000.);
 	ev_set_priority(&mctx->ldr.delta_timer, 1);
 	ev_timer_start(mctx->loop, &mctx->ldr.delta_timer);
-	dtor.func = timer_dtor;
+	dtor.func = leader_dtor;
 	fbr_destructor_add(&mctx->fbr, &dtor);
 
 	mctx->ldr.leader = -1;

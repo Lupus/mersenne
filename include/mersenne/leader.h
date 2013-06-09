@@ -32,13 +32,17 @@ struct ldr_context {
 	int r;
 	int leader;
 	int delta_count;
-	ev_timer delta_timer;
+	struct fbr_cond_var timeout_cond;
+	struct fbr_mutex mutex;
+	int timed_out;
+	struct ev_timer delta_timer;
 };
 
 #define LDR_CONTEXT_INITIALIZER { \
 	.r = 0, \
 	.leader = 0, \
 	.delta_count = 0, \
+	.timed_out = 0, \
 }
 
 void ldr_fiber(struct fbr_context *fiber_context, void *_arg);
