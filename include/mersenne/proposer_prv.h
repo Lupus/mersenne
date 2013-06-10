@@ -57,6 +57,7 @@ struct pro_instance {
 	} p2;
 	int client_value;
 	ev_timer timer;
+	int timed_out;
 };
 
 enum instance_event_type {

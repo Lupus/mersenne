@@ -19,6 +19,7 @@
 
  ********************************************************************/
 
+#include <stdlib.h>
 #include <ev.h>
 #include <err.h>
 #include <assert.h>
@@ -36,6 +37,18 @@
 #include <mersenne/bitmask.h>
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
+
+struct proposer_context {
+	struct fbr_buffer *fb;
+	struct fbr_buffer *lea_fb;
+	struct fbr_mutex *fb_mutex;
+	struct fbr_mutex *lea_fb_mutex;
+	struct fbr_cond_var instance_to_cond;
+	struct fbr_mutex instance_to_mutex;
+	fbr_id_t instance_to_fiber_id;
+	struct me_context *mctx;
+	int need_to_run;
+};
 
 static is_func_t * const state_table[IS_MAX] = {
 	do_is_empty,
@@ -189,7 +202,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
 	instance->timer = timer;
-	instance->iid = mctx->pxs.pro.max_iid++;
+	instance->iid += PRO_INSTANCE_WINDOW;
 	run_instance(ME_A_ instance, &base);
 }
 
@@ -394,7 +407,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	switch(base->type) {
 		case IE_E:
 			send_accept(ME_A_ instance);
-			instance->timer.repeat = TO2;
+			ev_timer_set(&instance->timer, 0., TO2);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_TO:
@@ -448,18 +461,33 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	fbr_log_d(&mctx->fbr, "Got promise for instance %lu at vb %lu "
 			"from peer #%d", data->i,
 			data->vb, from->index);
-	if(data->i < mctx->pxs.pro.lowest_non_closed) {
+	if (data->i < mctx->pxs.pro.lowest_non_closed) {
 		fbr_log_d(&mctx->fbr, "Promise discarded as %lu < %lu "
 				"(lowest non closed)",
 				data->i,
 				mctx->pxs.pro.lowest_non_closed);
 		return;
 	}
+	if (data->i > mctx->pxs.pro.lowest_non_closed + PRO_INSTANCE_WINDOW) {
+		fbr_log_d(&mctx->fbr, "Promise discarded as %lu > %lu "
+				"(lowest non closed + instance window size)",
+				data->i,
+				mctx->pxs.pro.lowest_non_closed +
+					PRO_INSTANCE_WINDOW);
+		return;
+	}
 	p.b.type = IE_P;
 	p.from = from;
 	p.data = data;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
-	assert(instance->iid == data->i);
+	if (instance->iid != data->i) {
+		fbr_log_e(&mctx->fbr, "instance->iid (%lu) != data->i (%lu),"
+			       " lowest non closed: %lu, window size: %d",
+				instance->iid, data->i,
+				mctx->pxs.pro.lowest_non_closed,
+				PRO_INSTANCE_WINDOW);
+		abort();
+	}
 	if(IS_P1_PENDING != instance->state)
 		return;
 	if(instance->b == data->b)
@@ -468,15 +496,59 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
 {
-	struct me_context *mctx = (struct me_context *)w->data;
 	struct pro_instance *instance;
-	struct ie_base base;
+	struct proposer_context *proposer_context;
+	struct me_context *mctx;
+	proposer_context = (struct proposer_context *)w->data;
+	mctx = proposer_context->mctx;
 	instance = container_of(w, struct pro_instance, timer);
-	base.type = IE_TO;
-	run_instance(ME_A_ instance, &base);
+	instance->timed_out = 1;
+	fbr_cond_signal(&mctx->fbr, &proposer_context->instance_to_cond);
+	fbr_log_d(&mctx->fbr, "signalling timeout on instance %lu", instance->iid);
+	proposer_context->need_to_run = 1;
 }
 
-static void init_instance(ME_P_ struct pro_instance *instance)
+static void instance_timeout_fiber(struct fbr_context *fiber_context,
+		void *_arg)
+{
+	struct me_context *mctx;
+	struct fbr_mutex *m;
+	struct fbr_cond_var *cond;
+	struct pro_instance *instance;
+	int i, j;
+	int start;
+	struct ie_base base;
+	struct proposer_context *proposer_context = _arg;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	m = &proposer_context->instance_to_mutex;
+	cond = &proposer_context->instance_to_cond;
+	base.type = IE_TO;
+	for (;;) {
+		while (0 == proposer_context->need_to_run) {
+			fbr_mutex_lock(&mctx->fbr, m);
+			fbr_cond_wait(&mctx->fbr, cond, m);
+			fbr_mutex_unlock(&mctx->fbr, m);
+		}
+		proposer_context->need_to_run = 0;
+		fbr_log_d(&mctx->fbr, "need_to_run");
+		start = mctx->pxs.pro.lowest_non_closed;
+		for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+			instance = mctx->pxs.pro.instances +
+				(i % PRO_INSTANCE_WINDOW);
+			if (0 == instance->timed_out)
+				continue;
+			if (IS_P1_PENDING != instance->state &&
+					IS_P2_PENDING != instance->state)
+				continue;
+			instance->timed_out = 0;
+			run_instance(ME_A_ instance, &base);
+		}
+	}
+}
+
+static void init_instance(ME_P_ struct proposer_context *proposer_context,
+		struct pro_instance *instance)
 {
 	int nbits = peer_count(ME_A);
 	instance->p1.acks = fbr_alloc(&mctx->fbr, bm_size(nbits));
@@ -484,7 +556,8 @@ static void init_instance(ME_P_ struct pro_instance *instance)
 	instance->p1.v = NULL;
 	instance->p2.v = NULL;
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
-	instance->timer.data = ME_A;
+	instance->timer.data = proposer_context;
+	instance->timed_out = 0;
 }
 
 static void free_instance(ME_P_ struct pro_instance *instance)
@@ -520,14 +593,16 @@ static void instances_destructor(struct fbr_context *fiber_context, void *ptr,
 	}
 }
 
-static void proposer_init(ME_P)
+static void proposer_init(ME_P_ struct proposer_context *proposer_context,
+		uint64_t starting_iid)
 {
 	int i;
 	struct ie_base base;
 	size_t size = sizeof(struct pro_instance) * PRO_INSTANCE_WINDOW;
+	uint64_t max_iid;
 	base.type = IE_I;
-	mctx->pxs.pro.max_iid = 0;
-	mctx->pxs.pro.lowest_non_closed = 0;
+	max_iid = round_down(starting_iid, PRO_INSTANCE_WINDOW);
+	mctx->pxs.pro.lowest_non_closed = starting_iid;
 	mctx->pxs.pro.instances = fbr_alloc(&mctx->fbr, size);
 	fbr_alloc_set_destructor(&mctx->fbr, mctx->pxs.pro.instances,
 			instances_destructor, mctx);
@@ -535,8 +610,14 @@ static void proposer_init(ME_P)
 	mctx->pxs.pro.pending_size = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
 	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
-		init_instance(ME_A_ mctx->pxs.pro.instances + i);
-		mctx->pxs.pro.instances[i].iid = mctx->pxs.pro.max_iid++;
+		init_instance(ME_A_ proposer_context,
+				mctx->pxs.pro.instances + i);
+		if (max_iid < starting_iid)
+			mctx->pxs.pro.instances[i].iid =
+				max_iid + PRO_INSTANCE_WINDOW;
+		else
+			mctx->pxs.pro.instances[i].iid = max_iid;
+		max_iid++;
 		run_instance(ME_A_ mctx->pxs.pro.instances + i, &base);
 	}
 }
@@ -595,13 +676,6 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
 }
 
-struct proposer_context {
-	struct fbr_buffer *fb;
-	struct fbr_buffer *lea_fb;
-	struct fbr_mutex *fb_mutex;
-	struct fbr_mutex *lea_fb_mutex;
-};
-
 static void context_destructor(struct fbr_context *fiber_context, void *ptr,
 		void *context)
 {
@@ -614,6 +688,8 @@ static void context_destructor(struct fbr_context *fiber_context, void *ptr,
 		fbr_mutex_destroy(&mctx->fbr, proposer_context->fb_mutex);
 	if (proposer_context->lea_fb_mutex)
 		fbr_mutex_destroy(&mctx->fbr, proposer_context->lea_fb_mutex);
+	fbr_mutex_destroy(&mctx->fbr, &proposer_context->instance_to_mutex);
+	fbr_cond_destroy(&mctx->fbr, &proposer_context->instance_to_cond);
 }
 
 static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
@@ -691,10 +767,15 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_mutex lea_fb_mutex;
 	struct fbr_ev_base *fb_events[3];
 	int n_events;
+	uint64_t starting_iid = 0;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	proposer_context = fbr_alloc(&mctx->fbr, sizeof(struct pro_context));
+	if (mctx->me->pxs.is_acceptor)
+		starting_iid = acs_get_highest_finalized(ME_A) + 1;
+
+	proposer_context = fbr_alloc(&mctx->fbr,
+			sizeof(struct proposer_context));
 	fbr_alloc_set_destructor(&mctx->fbr, proposer_context,
 			context_destructor, mctx);
 
@@ -703,10 +784,20 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_mutex_init(&mctx->fbr, &fb_mutex);
 	fbr_buffer_init(&mctx->fbr, &lea_fb, 0);
 	fbr_mutex_init(&mctx->fbr, &lea_fb_mutex);
+	proposer_context->mctx = mctx;
+	proposer_context->need_to_run = 0;
 	proposer_context->fb = &fb;
 	proposer_context->lea_fb = &lea_fb;
 	proposer_context->fb_mutex = &fb_mutex;
 	proposer_context->lea_fb_mutex = &lea_fb_mutex;
+	fbr_mutex_init(&mctx->fbr, &proposer_context->instance_to_mutex);
+	fbr_cond_init(&mctx->fbr, &proposer_context->instance_to_cond);
+
+	proposer_context->instance_to_fiber_id = fbr_create(&mctx->fbr,
+			"proposer/instance_to_fiber", instance_timeout_fiber,
+			proposer_context, 0);
+	assert(!fbr_id_isnull(proposer_context->instance_to_fiber_id));
+	fbr_transfer(&mctx->fbr, proposer_context->instance_to_fiber_id);
 
 	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
 			fbr_buffer_cond_read(&mctx->fbr, &fb),
@@ -715,10 +806,10 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 			fbr_buffer_cond_read(&mctx->fbr, &lea_fb),
 			&lea_fb_mutex);
 
-	proposer_init(ME_A);
+	proposer_init(ME_A_ proposer_context, starting_iid);
 
 	lea_arg.buffer = &lea_fb;
-	lea_arg.starting_iid = 0;
+	lea_arg.starting_iid = starting_iid;
 	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
 	fb_events[0] = &ev_fb.ev_base;
@@ -772,7 +863,8 @@ static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	proposer_context = fbr_alloc(&mctx->fbr, sizeof(struct pro_context));
+	proposer_context = fbr_alloc(&mctx->fbr,
+			sizeof(struct proposer_context));
 	fbr_alloc_set_destructor(&mctx->fbr, proposer_context,
 			context_destructor, mctx);
 
@@ -804,6 +896,8 @@ static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 				send_proxy_value(ME_A_ pro_client.value);
 				sm_free(pro_client.value);
 				break;
+			default:
+				abort();
 		}
 	}
 }

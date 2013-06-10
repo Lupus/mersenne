@@ -299,7 +299,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 					sizeof(mctx->me->addr));
 			continue;
 		}
-		retval = sendto(mctx->fd, buf, size, 0,
+		retval = fbr_sendto(&mctx->fbr, mctx->fd, buf, size, 0,
 				(struct sockaddr *)&p->addr, sizeof(p->addr));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "failed to send message");
