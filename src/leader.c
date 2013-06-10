@@ -374,6 +374,7 @@ static void delta_fiber(struct fbr_context *fiber_context, void *_arg)
 			fbr_mutex_unlock(&mctx->fbr, &mctx->ldr.mutex);
 		}
 		process_timeout(ME_A);
+		mctx->ldr.timed_out = 0;
 	}
 }
 
@@ -384,6 +385,7 @@ static void timeout_cb (EV_P_ ev_timer *w, int revents)
 	ldr = container_of(w, struct ldr_context, delta_timer);
 	mctx = container_of(ldr, struct me_context, ldr);
 
+	mctx->ldr.timed_out = 1;
 	fbr_cond_signal(&mctx->fbr, &ldr->timeout_cond);
 }
 
