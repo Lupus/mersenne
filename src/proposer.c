@@ -38,6 +38,8 @@
 #include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
 
+//#define WINDOW_DUMP
+
 struct proposer_context {
 	struct fbr_buffer *fb;
 	struct fbr_buffer *lea_fb;
@@ -131,9 +133,6 @@ static void print_window(ME_P)
 	for(j = 0; j < PRO_INSTANCE_WINDOW; j++) {
 		instance = mctx->pxs.pro.instances +j;
 		switch(instance->state) {
-			case IS_CLOSED:
-				*ptr++ = 'C';
-				break;
 			case IS_DELIVERED:
 				*ptr++ = 'D';
 				break;
@@ -159,7 +158,7 @@ static void print_window(ME_P)
 		}
 	}
 	*ptr++ = '\0';
-	fprintf(stderr, "%s\n", buf);
+	fprintf(stderr, "WINDOW_DUMP: %s\n", buf);
 }
 #endif
 
@@ -192,17 +191,19 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 {
 	struct ie_base base;
 	struct bm_mask *mask = instance->p1.acks;
+	uint64_t iid;
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
 	if(instance->p1.v)
 		sm_free(instance->p1.v);
 	if(instance->p2.v && instance->p2.v != instance->p1.v)
 		sm_free(instance->p2.v);
+	iid = instance->iid + PRO_INSTANCE_WINDOW;
 	memset(instance, 0x00, sizeof(struct pro_instance));
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
 	instance->timer = timer;
-	instance->iid += PRO_INSTANCE_WINDOW;
+	instance->iid = iid;
 	run_instance(ME_A_ instance, &base);
 }
 
@@ -211,12 +212,12 @@ static void adjust_window(ME_P)
 	struct pro_instance *instance;
 	int i, j;
 	int start = mctx->pxs.pro.lowest_non_closed;
-	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
-		if(IS_DELIVERED != instance->state)
+		if (IS_DELIVERED != instance->state)
 			return;
 	}
-	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		mctx->pxs.pro.lowest_non_closed = i + 1;
 		reclaim_instance(ME_A_ instance);
@@ -609,15 +610,18 @@ static void proposer_init(ME_P_ struct proposer_context *proposer_context,
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
-	for(i = 0; i < PRO_INSTANCE_WINDOW; i++) {
+	for (i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ proposer_context,
 				mctx->pxs.pro.instances + i);
-		if (max_iid < starting_iid)
+		if (max_iid < starting_iid) {
 			mctx->pxs.pro.instances[i].iid =
 				max_iid + PRO_INSTANCE_WINDOW;
-		else
+		} else {
 			mctx->pxs.pro.instances[i].iid = max_iid;
+		}
 		max_iid++;
+	}
+	for (i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		run_instance(ME_A_ mctx->pxs.pro.instances + i, &base);
 	}
 }
@@ -772,7 +776,7 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	if (mctx->me->pxs.is_acceptor)
-		starting_iid = acs_get_highest_finalized(ME_A) + 1;
+		starting_iid = acs_get_highest_finalized(ME_A);
 
 	proposer_context = fbr_alloc(&mctx->fbr,
 			sizeof(struct proposer_context));
