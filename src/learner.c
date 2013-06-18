@@ -34,6 +34,7 @@
 #include <mersenne/acc_storage.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
+//#define WINDOW_DUMP
 
 struct lea_ack {
 	uint64_t b;
@@ -66,24 +67,38 @@ static inline struct lea_instance * get_instance(struct learner_context
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
 }
 
+static inline int count_acks(ME_P_ struct lea_ack *acks)
+{
+	int i;
+	int count = 0;
+	for (i = 0; i < pxs_acceptors_count(ME_A); i++)
+		count += (NULL != acks[i].v);
+	return count;
+}
+
 #ifdef WINDOW_DUMP
 static void print_window(ME_P_ struct learner_context *context)
 {
 	int j;
-	int hw;
 	struct lea_instance *instance;
 	char buf[LEA_INSTANCE_WINDOW + 1];
 	char *ptr = buf;
-	for(j = 0; j < LEA_INSTANCE_WINDOW; j++) {
+	int num;
+	for (j = 0; j < LEA_INSTANCE_WINDOW; j++) {
 		instance = context->instances +j;
 		if(instance->closed) {
 			*ptr++ = 'X';
 		} else {
-			hw = bm_hweight(instance->acks);
-			if(hw)
-				snprintf(ptr++, 2, "%d", hw);
-			else
+			num = count_acks(ME_A_ instance->acks);
+			if (!pxs_is_acc_majority(ME_A_ num)) {
+				if (num) {
+					snprintf(ptr++, 2, "%d", num);
+				} else {
+					*ptr++ = '.';
+				}
+			} else {
 				*ptr++ = '.';
+			}
 		}
 	}
 	*ptr++ = '\0';
@@ -220,15 +235,6 @@ static int ack_eq(void *_a, void *_b) {
 	return 1;
 }
 
-static inline int count_acks(ME_P_ struct lea_ack *acks)
-{
-	int i;
-	int count = 0;
-	for (i = 0; i < pxs_acceptors_count(ME_A); i++)
-		count += (NULL != acks[i].v);
-	return count;
-}
-
 static void do_learn(ME_P_ struct learner_context *context, struct
 		me_paxos_message *pmsg, struct buffer *buf, struct me_peer
 		*from)
@@ -241,8 +247,12 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 
 	data = &pmsg->data.me_paxos_msg_data_u.learn;
 
-	if (data->i < context->first_non_delivered)
+	if (data->i < context->first_non_delivered) {
+		fbr_log_d(&mctx->fbr, "data->i (%lu) < first_non_delivered"
+				" (%lu), discarding",
+				data->i, context->first_non_delivered);
 		return;
+	}
 	if (data->i >= context->first_non_delivered + LEA_INSTANCE_WINDOW) {
 		if (data->i > context->highest_seen)
 			context->highest_seen = data->i;
@@ -255,36 +265,51 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 
 	instance = get_instance(context, data->i);
 	assert(instance->iid == data->i);
-	if (instance->closed)
+	if (instance->closed) {
+		fbr_log_d(&mctx->fbr, "instance %lu is already closed,"
+				" discarding", data->i);
 		return;
+	}
 	ack = instance->acks + from->acc_index;
 	if (NULL == ack->v) {
 		ack->b = data->b;
 		assert(buf->size1 > 0);
 		ack->v = sm_in_use(buf);
+		fbr_log_d(&mctx->fbr, "assigning initial value for this ack");
 	} else {
-		if (data->b <= ack->b)
+		if (data->b <= ack->b) {
+			fbr_log_d(&mctx->fbr, "data->b (%lu) is <= ack->b"
+					" (%lu), discarding", data->b, ack->b);
 			return;
+		}
 		ack->b = data->b;
 		sm_free(ack->v);
 		ack->v = sm_in_use(buf);
+		fbr_log_d(&mctx->fbr, "replacing an old value for this ack");
 	}
 	instance->modified = ev_now(mctx->loop);
 	num = count_acks(ME_A_ instance->acks);
-	if (!pxs_is_acc_majority(ME_A_ num))
+	if (!pxs_is_acc_majority(ME_A_ num)) {
+		fbr_log_d(&mctx->fbr, "instance %lu has less acks (%d) than"
+				" majority", data->i, num);
 		return;
+	}
 	maj_ack = find_majority_element(instance->acks,
 			pxs_acceptors_count(ME_A),
 			sizeof(struct lea_ack), ack_eq);
-	if (NULL == maj_ack)
+	if (NULL == maj_ack) {
+		fbr_log_d(&mctx->fbr, "unable to find majority element among"
+				" acks");
 		return;
+	}
 	instance->closed = 1;
 	instance->chosen = maj_ack;
+	fbr_log_d(&mctx->fbr, "instance %lu is now closed", data->i);
 	try_deliver(ME_A_ context);
 }
 
-static void do_last_accepted(ME_P_ struct learner_context *context, struct
-		me_paxos_message *pmsg, struct me_peer *from)
+static void do_last_accepted(ME_P_ struct learner_context *context,
+		struct me_paxos_message *pmsg, struct me_peer *from)
 {
 	struct me_paxos_last_accepted_data *data;
 
@@ -310,6 +335,7 @@ static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
 	}
 	return m;
 }
+
 static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 		void *_arg)
 {
