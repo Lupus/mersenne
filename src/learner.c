@@ -134,15 +134,22 @@ static inline void do_deliver(ME_P_ struct learner_context *context,
 			instance->chosen->v);
 }
 
-static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
+static void send_retransmit(ME_P_ struct learner_context *context,
+		uint64_t from, uint64_t to)
 {
+	uint64_t i;
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	struct lea_instance *instance;
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_RETRANSMIT;
 	data->me_paxos_msg_data_u.retransmit.from = from;
 	data->me_paxos_msg_data_u.retransmit.to = to;
 	pxs_send_acceptors(ME_A_ &msg);
+	for (i = from; i < to; i++) {
+		instance = get_instance(context, i);
+		instance->modified = ev_now(mctx->loop);
+	}
 }
 
 static ev_tstamp age(ME_P_ struct lea_instance *instance)
@@ -164,13 +171,13 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
 		if (i == context->highest_seen) {
 			if (collecting_gap)
-				send_retransmit(ME_A_ from, i - 1);
+				send_retransmit(ME_A_ context, from, i - 1);
 			break;
 		}
 		instance = get_instance(context, i);
 		if (collecting_gap) {
 			if (instance->closed || !age(ME_A_ instance)) {
-				send_retransmit(ME_A_ from, i - 1);
+				send_retransmit(ME_A_ context, from, i - 1);
 				collecting_gap = 0;
 			}
 		} else if(!instance->closed || age(ME_A_ instance)) {
@@ -185,7 +192,7 @@ static void retransmit_next_window(ME_P_ struct learner_context *context)
 	context->next_retransmit = min(
 			context->first_non_delivered + LEA_INSTANCE_WINDOW,
 			context->highest_seen);
-	send_retransmit(ME_A_ context->first_non_delivered,
+	send_retransmit(ME_A_ context, context->first_non_delivered,
 			min(context->highest_seen, context->next_retransmit));
 	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu, highest seen is %lu",
 			context->first_non_delivered, context->next_retransmit,
