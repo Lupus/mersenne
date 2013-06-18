@@ -161,10 +161,15 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
 	for(iid = data->from; iid <= data->to; iid++) {
-		if(0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND))
+		if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND)) {
+			fbr_log_d(&mctx->fbr, "unable to find record %lu for"
+					" a retransmit", iid);
 			continue;
-		if(NULL == r->v) {
+		}
+		if (NULL == r->v) {
 			//FIXME: Not absolutely sure about this...
+			fbr_log_d(&mctx->fbr, "found record %lu with no value "
+					" for a retransmit", iid);
 			acs_free_record(ME_A_ r);
 			continue;
 		}
