@@ -586,10 +586,9 @@ static void wal_replay_value(ME_P_ WalValue *wal_value)
 		} else {
 			if (memcmp(r->v->ptr, wal_value->content.data,
 						r->v->size1)) {
-				fbr_log_e(&mctx->fbr, "conflicting values for"
-						" different WAL messages of the"
-						" same instance");
-				abort();
+				sm_free(r->v);
+				r->v = buf_sm_copy(wal_value->content.data,
+						wal_value->content.len);
 			}
 		}
 		r->vb = wal_value->vb;
