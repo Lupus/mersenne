@@ -34,6 +34,8 @@
 #include <ev.h>
 #include <execinfo.h>
 #include <valgrind/valgrind.h>
+#include <evfibers/fiber.h>
+#include <evfibers/eio.h>
 
 #include <mersenne/me_protocol.h>
 #include <mersenne/context.h>
@@ -310,6 +312,7 @@ int main(int argc, char *argv[])
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;
 	fbr_init(&mctx->fbr, mctx->loop);
+	fbr_eio_init();
 	setup_logging(ME_A);
 
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);

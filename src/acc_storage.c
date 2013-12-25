@@ -25,6 +25,7 @@
 #include <err.h>
 #include <errno.h>
 #include <zlib.h>
+#include <evfibers/eio.h>
 
 #include <mersenne/acc_storage.h>
 #include <mersenne/sharedmem.h>
@@ -43,7 +44,7 @@ enum wal_log_mode {
 
 struct wal_log {
 	struct acs_log_dir *dir;
-	struct fbr_async *as;
+	int fd;
 	char filename[PATH_MAX + 1];
 	int in_progress;
 	size_t rows;
@@ -53,7 +54,7 @@ struct wal_log {
 struct wal_iter {
 	struct wal_log *log;
 	size_t row_count;
-	uint64_t good_offt;
+	size_t good_offt;
 	int eof;
 };
 
@@ -166,10 +167,9 @@ static void wal_iter_open(ME_P_ struct wal_iter *iter, struct wal_log *log)
 {
 	ssize_t retval;
 	iter->log = log;
-	retval = fbr_async_ftell(&mctx->fbr, log->as);
+	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async ftell failed: %s",
-				fbr_strerror(&mctx->fbr, mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "seek failed");
 	iter->good_offt = retval;
 	iter->row_count = 0;
 	iter->eof = 0;
@@ -179,11 +179,10 @@ static void wal_iter_close(ME_P_ struct wal_iter *iter)
 {
 	ssize_t retval;
 	iter->log->rows += iter->row_count;
-	retval = fbr_async_fseek(&mctx->fbr, iter->log->as, iter->good_offt,
-			SEEK_SET);
+	retval = fbr_eio_seek(&mctx->fbr, iter->log->fd, iter->good_offt,
+			EIO_SEEK_SET, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fseek failed: %s",
-				fbr_strerror(&mctx->fbr, mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "seek failed");
 }
 
 static inline uint32_t calc_header_checksum(struct wal_rec_header *header)
@@ -205,13 +204,14 @@ size_t wal_rec_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr, void **pptr,
 	uint32_t header_checksum, checksum;
 	ssize_t retval;
 
-	retval = fbr_async_fread(&mctx->fbr, log->as, &header, sizeof(header));
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fread failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
+	retval = fbr_eio_read(&mctx->fbr, log->fd, &header, sizeof(header), -1,
+			0);
 	if (0 == retval)
 		return 0;
+	if (0 > retval)
+		err(EXIT_FAILURE, "WAL read failed");
+	if (retval < (ssize_t)sizeof(header))
+		errx(EXIT_FAILURE, "unable to read a header: unexpected eof");
 
 	header_checksum = calc_header_checksum(&header);
 
@@ -232,13 +232,13 @@ size_t wal_rec_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr, void **pptr,
 			*size_ptr = header.size;
 	}
 
-	retval = fbr_async_fread(&mctx->fbr, log->as, *pptr, header.size);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fread failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
+	retval = fbr_eio_read(&mctx->fbr, log->fd, *pptr, header.size, -1, 0);
 	if (0 == retval)
 		return 0;
+	if (0 > retval)
+		err(EXIT_FAILURE, "WAL read failed");
+	if (retval < (ssize_t)header.size)
+		errx(EXIT_FAILURE, "unable to read a record: unexpected eof");
 
 	checksum = crc32(0L, Z_NULL, 0);
 	checksum = crc32(checksum, *pptr, header.size);
@@ -262,29 +262,25 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 
 	assert(0 == iter->eof);
 	if (magic_offset > 0) {
-		retval = fbr_async_fseek(&mctx->fbr, log->as, magic_offset + 1,
-				SEEK_SET);
+		retval = fbr_eio_seek(&mctx->fbr, log->fd, magic_offset + 1,
+				EIO_SEEK_SET, 0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fseek failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
+			err(EXIT_FAILURE, "seek failed");
 	}
 
-	retval = fbr_async_fread(&mctx->fbr, log->as, &magic, sizeof(magic));
+	retval = fbr_eio_read(&mctx->fbr, log->fd, &magic, sizeof(magic), -1,
+			0);
 	if (-1 == retval)
-			errx(EXIT_FAILURE, "async fread failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
-	if (0 == retval)
+		err(EXIT_FAILURE, "read failed");
+	if (retval < sizeof(magic))
 		goto eof;
 
 	while (REC_MAGIC != magic) {
-		retval = fbr_async_fread(&mctx->fbr, log->as, &c, sizeof(c));
+		retval = fbr_eio_read(&mctx->fbr, log->fd, &c, sizeof(c), -1,
+				0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fread failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
-		if (0 == retval) {
+			err(EXIT_FAILURE, "read failed");
+		if (retval < sizeof(c)) {
 			/* fbr_log_d(&mctx->fbr, "got eof while looking for rec"
 					" magic"); */
 			goto eof;
@@ -292,10 +288,9 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 		magic = magic >> 8 |
 			((uint32_t)c & 0xff) << (sizeof(magic) * 8 - 8);
 	}
-	retval = fbr_async_ftell(&mctx->fbr, log->as);
+	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async ftell failed: %s",
-				fbr_strerror(&mctx->fbr, mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "seek failed");
 	magic_offset = retval - sizeof(REC_MAGIC);
 	if (iter->good_offt != magic_offset)
 		fbr_log_d(&mctx->fbr, "skipped %jd bytes after 0x%08jx offset",
@@ -308,10 +303,9 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 	if (0 == size)
 		goto eof;
 
-	retval = fbr_async_ftell(&mctx->fbr, log->as);
+	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async ftell failed: %s",
-				fbr_strerror(&mctx->fbr, mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "seek failed");
 	iter->good_offt = retval;
 	iter->row_count++;
 
@@ -321,33 +315,26 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 
 	return size;
 eof:
-	retval = fbr_async_ftell(&mctx->fbr, log->as);
+	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async ftell failed: %s",
-				fbr_strerror(&mctx->fbr, mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "seek failed");
 	if (retval == iter->good_offt + sizeof(EOF_MAGIC)) {
-		retval = fbr_async_fseek(&mctx->fbr, log->as, iter->good_offt,
-				SEEK_SET);
+		retval = fbr_eio_seek(&mctx->fbr, log->fd, iter->good_offt,
+				EIO_SEEK_SET, 0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fseek failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
+			err(EXIT_FAILURE, "seek failed");
 
-		retval = fbr_async_fread(&mctx->fbr, log->as, &magic,
-				sizeof(magic));
+		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
+				sizeof(magic), -1, 0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fread failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
-		if (0 == retval) {
+			err(EXIT_FAILURE, "read failed");
+		if (retval < sizeof(magic)) {
 			fbr_log_e(&mctx->fbr, "unable to read eof magic");
 		} else if (magic == EOF_MAGIC) {
-			retval = fbr_async_fseek(&mctx->fbr, log->as,
-					iter->good_offt, SEEK_SET);
+			retval = fbr_eio_seek(&mctx->fbr, log->fd,
+					iter->good_offt, EIO_SEEK_SET, 0);
 			if (-1 == retval)
-				errx(EXIT_FAILURE, "async fseek failed: %s",
-						fbr_strerror(&mctx->fbr,
-							mctx->fbr.f_errno));
+				err(EXIT_FAILURE, "seek failed");
 			iter->good_offt = retval;
 			iter->eof = 1;
 		} else {
@@ -394,35 +381,26 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 {
 	uint32_t magic;
 	char *formatted_filename = wal_lsn_to_filename(dir, lsn, in_progress);
-	const char *open_mode;
+	int open_flags;
 	ssize_t retval;
 	memset(log, 0x00, sizeof(*log));
 	strncpy(log->filename, formatted_filename, PATH_MAX);
 	log->mode = mode;
 	log->dir = dir;
 	log->in_progress = in_progress;
-	log->as = fbr_async_create(&mctx->fbr);
-	if (NULL == log->as)
-		errx(EXIT_FAILURE, "async create failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
 	if (WLM_RO == mode)
-		open_mode = "r";
+		open_flags = O_RDONLY;
 	else
-		open_mode = "wx+";
-	retval = fbr_async_fopen(&mctx->fbr, log->as, log->filename, open_mode);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fopen failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
+		open_flags = O_CREAT | O_WRONLY | O_EXCL;
+	log->fd = fbr_eio_open(&mctx->fbr, log->filename, open_flags, 0640, 0);
+	if (0 > log->fd)
+		err(EXIT_FAILURE, "open failed");
 	if (WLM_RO == mode) {
-		retval = fbr_async_fread(&mctx->fbr, log->as, &magic,
-				sizeof(magic));
+		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
+				sizeof(magic), -1, 0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fread failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
-		if (0 == retval) {
+			err(EXIT_FAILURE, "read failed");
+		if (retval < sizeof(magic)) {
 			fbr_log_w(&mctx->fbr, "eof while looking for wal"
 					" header for %s", log->filename);
 			goto error;
@@ -434,16 +412,17 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 		}
 	} else {
 		magic = WAL_MAGIC;
-		retval = fbr_async_fwrite(&mctx->fbr, log->as, &magic,
-				sizeof(magic));
-		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fwrite failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
+		retval = fbr_eio_write(&mctx->fbr, log->fd, &magic,
+				sizeof(magic), -1, 0);
+		if (retval < sizeof(magic))
+			err(EXIT_FAILURE, "write failed");
 	}
 	return 0;
 error:
-	fbr_async_destroy(&mctx->fbr, log->as);
+
+	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	if (0 > retval)
+		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
 	return -1;
 }
 
@@ -485,21 +464,17 @@ void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 	header.checksum = crc32(0L, Z_NULL, 0);
 	header.checksum = crc32(header.checksum, data, size);
 	header.header_checksum = calc_header_checksum(&header);
-	retval = fbr_async_fwrite(&mctx->fbr, log->as, &magic, sizeof(magic));
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fwrite failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
-	retval = fbr_async_fwrite(&mctx->fbr, log->as, &header, sizeof(header));
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fwrite failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
-	retval = fbr_async_fwrite(&mctx->fbr, log->as, data, size);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fwrite failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
+	retval = fbr_eio_write(&mctx->fbr, log->fd, &magic, sizeof(magic), -1,
+			0);
+	if (retval < sizeof(magic))
+		err(EXIT_FAILURE, "write failed");
+	retval = fbr_eio_write(&mctx->fbr, log->fd, &header, sizeof(header), -1,
+			0);
+	if (retval < sizeof(header))
+		err(EXIT_FAILURE, "write failed");
+	retval = fbr_eio_write(&mctx->fbr, log->fd, data, size, -1, 0);
+	if (retval < size)
+		err(EXIT_FAILURE, "write failed");
 	log->rows++;
 	if (1 == log->rows && ALK_WAL == log->dir->kind)
 		in_progress_rename(log);
@@ -511,17 +486,13 @@ void wal_log_close(ME_P_ struct wal_log *log)
 	ssize_t retval;
 
 	if (log->mode == WLM_RW) {
-		retval = fbr_async_fwrite(&mctx->fbr, log->as, &magic,
-				sizeof(magic));
+		retval = fbr_eio_write(&mctx->fbr, log->fd, &magic,
+				sizeof(magic), -1, 0);
+		if (retval < sizeof(magic))
+			err(EXIT_FAILURE, "write failed");
+		retval = fbr_eio_fsync(&mctx->fbr, log->fd, 0);
 		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fwrite failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
-		retval = fbr_async_fsync(&mctx->fbr, log->as);
-		if (-1 == retval)
-			errx(EXIT_FAILURE, "async fsync failed: %s",
-					fbr_strerror(&mctx->fbr,
-						mctx->fbr.f_errno));
+			err(EXIT_FAILURE, "fsync failed");
 	}
 
 	if (log->in_progress) {
@@ -534,24 +505,18 @@ void wal_log_close(ME_P_ struct wal_log *log)
 					" rows", log->rows);
 	}
 
-	fbr_async_fclose(&mctx->fbr, log->as);
-	fbr_async_destroy(&mctx->fbr, log->as);
+	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	if (-1 == retval)
+		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
 }
 
 void wal_log_sync(ME_P_ struct wal_log *log)
 {
 	ssize_t retval;
 	assert(WLM_RW == log->mode);
-	retval = fbr_async_fflush(&mctx->fbr, log->as);
+	retval = fbr_eio_fdatasync(&mctx->fbr, log->fd, 0);
 	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fflush failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
-	retval = fbr_async_fdatasync(&mctx->fbr, log->as);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "async fdatasync failed: %s",
-				fbr_strerror(&mctx->fbr,
-					mctx->fbr.f_errno));
+		err(EXIT_FAILURE, "fdatasync failed");
 }
 
 static void wal_replay_state(ME_P_ WalState *wal_state)

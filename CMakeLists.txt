@@ -36,6 +36,7 @@ find_package(LibEVfibers REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 find_package(ProtoBufC REQUIRED)
+find_package(Threads REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 
@@ -102,6 +103,7 @@ target_link_libraries(mersenne
 	${LIBEVFIBERS_LDFLAGS}
 	${LIBEV_LDFLAGS}
 	${PROTOBUFC_LIBRARIES}
+	${CMAKE_THREAD_LIBS_INIT}
 	crypto
 	)
 
