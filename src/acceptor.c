@@ -124,11 +124,17 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
-	if(0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_JUST_FIND)) {
-		//TODO: Add automatic accept of ballot 0
-		return;
+	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
+		// We got an accept for an instance we know nothing about
+		// without prior prepare. As it is the first message for this
+		// instance we may assume that it is safe to pretend that we
+		// got a prepare message about this instance earlier.
+		r->iid = data->i;
+		r->b = data->b;
+		r->v = NULL;
+		r->vb = 0;
 	}
-	if(data->b < r->b) {
+	if (data->b < r->b) {
 		//TODO: Add REJECT message here for speedup
 		goto cleanup;
 	}

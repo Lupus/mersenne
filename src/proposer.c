@@ -216,9 +216,6 @@ static void adjust_window(ME_P)
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if (IS_DELIVERED != instance->state)
 			return;
-	}
-	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
-		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		mctx->pxs.pro.lowest_non_closed = i + 1;
 		reclaim_instance(ME_A_ instance);
 	}
@@ -280,9 +277,14 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			instance->p2.v = NULL;
 			instance->p1.vb = 0;
 			instance->client_value = 0;
-			send_prepare(ME_A_ instance);
-			ev_timer_set(&instance->timer, 0., TO1);
-			ev_timer_again(mctx->loop, &instance->timer);
+			fbr_log_d(&mctx->fbr, "Attemping to short-circuit"
+					" instance %lu at first ballot to"
+					" phase 2 with no client value",
+					instance->iid);
+			new_base.type = IE_R0;
+			switch_instance(ME_A_ instance,
+					IS_P1_READY_NO_VALUE,
+					&new_base);
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
