@@ -41,12 +41,12 @@ unsigned int bm_size(unsigned int n)
 
 void bm_set_all(struct bm_mask *mask)
 {
-	memset(&mask->mask, 0xff, LONGS_PER_BITS(mask->size) * sizeof(unsigned long));
+	memset(&mask->mask, 0xff, mask->size * sizeof(unsigned long));
 }
 
 void bm_clear_all(struct bm_mask *mask)
 {
-	memset(&mask->mask, 0x00, LONGS_PER_BITS(mask->size) * sizeof(unsigned long));
+	memset(&mask->mask, 0x00, mask->size * sizeof(unsigned long));
 }
 
 void bm_init(struct bm_mask *mask, unsigned int nbits)
@@ -105,3 +105,14 @@ int bm_displayhex(char *buf, int buflen, const struct bm_mask *bmp)
 	return cnt;
 }
 
+int bm_ffs(struct bm_mask *mask)
+{
+	int ffs;
+	int i;
+	for (i = 0; i < mask->size; i++) {
+		ffs = __builtin_ffsl(mask->mask[i]);
+		if (ffs)
+			return i * BITS_PER_LONG + ffs;
+	}
+	return 0;
+}

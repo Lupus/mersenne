@@ -36,5 +36,6 @@ unsigned int bm_get_bit(const struct bm_mask *mask, unsigned int n);
 void bm_set_bit(struct bm_mask *mask, unsigned int n, unsigned int v);
 unsigned int bm_hweight(struct bm_mask *mask);
 int bm_displayhex(char *buf, int buflen, const struct bm_mask *bmp);
+int bm_ffs(struct bm_mask *mask);
 
 #endif
