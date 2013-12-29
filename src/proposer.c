@@ -632,14 +632,18 @@ static void do_client_value(ME_P_ struct buffer *buf)
 {
 	struct ie_nv nv;
 	struct pro_instance *instance;
-	int i, j;
-	int start = mctx->pxs.pro.lowest_non_closed;
-	for(j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+	uint64_t i, j;
+	uint64_t start = mctx->pxs.pro.lowest_non_closed;
+	uint64_t next_ready = mctx->pxs.pro.next_ready;
+	if (next_ready > start)
+		start = next_ready;
+	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
-		if(IS_P1_READY_NO_VALUE == instance->state) {
+		if (IS_P1_READY_NO_VALUE == instance->state) {
 			nv.b.type = IE_NV;
 			nv.buffer = sm_in_use(buf);
 			run_instance(ME_A_ instance, &nv.b);
+			mctx->pxs.pro.next_ready = i + 1;
 			return;
 		}
 	}
