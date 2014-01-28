@@ -27,9 +27,8 @@
 #include <mersenne/message.h>
 #include <mersenne/me_protocol.h>
 #include <mersenne/fiber_args.h>
-#include <mersenne/fiber_args.strenum.h>
+#include <mersenne/strenum.h>
 #include <mersenne/util.h>
-#include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/acc_storage.h>
 

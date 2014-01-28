@@ -27,7 +27,7 @@
 
 #include <mersenne/proposer.h>
 #include <mersenne/proposer_prv.h>
-#include <mersenne/proposer_prv.strenum.h>
+#include <mersenne/strenum.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
 #include <mersenne/message.h>
@@ -35,7 +35,6 @@
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/bitmask.h>
-#include <mersenne/me_protocol.strenum.h>
 #include <mersenne/sharedmem.h>
 
 //#define WINDOW_DUMP

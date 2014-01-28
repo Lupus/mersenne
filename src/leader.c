@@ -30,7 +30,7 @@
 #include <mersenne/proposer.h>
 #include <mersenne/util.h>
 #include <mersenne/fiber_args.h>
-#include <mersenne/fiber_args.strenum.h>
+#include <mersenne/strenum.h>
 #include <mersenne/sharedmem.h>
 
 #define TIME_DELTA mctx->args_info.leader_delta_arg

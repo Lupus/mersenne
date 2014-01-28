@@ -27,7 +27,7 @@
 #include <mersenne/context.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/me_protocol.h>
-#include <mersenne/me_protocol.strenum.h>
+#include <mersenne/strenum.h>
 #include <mersenne/util.h>
 
 static void message_destructor(void *context, void *ptr)

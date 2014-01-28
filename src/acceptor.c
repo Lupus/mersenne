@@ -29,7 +29,7 @@
 #include <mersenne/message.h>
 #include <mersenne/fiber_args.h>
 #include <mersenne/util.h>
-#include <mersenne/me_protocol.strenum.h>
+#include <mersenne/strenum.h>
 #include <mersenne/sharedmem.h>
 
 static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
