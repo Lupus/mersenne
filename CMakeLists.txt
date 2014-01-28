@@ -5,16 +5,11 @@ project(mersenne C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
-include(CheckIncludeFiles)
-include(CheckLibraryExists)
-include(FindPkgConfig)
+add_subdirectory(evfibers)
 
-find_package(LibEV REQUIRED)
-find_package(LibEVfibers REQUIRED)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 find_package(ProtoBufC REQUIRED)
-find_package(Threads REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 
@@ -69,8 +64,7 @@ add_executable(mersenne
 	${LIBCORO_SOURCES}
 	)
 target_link_libraries(mersenne
-	${LIBEVFIBERS_LDFLAGS}
-	${LIBEV_LDFLAGS}
+	${EVFIBERS_EMBED_LIBS}
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
 	crypto
