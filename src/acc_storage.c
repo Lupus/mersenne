@@ -795,8 +795,10 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
 	SLIST_FOREACH_SAFE(r, &ctx->snap_instances, entries, x) {
 		wal_write_value_to(ME_A_ r, &snap);
-		if (0 == r->is_cow)
+		if (0 == r->is_cow) {
+			sm_free(r->v);
 			free(r);
+		}
 	}
 	for (r = ctx->instances; r != NULL; r = r->hh.next) {
 		r->is_cow = 0;
@@ -943,6 +945,8 @@ int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		if (NULL == r_copy)
 			err(EXIT_FAILURE, "malloc");
 		memcpy(r_copy, r, sizeof(*r));
+		if (r_copy->v)
+			r->v = buf_sm_copy(r_copy->v->ptr, r_copy->v->size1);
 		HASH_DEL(ctx->instances, r);
 		r->is_cow = 0;
 		HASH_ADD_WIID(ctx->instances, iid, r_copy);
