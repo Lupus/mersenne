@@ -68,6 +68,7 @@ target_link_libraries(mersenne
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
 	crypto
+	z
 	)
 
 subdirs(testing)
