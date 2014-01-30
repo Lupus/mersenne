@@ -65,6 +65,7 @@ void load_peer_list(ME_P_ int my_index)
 	regmatch_t match[4];
 	int retval;
 	int last_acc_index = 0;
+	char *fgets_ret;
 
 	peers_file = fopen("peers", "r");
 	if (!peers_file)
@@ -73,9 +74,11 @@ void load_peer_list(ME_P_ int my_index)
 		err(EXIT_FAILURE, "%s", "regcomp failed");
 	i = 0;
 	while (1) {
-		fgets(line_buf, 255, peers_file);
+		fgets_ret = fgets(line_buf, 255, peers_file);
 		if (feof(peers_file))
 			break;
+		if (NULL == fgets_ret)
+			err(EXIT_FAILURE, "fgets failed");
 		p = malloc(sizeof(struct me_peer));
 		memset(p, 0, sizeof(struct me_peer));
 		p->index = i;

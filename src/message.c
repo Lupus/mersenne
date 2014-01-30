@@ -148,7 +148,7 @@ static void format_buffer(struct buffer *buffer, char *out, size_t out_size)
 
 void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct sockaddr_in *addr)
 {
-	char *type, *subtype;
+	char *type = NULL, *subtype = NULL;
 	char str[INET_ADDRSTRLEN];
 	char *direction = dir ? ">>>>" : "<<<<";
 	char *data = NULL;

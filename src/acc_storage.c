@@ -371,6 +371,7 @@ void in_progress_unlink(char *filename)
 	char *suffix = strrchr(filename, '.');
 	assert(suffix);
 	assert(!strcmp(suffix, in_progress_ext));
+	(void)suffix;
 
 	if (0 != unlink(filename) && ENOENT != errno)
 		err(EXIT_FAILURE, "unlink");
@@ -626,7 +627,7 @@ static void recover_remaining_wals(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acs_log_dir *dir = &ctx->wal_dir;
-	uint64_t lsn, last_lsn;
+	uint64_t lsn = 0, last_lsn;
 	size_t i;
 	struct wal_log log;
 	ssize_t retval;

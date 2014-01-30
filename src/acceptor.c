@@ -328,6 +328,7 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 		fbr_mutex_lock(&mctx->fbr, &lea_fb_mutex);
 		n_events = fbr_ev_wait_to(&mctx->fbr, fb_events, 0.5);
 		assert(-1 != n_events);
+		(void)n_events;
 		if (ev_fb.ev_base.arrived) {
 			process_fb(ME_A_ &fb);
 			fbr_mutex_unlock(&mctx->fbr, &fb_mutex);

@@ -20,7 +20,7 @@ include_directories(
 	"${CMAKE_CURRENT_BINARY_DIR}/libevfibers/include"
 	)
 
-set(CMAKE_C_FLAGS "-Wall -Werror")
+set(CMAKE_C_FLAGS "-Wall -Werror -fno-strict-aliasing")
 set(MERSENNE_PROTO "src/acc.proto")
 add_custom_command(
 	OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
