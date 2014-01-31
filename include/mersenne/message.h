@@ -45,7 +45,10 @@ enum msg_direction {
 void fiber_listener(struct fbr_context *fiber_context, void *_arg);
 void msg_send_to(ME_P_ struct me_message *msg, const int peer_num);
 void msg_send_all(ME_P_ struct me_message *msg);
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context);
-void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct sockaddr_in *addr);
+void msg_send_matching(ME_P_ struct me_message *msg,
+		int (*predicate)(struct me_peer *, void *context),
+		void *context);
+void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
+		struct sockaddr_in *addr, size_t size);
 
 #endif

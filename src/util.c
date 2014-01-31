@@ -76,3 +76,26 @@ void *find_majority_element(void *arr, size_t size, size_t el_size,
 	else
 		return NULL;
 }
+
+void perf_snap_init(ME_P_ struct perf_snap *snap)
+{
+	memset(snap, 0x00, sizeof(*snap));
+}
+
+void perf_snap_start(ME_P_ struct perf_snap *snap)
+{
+	assert(0 == snap->start);
+	ev_now_update(mctx->loop);
+	snap->start = ev_now(mctx->loop);
+}
+
+void perf_snap_finish(ME_P_ struct perf_snap *snap)
+{
+	ev_tstamp diff;
+	assert(0 < snap->start);
+	ev_now_update(mctx->loop);
+	diff = ev_now(mctx->loop) - snap->start;
+	snap->total += diff;
+	snap->encounters++;
+	snap->start = 0;
+}

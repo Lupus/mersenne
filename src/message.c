@@ -35,7 +35,7 @@ static void message_destructor(void *context, void *ptr)
 	xdr_free((xdrproc_t)xdr_me_message, ptr);
 }
 
-static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
+static void process_message(ME_P_ XDR *xdrs, struct me_peer *from, size_t size)
 {
 	int pos;
 	struct me_message *msg;
@@ -49,7 +49,7 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from)
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a "
 				"message at %d", pos);
 
-	msg_dump(ME_A_ msg, MSG_DIR_RECEIVED, &from->addr);
+	msg_perf_dump(ME_A_ msg, MSG_DIR_RECEIVED, &from->addr, size);
 
 	switch(msg->super_type) {
 		case ME_LEADER:
@@ -88,7 +88,7 @@ static void process_message_buf(ME_P_ char* buf, int buf_size, const struct sock
 	}
 
 	xdrmem_create(&xdrs, buf, buf_size, XDR_DECODE);
-	process_message(ME_A_ &xdrs, p);
+	process_message(ME_A_ &xdrs, p, buf_size);
 	xdr_destroy(&xdrs);
 }
 
@@ -132,6 +132,7 @@ void msg_send_all(ME_P_ struct me_message *msg)
 	msg_send_matching(ME_A_ msg, &p_all, NULL);
 }
 
+/*
 static void format_buffer(struct buffer *buffer, char *out, size_t out_size)
 {
 	char tmp[8];
@@ -145,19 +146,22 @@ static void format_buffer(struct buffer *buffer, char *out, size_t out_size)
 	tmp[size] = '\0';
 	snprintf(out, out_size, "{size=%u, ptr='%s'}", buffer->size1, tmp);
 }
+*/
 
-void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct sockaddr_in *addr)
+void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
+		struct sockaddr_in *addr, size_t size)
 {
 	char *type = NULL, *subtype = NULL;
 	char str[INET_ADDRSTRLEN];
-	char *direction = dir ? ">>>>" : "<<<<";
+	char *direction = dir ? "OUT" : "IN";
 	char *data = NULL;
 	char buf[512];
 	int retval;
+	ev_tstamp now;
 	struct me_leader_message *lmsg;
 	struct me_paxos_message *pmsg;
-	if (!fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG))
-		return;
+	ev_now_update(mctx->loop);
+	now = ev_now(mctx->loop);
 	switch (msg->super_type) {
 	case ME_LEADER:
 		type = "LEADER";
@@ -167,7 +171,7 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 			subtype = "OK";
 			bm_displayhex(buf, sizeof(buf),
 					lmsg->data.me_leader_msg_data_u.ok.trust);
-			retval = asprintf(&data, "k = %d, trust=%s",
+			retval = asprintf(&data, "%d\t%s",
 					lmsg->data.me_leader_msg_data_u.ok.k,
 					buf);
 			if (-1 == retval)
@@ -175,14 +179,14 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 			break;
 		case ME_LEADER_START:
 			subtype = "START";
-			retval = asprintf(&data, "k = %d",
+			retval = asprintf(&data, "%d",
 					lmsg->data.me_leader_msg_data_u.round.k);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_LEADER_ACK:
 			subtype = "ACK";
-			retval = asprintf(&data, "k = %d",
+			retval = asprintf(&data, "%d",
 					lmsg->data.me_leader_msg_data_u.round.k);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
@@ -195,7 +199,7 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 		switch (pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 			subtype = "PREPARE";
-			retval = asprintf(&data, "i = %lu, b = %lu",
+			retval = asprintf(&data, "%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.prepare.i,
 					pmsg->data.me_paxos_msg_data_u.prepare.b);
 			if (-1 == retval)
@@ -203,30 +207,24 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 			break;
 		case ME_PAXOS_PROMISE:
 			subtype = "PROMISE";
-			format_buffer(pmsg->data.me_paxos_msg_data_u.promise.v,
-					buf, sizeof(buf));
-			retval = asprintf(&data, "i = %lu, b = %lu, v=%s, vb=%lu",
+			retval = asprintf(&data, "%lu\t%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.promise.i,
 					pmsg->data.me_paxos_msg_data_u.promise.b,
-					buf,
 					pmsg->data.me_paxos_msg_data_u.promise.vb);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_ACCEPT:
 			subtype = "ACCEPT";
-			format_buffer(pmsg->data.me_paxos_msg_data_u.accept.v,
-					buf, sizeof(buf));
-			retval = asprintf(&data, "i = %lu, b = %lu, v=%s",
+			retval = asprintf(&data, "%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.accept.i,
-					pmsg->data.me_paxos_msg_data_u.accept.b,
-					buf);
+					pmsg->data.me_paxos_msg_data_u.accept.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_REJECT:
 			subtype = "REJECT";
-			retval = asprintf(&data, "i = %lu, b = %lu",
+			retval = asprintf(&data, "%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.reject.i,
 					pmsg->data.me_paxos_msg_data_u.reject.b);
 			if (-1 == retval)
@@ -234,25 +232,22 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 			break;
 		case ME_PAXOS_LAST_ACCEPTED:
 			subtype = "LAST_ACCEPTED";
-			retval = asprintf(&data, "i = %lu",
+			retval = asprintf(&data, "%lu",
 					pmsg->data.me_paxos_msg_data_u.last_accepted.i);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_LEARN:
 			subtype = "LEARN";
-			format_buffer(pmsg->data.me_paxos_msg_data_u.learn.v,
-					buf, sizeof(buf));
-			retval = asprintf(&data, "i = %lu, b = %lu, v=%s",
+			retval = asprintf(&data, "%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.learn.i,
-					pmsg->data.me_paxos_msg_data_u.learn.b,
-					buf);
+					pmsg->data.me_paxos_msg_data_u.learn.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_RETRANSMIT:
 			subtype = "RETRANSMIT";
-			retval = asprintf(&data, "from = %lu, to = %lu",
+			retval = asprintf(&data, "%lu\t%lu",
 					pmsg->data.me_paxos_msg_data_u.retransmit.from,
 					pmsg->data.me_paxos_msg_data_u.retransmit.to);
 			if (-1 == retval)
@@ -260,25 +255,25 @@ void msg_dump(ME_P_ struct me_message *msg, enum msg_direction dir, struct socka
 			break;
 		case ME_PAXOS_CLIENT_VALUE:
 			subtype = "CLIENT_VALUE";
-			format_buffer(pmsg->data.me_paxos_msg_data_u.client_value.v,
-					buf, sizeof(buf));
-			retval = asprintf(&data, "v=%s", buf);
+			retval = asprintf(&data, "%s", "");
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		}
-		break;
 	}
 	if (NULL == inet_ntop(AF_INET, &addr->sin_addr.s_addr, str, INET_ADDRSTRLEN))
 		err(EXIT_FAILURE, "inet_ntop failed");
 	if (NULL == data)
-		data = strdup("(null)");
-	fbr_log_d(&mctx->fbr, "%s message of type %s (%s) addr %s {%s}",
-			direction, type, subtype, str, data);
+		data = strdup("");
+	printf("MSG_PERFLOG %s\t%s\t%s\t%f\t%zd\t%s\t%s\r\n",
+			direction, type, subtype, now, size, str, data);
 	free(data);
 }
 
-void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_peer *, void *context), void *context) {
+void msg_send_matching(ME_P_ struct me_message *msg,
+		int (*predicate)(struct me_peer *, void *context),
+		void *context)
+{
 	struct me_peer *p;
 	int size;
 	int retval;
@@ -294,6 +289,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 		if(!predicate(p, context))
 			continue;
 		if (mctx->me == p) {
+			msg_perf_dump(ME_A_ msg, 1, &p->addr, size);
 			process_message_buf(ME_A_ buf, size,
 					(struct sockaddr *)&mctx->me->addr,
 					sizeof(mctx->me->addr));
@@ -306,7 +302,7 @@ void msg_send_matching(ME_P_ struct me_message *msg, int (*predicate)(struct me_
 		if (retval < size)
 			fbr_log_n(&mctx->fbr, "message got truncated from %d to"
 					" %d while sending", size, retval);
-		msg_dump(ME_A_ msg, 1, &p->addr);
+		msg_perf_dump(ME_A_ msg, 1, &p->addr, size);
 	}
 	xdr_destroy(&xdrs);
 }

@@ -179,7 +179,9 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 			strval_instance_state(instance->state),
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
+	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
 	instance->state = state;
+	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 #ifdef WINDOW_DUMP
 	print_window(ME_A);
 #endif
@@ -191,6 +193,13 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	struct ie_base base;
 	struct bm_mask *mask = instance->p1.acks;
 	uint64_t iid;
+	int i;
+	for (i = IS_EMPTY; i < IS_MAX; i++)
+		printf("PROPOSER_PERFLOG\t%zd\t%s\t%zd\t%f\n",
+				instance->iid,
+				strval_instance_state(i),
+				instance->state_snaps[i].encounters,
+				instance->state_snaps[i].total);
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
 	if(instance->p1.v)
@@ -199,6 +208,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 		sm_free(instance->p2.v);
 	iid = instance->iid + PRO_INSTANCE_WINDOW;
 	memset(instance, 0x00, sizeof(struct pro_instance));
+	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
 	instance->timer = timer;
@@ -560,6 +570,8 @@ static void init_instance(ME_P_ struct proposer_context *proposer_context,
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = proposer_context;
 	instance->timed_out = 0;
+	memset(instance->state_snaps, 0x00, sizeof(instance->state_snaps));
+	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 }
 
 static void free_instance(ME_P_ struct pro_instance *instance)

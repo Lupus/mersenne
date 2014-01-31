@@ -28,6 +28,7 @@
 #include <mersenne/me_protocol.h>
 #include <mersenne/bitmask.h>
 #include <mersenne/buffer.h>
+#include <mersenne/util.h>
 
 #define PRO_INSTANCE_WINDOW mctx->args_info.proposer_instance_window_arg
 #define TO1 mctx->args_info.proposer_timeout_1_arg
@@ -58,6 +59,7 @@ struct pro_instance {
 	int client_value;
 	ev_timer timer;
 	int timed_out;
+	struct perf_snap state_snaps[IS_MAX];
 };
 
 enum instance_event_type {

@@ -55,9 +55,19 @@ static inline uint64_t round_up(uint64_t n, uint64_t m) {
 	return (n + m - 1) / m;
 }
 
+struct perf_snap {
+	ev_tstamp start;
+	ev_tstamp total;
+	size_t encounters;
+	const char *name;
+};
+
 void make_socket_non_blocking(int fd);
 void buffer_ensure_writable(ME_P_ struct fbr_buffer *fb, size_t size);
 void *find_majority_element(void *arr, size_t size, size_t el_size,
 		int (*eq)(void *a, void *b));
+void perf_snap_init(ME_P_ struct perf_snap *snap);
+void perf_snap_start(ME_P_ struct perf_snap *snap);
+void perf_snap_finish(ME_P_ struct perf_snap *snap);
 
 #endif
