@@ -782,12 +782,14 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	lsn = ctx->confirmed_lsn - 1;
 
 	/* Take the snapshot */
+	fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	SLIST_INIT(&ctx->snap_instances);
 	for (r = ctx->instances; r != NULL; r = r->hh.next) {
 		r->is_cow = 1;
 		SLIST_INSERT_HEAD(&ctx->snap_instances, r, entries);
 	}
 	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
+	fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 
 	/* Write the snapshot */
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
@@ -864,6 +866,7 @@ static void recover(ME_P)
 void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	fbr_mutex_init(&mctx->fbr, &ctx->snapshot_mutex);
 	ctx->wal = malloc(sizeof(*ctx->wal));
 	if (NULL == ctx->wal)
 		err(EXIT_FAILURE, "malloc");
@@ -874,20 +877,36 @@ void acs_initialize(ME_P)
 void acs_batch_start(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	ctx->writes_per_sync = 0;
+	ctx->in_batch = 1;
+	SLIST_INIT(&ctx->dirty_instances);
 }
 
 void acs_batch_finish(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	uint64_t rows_per_snap;
+	struct acc_instance_record *r, *x;
+	ctx->in_batch = 0;
+
+	SLIST_FOREACH_SAFE(r, &ctx->dirty_instances, dirty_entries, x) {
+		if (!r->stored) {
+			acs_free_record(ME_A_ r);
+			continue;
+		}
+		wal_write_value(ME_A_ r);
+		r->dirty = 0;
+	}
+
 	if (0 == ctx->writes_per_sync)
 		return;
 	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
 	else
 		wal_log_sync(ME_A_ ctx->wal);
-	fbr_log_d(&mctx->fbr, "Flushed %zd writes", ctx->writes_per_sync);
+	fbr_log_i(&mctx->fbr, "Flushed %zd writes", ctx->writes_per_sync);
+	fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
 	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
 		create_snapshot(ME_A);
@@ -942,6 +961,7 @@ int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	int result;
 	result = find_record(ME_A_ &r, iid, mode);
 	if (1 == result && r->is_cow) {
+		assert(0 == r->dirty);
 		r_copy = malloc(sizeof(*r_copy));
 		if (NULL == r_copy)
 			err(EXIT_FAILURE, "malloc");
@@ -969,12 +989,25 @@ const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid)
 
 void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	store_record(ME_A_ record);
-	wal_write_value(ME_A_ record);
+	if (!ctx->in_batch) {
+		wal_write_value(ME_A_ record);
+		return;
+	}
+	assert(0 == record->is_cow);
+	if (!record->dirty) {
+		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
+				dirty_entries);
+		record->dirty = 1;
+	}
 }
 
 void acs_free_record(ME_P_ struct acc_instance_record *record)
 {
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	if (ctx->in_batch)
+		return;
 	if (!record->stored) {
 		if (record->v)
 			sm_free(record->v);
@@ -986,5 +1019,6 @@ void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	wal_log_close(ME_A_ ctx->wal);
+	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
 	free(ctx->wal);
 }
