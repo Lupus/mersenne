@@ -265,7 +265,7 @@ void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 		err(EXIT_FAILURE, "inet_ntop failed");
 	if (NULL == data)
 		data = strdup("");
-	printf("MSG_PERFLOG %s\t%s\t%s\t%f\t%zd\t%s\t%s\r\n",
+	printf("MSG_PERFLOG\t%s\t%s\t%s\t%f\t%zd\t%s\t%s\r\n",
 			direction, type, subtype, now, size, str, data);
 	free(data);
 }
