@@ -48,7 +48,8 @@ static void send_promise(ME_P_ struct acc_instance_record *r, struct me_peer
 			" %u", r->iid, r->v ? r->v->size1 : 0);
 }
 
-static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
+static void send_learn0(ME_P_ struct acc_instance_record *r, struct me_peer *to,
+		int retransmit)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
@@ -56,7 +57,10 @@ static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 	assert(r->v->size1 > 0);
 
 	msg.super_type = ME_PAXOS;
-	data->type = ME_PAXOS_LEARN;
+	if (retransmit)
+		data->type = ME_PAXOS_RELEARN;
+	else
+		data->type = ME_PAXOS_LEARN;
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->b;
 	data->me_paxos_msg_data_u.learn.v = r->v;
@@ -64,6 +68,16 @@ static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 		msg_send_all(ME_A_ &msg);
 	else
 		msg_send_to(ME_A_ &msg, to->index);
+}
+
+static void send_learn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
+{
+	send_learn0(ME_A_ r, to, 0);
+}
+
+static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to)
+{
+	send_learn0(ME_A_ r, to, 1);
 }
 
 static void send_highest_accepted(ME_P)
@@ -179,7 +193,7 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 			acs_free_record(ME_A_ r);
 			continue;
 		}
-		send_learn(ME_A_ r, from);
+		send_relearn(ME_A_ r, from);
 		acs_free_record(ME_A_ r);
 	}
 }

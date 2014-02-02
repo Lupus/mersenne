@@ -45,6 +45,7 @@ const char *strval_me_paxos_message_type(enum me_paxos_message_type val)
 		case ME_PAXOS_REJECT: return "ME_PAXOS_REJECT";
 		case ME_PAXOS_LAST_ACCEPTED: return "ME_PAXOS_LAST_ACCEPTED";
 		case ME_PAXOS_LEARN: return "ME_PAXOS_LEARN";
+		case ME_PAXOS_RELEARN: return "ME_PAXOS_RELEARN";
 		case ME_PAXOS_RETRANSMIT: return "ME_PAXOS_RETRANSMIT";
 		case ME_PAXOS_CLIENT_VALUE: return "ME_PAXOS_CLIENT_VALUE";
 	}	return (char*)0;

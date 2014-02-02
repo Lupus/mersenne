@@ -245,6 +245,14 @@ void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
+		case ME_PAXOS_RELEARN:
+			subtype = "RELEARN";
+			retval = asprintf(&data, "%lu\t%lu",
+					pmsg->data.me_paxos_msg_data_u.learn.i,
+					pmsg->data.me_paxos_msg_data_u.learn.b);
+			if (-1 == retval)
+				err(EXIT_FAILURE, "asprintf");
+			break;
 		case ME_PAXOS_RETRANSMIT:
 			subtype = "RETRANSMIT";
 			retval = asprintf(&data, "%lu\t%lu",

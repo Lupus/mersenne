@@ -81,6 +81,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		break;
 
 	case ME_PAXOS_LEARN:
+	case ME_PAXOS_RELEARN:
 		ldata = &pmsg->data.me_paxos_msg_data_u.learn;
 		buf = buf_sm_steal(ldata->v);
 		TAILQ_FOREACH(item, &mctx->learners, entries) {

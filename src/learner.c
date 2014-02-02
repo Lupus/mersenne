@@ -474,6 +474,7 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		pmsg = &info.msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
 			case ME_PAXOS_LEARN:
+			case ME_PAXOS_RELEARN:
 				buf = info.buf;
 				do_learn(ME_A_ context, pmsg, buf, info.from);
 				sm_free(info.buf);
