@@ -48,7 +48,11 @@ void msg_send_all(ME_P_ struct me_message *msg);
 void msg_send_matching(ME_P_ struct me_message *msg,
 		int (*predicate)(struct me_peer *, void *context),
 		void *context);
+#ifdef ME_WANT_PERFLOG
 void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 		struct sockaddr_in *addr, size_t size);
+#else
+#define msg_perf_dump(msg, dir, addr, size) (void)0
+#endif
 
 #endif

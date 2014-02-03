@@ -193,6 +193,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	struct ie_base base;
 	struct bm_mask *mask = instance->p1.acks;
 	uint64_t iid;
+#ifdef ME_WANT_PERFLOG
 	int i;
 	for (i = IS_EMPTY; i < IS_MAX; i++)
 		printf("PROPOSER_PERFLOG\t%zd\t%s\t%zd\t%f\n",
@@ -200,6 +201,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 				strval_instance_state(i),
 				instance->state_snaps[i].encounters,
 				instance->state_snaps[i].total);
+#endif
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
 	if(instance->p1.v)

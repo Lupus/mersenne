@@ -148,6 +148,7 @@ static void format_buffer(struct buffer *buffer, char *out, size_t out_size)
 }
 */
 
+#ifdef ME_WANT_PERFLOG
 void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 		struct sockaddr_in *addr, size_t size)
 {
@@ -277,6 +278,7 @@ void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 			direction, type, subtype, now, size, str, data);
 	free(data);
 }
+#endif
 
 void msg_send_matching(ME_P_ struct me_message *msg,
 		int (*predicate)(struct me_peer *, void *context),
