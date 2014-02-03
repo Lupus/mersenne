@@ -77,6 +77,17 @@ void *find_majority_element(void *arr, size_t size, size_t el_size,
 		return NULL;
 }
 
+uint64_t encode_ballot(ME_P_ uint64_t ballot)
+{
+	return ballot * mctx->args_info.max_instances_arg + mctx->me->index;
+}
+
+uint64_t decode_ballot(ME_P_ uint64_t ballot)
+{
+	return ballot / mctx->args_info.max_instances_arg;
+}
+
+
 void perf_snap_init(ME_P_ struct perf_snap *snap)
 {
 	memset(snap, 0x00, sizeof(*snap));

@@ -230,16 +230,6 @@ static void adjust_window(ME_P)
 	}
 }
 
-static uint64_t encode_ballot(ME_P_ uint64_t ballot)
-{
-	return ballot * mctx->args_info.max_instances_arg + mctx->me->index;
-}
-
-static uint64_t decode_ballot(ME_P_ uint64_t ballot)
-{
-	return ballot / mctx->args_info.max_instances_arg;
-}
-
 static void send_prepare(ME_P_ struct pro_instance *instance)
 {
 	struct me_message msg;
