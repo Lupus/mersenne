@@ -38,7 +38,7 @@
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size1,add)
 
-#define VALUE_TO 5.0
+#define VALUE_TO 1.0
 #define VALUE_SIZE 1400
 
 struct my_value {
