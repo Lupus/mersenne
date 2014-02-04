@@ -91,7 +91,7 @@ static void set_up_client_socket(ME_P)
 
 static void setup_logging(ME_P)
 {
-	enum fbr_log_level log_level;
+	enum fbr_log_level log_level = FBR_LOG_INFO;
 	switch(mctx->args_info.log_level_arg) {
 		case log_level_arg_error:
 			log_level = FBR_LOG_ERROR;

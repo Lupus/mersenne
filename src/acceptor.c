@@ -241,7 +241,7 @@ static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 	struct lea_instance_info instance_info, *ptr;
 	const size_t lii_size = sizeof(struct lea_instance_info);
 	size_t count, i;
-	uint64_t last_iid;
+	uint64_t last_iid = 0;
 
 	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
 		acs_batch_start(ME_A);
