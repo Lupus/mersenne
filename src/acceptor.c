@@ -233,7 +233,6 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 			acs_store_record(ME_A_ r);
 		}
 	}
-	acs_set_highest_finalized(ME_A_ iid);
 	acs_free_record(ME_A_ r);
 }
 
@@ -242,6 +241,7 @@ static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 	struct lea_instance_info instance_info, *ptr;
 	const size_t lii_size = sizeof(struct lea_instance_info);
 	size_t count, i;
+	uint64_t last_iid;
 
 	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
 		acs_batch_start(ME_A);
@@ -253,7 +253,9 @@ static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 			fbr_buffer_read_advance(&mctx->fbr, lea_fb);
 			do_delivered_value(ME_A_ instance_info.iid,
 					instance_info.buffer);
+			last_iid = instance_info.iid;
 		}
+		acs_set_highest_finalized(ME_A_ last_iid);
 		acs_batch_finish(ME_A);
 	}
 }

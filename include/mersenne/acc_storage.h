@@ -70,6 +70,7 @@ struct acs_context {
 	struct wal_log *wal;
 	size_t writes_per_sync;
 	int in_batch;
+	uint64_t batch_start_lsn;
 	fbr_id_t snapshot_fiber;
 	struct acc_instance_record *instances;
 	struct acc_instance_record_slist snap_instances;
@@ -77,6 +78,7 @@ struct acs_context {
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
 	struct fbr_mutex snapshot_mutex;
+	int dirty;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
@@ -104,6 +106,7 @@ struct acs_context {
 	.instances = NULL,             \
 	.highest_accepted = 0,         \
 	.highest_finalized = 0,        \
+	.dirty = 0,                    \
 }
 
 enum acs_find_mode {
