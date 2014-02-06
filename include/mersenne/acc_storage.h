@@ -38,8 +38,10 @@ struct acc_instance_record {
 	uint64_t vb;
 	int is_cow;
 	int stored;
+	int dirty;
 	UT_hash_handle hh;
 	SLIST_ENTRY(acc_instance_record) entries;
+	SLIST_ENTRY(acc_instance_record) dirty_entries;
 };
 
 SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
@@ -67,11 +69,16 @@ struct acs_context {
 	uint64_t confirmed_lsn;
 	struct wal_log *wal;
 	size_t writes_per_sync;
+	int in_batch;
+	uint64_t batch_start_lsn;
 	fbr_id_t snapshot_fiber;
 	struct acc_instance_record *instances;
 	struct acc_instance_record_slist snap_instances;
+	struct acc_instance_record_slist dirty_instances;
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
+	struct fbr_mutex snapshot_mutex;
+	int dirty;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
@@ -94,10 +101,12 @@ struct acs_context {
 	.confirmed_lsn = 0,            \
 	.wal = NULL,                   \
 	.writes_per_sync = 0,          \
+	.in_batch = 0,                 \
 	.snapshot_fiber = FBR_ID_NULL, \
 	.instances = NULL,             \
 	.highest_accepted = 0,         \
 	.highest_finalized = 0,        \
+	.dirty = 0,                    \
 }
 
 enum acs_find_mode {

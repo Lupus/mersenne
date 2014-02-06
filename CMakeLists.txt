@@ -16,8 +16,8 @@ add_definitions(-D_GNU_SOURCE)
 include_directories(
 	"${CMAKE_CURRENT_SOURCE_DIR}/include"
 	"${CMAKE_CURRENT_BINARY_DIR}/include"
-	"${CMAKE_CURRENT_SOURCE_DIR}/libevfibers/include"
-	"${CMAKE_CURRENT_BINARY_DIR}/libevfibers/include"
+	"${CMAKE_CURRENT_SOURCE_DIR}/evfibers/include"
+	"${CMAKE_CURRENT_BINARY_DIR}/evfibers/include"
 	)
 
 set(CMAKE_C_FLAGS "-Wall -Werror -fno-strict-aliasing")

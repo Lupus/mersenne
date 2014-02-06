@@ -21,12 +21,14 @@
 #include <stdio.h>
 #include <assert.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <dirent.h>
 #include <err.h>
 #include <errno.h>
 #include <zlib.h>
 #include <evfibers/eio.h>
 
+#include <mersenne/kvec.h>
 #include <mersenne/acc_storage.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/context.h>
@@ -49,6 +51,10 @@ struct wal_log {
 	int in_progress;
 	size_t rows;
 	enum wal_log_mode mode;
+	kvec_t(struct iovec) iov;
+	int collecting_iov;
+	int iov_rows;
+	struct acs_context *write_context;
 };
 
 struct wal_iter {
@@ -389,6 +395,8 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 	log->mode = mode;
 	log->dir = dir;
 	log->in_progress = in_progress;
+	kv_init(log->iov);
+	kv_resize(struct iovec, log->iov, UIO_MAXIOV);
 	if (WLM_RO == mode)
 		open_flags = O_RDONLY;
 	else
@@ -449,15 +457,70 @@ int wal_log_open_rw(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 	return wal_log_open(ME_A_ log, dir, WLM_RW, lsn, in_progress);
 }
 
+void wal_log_iov_collect(ME_P_ struct wal_log *log)
+{
+	assert(0 == log->collecting_iov);
+	log->collecting_iov = 1;
+	log->iov_rows = 0;
+}
+
+int wal_log_iov_need_flush(ME_P_ struct wal_log *log)
+{
+	assert(1 == log->collecting_iov);
+	return kv_size(log->iov) > UIO_MAXIOV - 10;
+}
+
+static eio_ssize_t log_flush_custom_cb(void *data)
+{
+	struct wal_log *log = data;
+	ssize_t rv;
+	do {
+		rv = writev(log->fd, &kv_A(log->iov, 0), kv_size(log->iov));
+	} while (-1 == rv && EINTR == errno);
+	return rv;
+}
+
+void wal_log_iov_flush(ME_P_ struct wal_log *log)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	int i;
+	ssize_t retval;
+	size_t total = 0;
+	if (0 == kv_size(log->iov))
+		return;
+	for (i = 0; i < kv_size(log->iov); i++)
+		total += kv_A(log->iov, i).iov_len;
+	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
+	if (retval < total)
+		err(EXIT_FAILURE, "writev failed");
+	fbr_log_d(&mctx->fbr, "wrotev %d rows containing %zd buffers with %zd"
+			" bytes", log->iov_rows, kv_size(log->iov), total);
+	log->rows += log->iov_rows;
+	for (i = 0; i < kv_size(log->iov); i++)
+		free(kv_A(log->iov, i).iov_base);
+	kv_size(log->iov) = 0;
+	if (ALK_WAL == log->dir->kind) {
+		ctx->confirmed_lsn += log->iov_rows;
+	}
+	log->iov_rows = 0;
+}
+
+void wal_log_iov_stop(ME_P_ struct wal_log *log)
+{
+	assert(1 == log->collecting_iov);
+	log->collecting_iov = 0;
+}
+
 void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct wal_rec_header header;
 	uint32_t magic = REC_MAGIC;
-	ssize_t retval;
+	struct iovec iovec;
 	assert(WLM_RW == log->mode);
+	assert(1 == log->collecting_iov);
 	if (ALK_WAL == log->dir->kind)
-		header.lsn = ctx->confirmed_lsn++;
+		header.lsn = ctx->confirmed_lsn + log->iov_rows;
 	else
 		header.lsn = 0;
 	header.size = size;
@@ -465,26 +528,36 @@ void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 	header.checksum = crc32(0L, Z_NULL, 0);
 	header.checksum = crc32(header.checksum, data, size);
 	header.header_checksum = calc_header_checksum(&header);
-	retval = fbr_eio_write(&mctx->fbr, log->fd, &magic, sizeof(magic), -1,
-			0);
-	if (retval < sizeof(magic))
-		err(EXIT_FAILURE, "write failed");
-	retval = fbr_eio_write(&mctx->fbr, log->fd, &header, sizeof(header), -1,
-			0);
-	if (retval < sizeof(header))
-		err(EXIT_FAILURE, "write failed");
-	retval = fbr_eio_write(&mctx->fbr, log->fd, data, size, -1, 0);
-	if (retval < size)
-		err(EXIT_FAILURE, "write failed");
-	log->rows++;
-	if (1 == log->rows && ALK_WAL == log->dir->kind)
+	assert(kv_size(log->iov) + 3 <= UIO_MAXIOV);
+
+	iovec.iov_base = malloc(sizeof(magic));
+	memcpy(iovec.iov_base, &magic, sizeof(magic));
+	iovec.iov_len = sizeof(magic);
+	kv_push(struct iovec, log->iov, iovec);
+
+	iovec.iov_base = malloc(sizeof(header));
+	memcpy(iovec.iov_base, &header, sizeof(header));
+	iovec.iov_len = sizeof(header);
+	kv_push(struct iovec, log->iov, iovec);
+
+	iovec.iov_base = data;
+	iovec.iov_len = size;
+	kv_push(struct iovec, log->iov, iovec);
+
+	log->iov_rows++;
+	if (0 == log->rows && 1 == log->iov_rows && ALK_WAL == log->dir->kind) {
+		fbr_log_d(&mctx->fbr, "flushed first row");
+		wal_log_iov_flush(ME_A_ log);
 		in_progress_rename(log);
+	}
 }
 
 void wal_log_close(ME_P_ struct wal_log *log)
 {
 	uint32_t magic = EOF_MAGIC;
 	ssize_t retval;
+
+	kv_destroy(log->iov);
 
 	if (log->mode == WLM_RW) {
 		retval = fbr_eio_write(&mctx->fbr, log->fd, &magic,
@@ -722,7 +795,6 @@ static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 	wal_rec__pack(&wal_rec, buf);
 	wal_log_write(ME_A_ log, buf, len);
 	ctx->writes_per_sync++;
-	free(buf);
 }
 
 static void wal_write_state(ME_P_ struct acs_context *ctx)
@@ -758,7 +830,6 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 	wal_rec__pack(&wal_rec, buf);
 	wal_log_write(ME_A_ log, buf, len);
 	ctx->writes_per_sync++;
-	free(buf);
 }
 
 static void wal_write_value(ME_P_ struct acc_instance_record *r)
@@ -782,17 +853,20 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	lsn = ctx->confirmed_lsn - 1;
 
 	/* Take the snapshot */
+	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	SLIST_INIT(&ctx->snap_instances);
 	for (r = ctx->instances; r != NULL; r = r->hh.next) {
 		r->is_cow = 1;
 		SLIST_INSERT_HEAD(&ctx->snap_instances, r, entries);
 	}
 	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
+	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 
 	/* Write the snapshot */
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
 	if (-1 == retval)
 		errx(EXIT_FAILURE, "unable to create a new snashot");
+	wal_log_iov_collect(ME_A_ &snap);
 	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
 	SLIST_FOREACH_SAFE(r, &ctx->snap_instances, entries, x) {
 		wal_write_value_to(ME_A_ r, &snap);
@@ -800,7 +874,11 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 			sm_free(r->v);
 			free(r);
 		}
+		if (wal_log_iov_need_flush(ME_A_ &snap))
+			wal_log_iov_flush(ME_A_ &snap);
 	}
+	wal_log_iov_flush(ME_A_ &snap);
+	wal_log_iov_stop(ME_A_ &snap);
 	for (r = ctx->instances; r != NULL; r = r->hh.next) {
 		r->is_cow = 0;
 	}
@@ -864,6 +942,7 @@ static void recover(ME_P)
 void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	fbr_mutex_init(&mctx->fbr, &ctx->snapshot_mutex);
 	ctx->wal = malloc(sizeof(*ctx->wal));
 	if (NULL == ctx->wal)
 		err(EXIT_FAILURE, "malloc");
@@ -874,20 +953,50 @@ void acs_initialize(ME_P)
 void acs_batch_start(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	ctx->writes_per_sync = 0;
+	ctx->in_batch = 1;
+	SLIST_INIT(&ctx->dirty_instances);
+	ctx->dirty = 0;
 }
+
+/*
+void wal_log_iov_collect(ME_P_ struct wal_log *log)
+int wal_log_iov_need_flush(ME_P_ struct wal_log *log)
+void wal_log_iov_flush(ME_P_ struct wal_log *log)
+void wal_log_iov_stop(ME_P_ struct wal_log *log)
+*/
 
 void acs_batch_finish(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	uint64_t rows_per_snap;
+	struct acc_instance_record *r, *x;
+	ctx->in_batch = 0;
+
+	wal_log_iov_collect(ME_A_ ctx->wal);
+	SLIST_FOREACH_SAFE(r, &ctx->dirty_instances, dirty_entries, x) {
+		if (!r->stored) {
+			acs_free_record(ME_A_ r);
+			continue;
+		}
+		if (wal_log_iov_need_flush(ME_A_ ctx->wal))
+			wal_log_iov_flush(ME_A_ ctx->wal);
+		wal_write_value(ME_A_ r);
+		r->dirty = 0;
+	}
+	if (ctx->dirty)
+		wal_write_state(ME_A_ ctx);
+	wal_log_iov_flush(ME_A_ ctx->wal);
+	wal_log_iov_stop(ME_A_ ctx->wal);
+
 	if (0 == ctx->writes_per_sync)
 		return;
 	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
 	else
 		wal_log_sync(ME_A_ ctx->wal);
-	fbr_log_d(&mctx->fbr, "Flushed %zd writes", ctx->writes_per_sync);
+	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
 	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
 		create_snapshot(ME_A);
@@ -900,8 +1009,10 @@ uint64_t acs_get_highest_accepted(ME_P)
 
 void acs_set_highest_accepted(ME_P_ uint64_t iid)
 {
-	mctx->pxs.acc.acs.highest_accepted = iid;
-	wal_write_state(ME_A_ &mctx->pxs.acc.acs);
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	assert(1 == ctx->in_batch);
+	ctx->highest_accepted = iid;
+	ctx->dirty = 1;
 }
 
 uint64_t acs_get_highest_finalized(ME_P)
@@ -911,8 +1022,10 @@ uint64_t acs_get_highest_finalized(ME_P)
 
 void acs_set_highest_finalized(ME_P_ uint64_t iid)
 {
-	mctx->pxs.acc.acs.highest_finalized = iid;
-	wal_write_state(ME_A_ &mctx->pxs.acc.acs);
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	assert(1 == ctx->in_batch);
+	ctx->highest_finalized = iid;
+	ctx->dirty = 1;
 }
 
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
@@ -942,6 +1055,7 @@ int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	int result;
 	result = find_record(ME_A_ &r, iid, mode);
 	if (1 == result && r->is_cow) {
+		assert(0 == r->dirty);
 		r_copy = malloc(sizeof(*r_copy));
 		if (NULL == r_copy)
 			err(EXIT_FAILURE, "malloc");
@@ -969,12 +1083,25 @@ const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid)
 
 void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	store_record(ME_A_ record);
-	wal_write_value(ME_A_ record);
+	if (!ctx->in_batch) {
+		wal_write_value(ME_A_ record);
+		return;
+	}
+	assert(0 == record->is_cow);
+	if (!record->dirty) {
+		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
+				dirty_entries);
+		record->dirty = 1;
+	}
 }
 
 void acs_free_record(ME_P_ struct acc_instance_record *record)
 {
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	if (ctx->in_batch)
+		return;
 	if (!record->stored) {
 		if (record->v)
 			sm_free(record->v);
@@ -986,5 +1113,6 @@ void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	wal_log_close(ME_A_ ctx->wal);
+	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
 	free(ctx->wal);
 }
