@@ -10,6 +10,7 @@ add_subdirectory(evfibers)
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 find_package(ProtoBufC REQUIRED)
+find_package(Ragel REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 
@@ -34,41 +35,65 @@ add_custom_command(
 	)
 
 RPCGEN_CREATE_XDR("include/mersenne/me_protocol.x")
-RPCGEN_CREATE_XDR("include/mersenne/cl_protocol.x")
 set_source_files_properties("include/mersenne/me_protocol.c"
-	PROPERTIES COMPILE_FLAGS "-Wno-unused"
-	)
-set_source_files_properties("include/mersenne/cl_protocol.c"
 	PROPERTIES COMPILE_FLAGS "-Wno-unused"
 	)
 
 set(GENGETOPT_SOURCES "include/mersenne/cmdline.ggo")
 ADD_GENGETOPT_FILES(${GENGETOPT_SOURCES} GGO_GEN_SOURCES)
 
-aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/src" MERSENNE_SOURCES)
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/include/mersenne" MERSENNE_HEADERS)
+set(MERSENNE_SOURCES
+	"src/context.c"
+	"src/fiber_args.c"
+	"src/xdr.c"
+	"src/sharedmem.c"
+	"src/bitmask.c"
+	"src/acc_storage.c"
+	"src/peers.c"
+	"src/learner.c"
+	"src/message.c"
+	"src/paxos.c"
+	"src/proposer.c"
+	"src/util.c"
+	"src/buffer.c"
+	"src/client.c"
+	"src/leader.c"
+	"src/acceptor.c"
+	"src/mersenne.c"
+	)
+
+ragel_gen("src/proto.rl" RAGEL_CLI_GEN_SOURCES)
+set(MERSENNE_CLI_SOURCES
+	"src/proto_common.c"
+	"src/proto_common.rl"
+	"src/proto.rl"
+	${RAGEL_CLI_GEN_SOURCES}
+	)
 set(MERSENNE_GEN_SOURCES
 	"include/mersenne/me_protocol.h"
 	"include/mersenne/me_protocol.c"
-	"include/mersenne/cl_protocol.h"
-	"include/mersenne/cl_protocol.c"
 	"${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
 	)
 
+add_library(mersenne_cli SHARED
+	${MERSENNE_CLI_SOURCES}
+	)
 add_executable(mersenne
 	${MERSENNE_SOURCES}
 	${MERSENNE_HEADERS}
 	${MERSENNE_GEN_SOURCES}
-	${GENGETOPT_SOURCES}
 	${GGO_GEN_SOURCES}
-	${LIBCORO_SOURCES}
 	)
 target_link_libraries(mersenne
+	mersenne_cli
 	${EVFIBERS_EMBED_LIBS}
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
 	crypto
 	z
+	uuid
+	msgpack
 	)
 
 subdirs(testing)
