@@ -112,7 +112,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	me_msg.m_type = ME_CMT_NEW_VALUE;
 	me_msg.new_value.buf = value->buf->ptr;
 	me_msg.new_value.size = value->buf->size;
-	uuid_generate_time_safe(me_msg.new_value.request_id);
+	uuid_generate_time(me_msg.new_value.request_id);
 	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
 	retval = me_cli_msg_pack(&pk, &me_msg);
 	if (retval)
