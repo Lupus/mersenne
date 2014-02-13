@@ -39,8 +39,8 @@ static int tcp_cork(ME_P_ int fd)
 
 static int tcp_nocork(ME_P_ int fd)
 {
-	int yes = 0;
-	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &yes, sizeof(yes));
+	int no = 0;
+	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &no, sizeof(no));
 }
 
 static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
@@ -100,6 +100,7 @@ void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
 	size_t sz = sizeof(struct lea_instance_info);
 	fbr_buffer_wait_read(&mctx->fbr, buffer, sz);
 	count = fbr_buffer_bytes(&mctx->fbr, buffer) / sz;
+
 	retval = tcp_cork(ME_A_ fd);
 	if (retval)
 		fbr_log_w(&mctx->fbr, "enabling of TCP_CORK has failed: %s",

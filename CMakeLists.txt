@@ -13,6 +13,7 @@ find_package(ProtoBufC REQUIRED)
 find_package(Ragel REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
+#add_definitions(-DME_WANT_PERFLOG)
 
 include_directories(
 	"${CMAKE_CURRENT_SOURCE_DIR}/include"
