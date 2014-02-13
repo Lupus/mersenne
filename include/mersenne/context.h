@@ -46,6 +46,7 @@ struct me_context {
 	int counter;
 	int fd;
 	int client_fd;
+	int client_tcp_fd;
 	struct me_peer *peers;
 	struct me_peer *me;
 	struct ldr_context ldr;
@@ -57,6 +58,7 @@ struct me_context {
 	fbr_id_t fiber_acceptor;
 	fbr_id_t fiber_proposer;
 	fbr_id_t fiber_client;
+	fbr_id_t fiber_tcp_client;
 	struct fiber_tailq learners;
 };
 
@@ -71,6 +73,8 @@ struct me_context {
 	.fiber_leader = FBR_ID_NULL, \
 	.fiber_listener = FBR_ID_NULL, \
 	.fiber_proposer = FBR_ID_NULL, \
+	.fiber_client = FBR_ID_NULL, \
+	.fiber_tcp_client = FBR_ID_NULL, \
 }
 
 #define ME_P struct me_context *mctx

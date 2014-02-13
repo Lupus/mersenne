@@ -20,6 +20,7 @@
  ********************************************************************/
 #include <err.h>
 #include <assert.h>
+#include <netinet/tcp.h>
 #include <errno.h>
 #include <msgpack.h>
 
@@ -29,6 +30,18 @@
 #include <mersenne/util.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/proto.h>
+
+static int tcp_cork(ME_P_ int fd)
+{
+	int yes = 1;
+	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &yes, sizeof(yes));
+}
+
+static int tcp_nocork(ME_P_ int fd)
+{
+	int yes = 0;
+	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &yes, sizeof(yes));
+}
 
 static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 {
@@ -57,14 +70,61 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	return 0;
 }
 
+struct connection_fiber_arg {
+	int fd;
+	int is_tcp;
+};
+
+void client_informer_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
+{
+	int retval;
+	struct lea_instance_info instance, *instance_ptr;
+	instance_ptr = fbr_buffer_read_address(&mctx->fbr,
+			buffer, sizeof(instance));
+	memcpy(&instance, instance_ptr, sizeof(instance));
+	fbr_buffer_read_advance(&mctx->fbr, buffer);
+
+	retval = inform_client(ME_A_ fd, instance.iid, instance.buffer);
+
+	sm_free(instance.buffer);
+
+	if (retval)
+		fbr_log_w(&mctx->fbr, "informing of a client has"
+				" failed");
+}
+
+void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
+{
+	int retval;
+	size_t count, i;
+	size_t sz = sizeof(struct lea_instance_info);
+	fbr_buffer_wait_read(&mctx->fbr, buffer, sz);
+	count = fbr_buffer_bytes(&mctx->fbr, buffer) / sz;
+	retval = tcp_cork(ME_A_ fd);
+	if (retval)
+		fbr_log_w(&mctx->fbr, "enabling of TCP_CORK has failed: %s",
+				strerror(errno));
+	for (i = 0; i < count; i++) {
+		client_informer_loop_iter(ME_A_ buffer, fd);
+	}
+	if (0 == retval) {
+		retval = tcp_nocork(ME_A_ fd);
+		if (retval)
+			fbr_log_w(&mctx->fbr,
+					"disabling of TCP_CORK has failed: %s",
+					strerror(errno));
+	}
+}
+
 void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	fbr_id_t learner;
-	int fd = *(int *)_arg;
+	struct connection_fiber_arg *arg_p = _arg;
+	struct connection_fiber_arg arg = *arg_p;
+	int fd = arg.fd;
 	int retval;
 	struct lea_fiber_arg lea_arg;
-	struct lea_instance_info instance, *instance_ptr;
 	struct fbr_buffer lea_buffer;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -77,19 +137,12 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	retval = fbr_transfer(&mctx->fbr, learner);
 	assert(0 == retval);
 
-	for (;;) {
-		instance_ptr = fbr_buffer_read_address(&mctx->fbr,
-				lea_arg.buffer, sizeof(instance));
-		memcpy(&instance, instance_ptr, sizeof(instance));
-		fbr_buffer_read_advance(&mctx->fbr, lea_arg.buffer);
-
-		retval = inform_client(ME_A_ fd, instance.iid, instance.buffer);
-
-		sm_free(instance.buffer);
-
-		if (retval)
-			fbr_log_w(&mctx->fbr, "informing of a client has"
-					" failed");
+	if (arg.is_tcp) {
+		for (;;)
+			client_informer_tcp_loop_iter(ME_A_ lea_arg.buffer, fd);
+	} else {
+		for (;;)
+			client_informer_loop_iter(ME_A_ lea_arg.buffer, fd);
 	}
 }
 
@@ -121,7 +174,9 @@ int process_message(ME_P_ struct me_cli_new_value *nv,
 static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	int fd = *(int *)_arg;
+	struct connection_fiber_arg *arg_p = _arg;
+	struct connection_fiber_arg arg = *arg_p;
+	int fd = arg.fd;
 	msgpack_unpacker pac;
 	msgpack_unpacked result;
 	union me_cli_any u;
@@ -145,7 +200,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 
 	informer = fbr_create(&mctx->fbr, "informer",
-			client_informer_fiber, &fd, 0);
+			client_informer_fiber, &arg, 0);
 	fbr_transfer(&mctx->fbr, informer);
 
 	fbr_log_i(&mctx->fbr, "Connection fiber has started");
@@ -196,16 +251,44 @@ void clt_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct sockaddr_un addr;
 	socklen_t addrlen = sizeof(addr);
 	fbr_id_t fiber;
+	struct connection_fiber_arg arg;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
+	arg.is_tcp = 0;
 
 	for (;;) {
 		sockfd = fbr_accept(&mctx->fbr, mctx->client_fd,
 				(struct	sockaddr *)&addr, &addrlen);
 		if (-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed");
+
+		arg.fd = sockfd;
 		fiber = fbr_create(&mctx->fbr, "client",
-				connection_fiber, &sockfd, 0);
+				connection_fiber, &arg, 0);
+		fbr_transfer(&mctx->fbr, fiber);
+	}
+}
+
+void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	int sockfd;
+	struct sockaddr_in addr;
+	socklen_t addrlen = sizeof(addr);
+	fbr_id_t fiber;
+	struct connection_fiber_arg arg;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	arg.is_tcp = 1;
+
+	for (;;) {
+		sockfd = fbr_accept(&mctx->fbr, mctx->client_tcp_fd,
+				(struct	sockaddr *)&addr, &addrlen);
+		if (-1 == sockfd)
+			err(EXIT_FAILURE, "fbr_accept failed on tcp socket");
+		arg.fd = sockfd;
+		fiber = fbr_create(&mctx->fbr, "tcp_client",
+				connection_fiber, &arg, 0);
 		fbr_transfer(&mctx->fbr, fiber);
 	}
 }

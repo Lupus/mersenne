@@ -89,6 +89,50 @@ static void set_up_client_socket(ME_P)
                err(EXIT_FAILURE, "client socket listen failed");
 }
 
+static void set_up_client_tcp_socket(ME_P)
+{
+	static const int yes = 1;
+	struct sockaddr_in addr;
+	int retval;
+	int port;
+
+	mctx->client_tcp_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (0 > mctx->client_tcp_fd)
+		err(EXIT_FAILURE, "failed to create a client socket");
+
+	make_socket_non_blocking(mctx->client_tcp_fd);
+
+	retval = setsockopt(mctx->client_tcp_fd, SOL_SOCKET, SO_REUSEADDR,
+			&yes, sizeof(yes));
+	if (-1 == retval)
+		err(EXIT_FAILURE, "failed to set SO_REUSEADDR");
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+	if (0 != strcmp(mctx->args_info.client_address_arg, "0.0.0.0")) {
+		retval = inet_aton(mctx->args_info.client_address_arg,
+				&addr.sin_addr);
+		if (0 == retval)
+			err(EXIT_FAILURE, "inet_pton");
+	} else {
+		addr.sin_addr.s_addr = INADDR_ANY;
+	}
+
+	port = mctx->args_info.client_port_arg;
+	if (port <= 0 || port >= 0xffff)
+		errx(EXIT_FAILURE, "invalid client port number");
+	addr.sin_port = htons(port);
+
+	retval = bind(mctx->client_tcp_fd, (struct sockaddr *)&addr,
+			sizeof(addr));
+	if (retval)
+		err(EXIT_FAILURE, "client tcp socket bind failed");
+
+	retval = listen(mctx->client_tcp_fd, LISTEN_BACKLOG);
+	if (retval)
+               err(EXIT_FAILURE, "client tcp socket listen failed");
+}
+
 static void setup_logging(ME_P)
 {
 	enum fbr_log_level log_level = FBR_LOG_INFO;
@@ -163,23 +207,35 @@ static void mersenne_start(ME_P)
 
 	set_up_udp_socket(ME_A);
 	set_up_client_socket(ME_A);
+	if (mctx->args_info.client_address_given)
+		set_up_client_tcp_socket(ME_A);
 
 	pxs_fiber_init(ME_A);
 
 	mctx->fiber_listener = fbr_create(&mctx->fbr, "listener",
 			fiber_listener, NULL, 0);
+	fbr_transfer(&mctx->fbr, mctx->fiber_listener);
+
 	mctx->fiber_leader = fbr_create(&mctx->fbr, "leader", ldr_fiber, NULL,
 			0);
+	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
+
 	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, NULL,
 			0);
-
-	fbr_transfer(&mctx->fbr, mctx->fiber_listener);
-	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
 	fbr_transfer(&mctx->fbr, mctx->fiber_client);
+
+	if (mctx->args_info.client_address_given) {
+		mctx->fiber_tcp_client = fbr_create(&mctx->fbr, "client",
+				clt_tcp_fiber, NULL, 0);
+		fbr_transfer(&mctx->fbr, mctx->fiber_tcp_client);
+	}
 }
 
 static void mersenne_stop(ME_P)
 {
+	if (mctx->args_info.client_address_given) {
+		fbr_reclaim(&mctx->fbr, mctx->fiber_tcp_client);
+	}
 	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_listener);

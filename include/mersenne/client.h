@@ -26,6 +26,7 @@
 #include <mersenne/context_fwd.h>
 
 void clt_fiber(struct fbr_context *fiber_context, void *_arg);
+void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg);
 
 #endif
 
