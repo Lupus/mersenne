@@ -1,5 +1,7 @@
 find_program(RAGEL "ragel")
 
+set(RAGEL_INCLUDES "")
+
 function(ragel_gen in_rl)
 endfunction(ragel_gen)
 macro(ragel_gen SRC_FILES OUT_FILES)
@@ -12,7 +14,7 @@ macro(ragel_gen SRC_FILES OUT_FILES)
 		set(INFILE "${CMAKE_CURRENT_SOURCE_DIR}/${CURRENT_FILE}")
 		add_custom_command(
 			OUTPUT ${OUT}
-			COMMAND ${RAGEL} -o ${OUT} ${INFILE} -I ${CMAKE_CURRENT_SOURCE_DIR}
+			COMMAND ${RAGEL} -o ${OUT} ${INFILE} ${RAGEL_INCLUDES}
 			DEPENDS ${INFILE}
 			)
 		list(APPEND NEW_SOURCE_FILES ${OUT})
@@ -20,6 +22,9 @@ macro(ragel_gen SRC_FILES OUT_FILES)
 	set(${OUT_FILES} ${NEW_SOURCE_FILES})
 endmacro(ragel_gen)
 
+macro(ragel_add_include INC_DIR)
+	set(RAGEL_INCLUDES ${RAGEL_INCLUDES} -I${INC_DIR})
+endmacro(ragel_add_include)
 
 
 if(RAGEL)

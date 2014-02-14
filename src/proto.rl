@@ -2,8 +2,7 @@
 #include <assert.h>
 #include <stdio.h>
 
-#include <mersenne/kvec.h>
-#include <mersenne/proto_common.h>
+#include <msgpack-proto-ragel/tokens.h>
 #include <mersenne/proto.h>
 
 #define elog(format, ...) do { \
@@ -35,7 +34,7 @@
 	alphtype unsigned int;
 	getkey fpc->id;
 
-	include proto_common_decls "proto_common.rl";
+	include mppr_common_decls "msgpack-proto-ragel/mppr_common.rl";
 
 	action validate_uuid_length {
 		if (mp_raw(fpc).size != sizeof(uuid_t)) {
@@ -118,17 +117,17 @@ int me_cli_msg_unpack(msgpack_object *obj, union me_cli_any *r,
 	int cs = 0;
 	int top;
 	int stack[16];
-	struct me_proto_parser_token *p, *pe;
+	struct mppr_parser_token *p, *pe;
 
 	/* Other variables */
-	me_proto_parser_tokens tokens;
+	struct mppr_tokens *tokens;
 	int error = 0;
 	%% write init;
 
-	tokens = me_proto_tokenize_object(obj);
-	me_proto_set_ragel_p_pe(tokens, &p, &pe);
+	tokens = mppr_tokenize_object(obj);
+	mppr_set_ragel_p_pe(tokens, &p, &pe);
 	%% write exec;
-	me_proto_destroy_tokens(tokens);
+	mppr_destroy_tokens(tokens);
 
 	assert(p <= pe && "Buffer overflow after parsing.");
 

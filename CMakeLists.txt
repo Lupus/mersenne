@@ -6,6 +6,7 @@ project(mersenne C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 add_subdirectory(evfibers)
+add_subdirectory(msgpack-proto-ragel)
 
 find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
@@ -20,6 +21,8 @@ include_directories(
 	"${CMAKE_CURRENT_BINARY_DIR}/include"
 	"${CMAKE_CURRENT_SOURCE_DIR}/evfibers/include"
 	"${CMAKE_CURRENT_BINARY_DIR}/evfibers/include"
+	"${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include"
+	"${CMAKE_CURRENT_BINARY_DIR}/msgpack-proto-ragel/include"
 	)
 
 set(CMAKE_C_FLAGS "-Wall -Werror -fno-strict-aliasing")
@@ -63,11 +66,9 @@ set(MERSENNE_SOURCES
 	"src/acceptor.c"
 	"src/mersenne.c"
 	)
-
+ragel_add_include("${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include")
 ragel_gen("src/proto.rl" RAGEL_CLI_GEN_SOURCES)
 set(MERSENNE_CLI_SOURCES
-	"src/proto_common.c"
-	"src/proto_common.rl"
 	"src/proto.rl"
 	${RAGEL_CLI_GEN_SOURCES}
 	)
@@ -80,6 +81,8 @@ set(MERSENNE_GEN_SOURCES
 add_library(mersenne_cli SHARED
 	${MERSENNE_CLI_SOURCES}
 	)
+target_link_libraries(mersenne_cli
+	${MPPR_EMBED_LIBS})
 add_executable(mersenne
 	${MERSENNE_SOURCES}
 	${MERSENNE_HEADERS}
