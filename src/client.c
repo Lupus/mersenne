@@ -33,13 +33,13 @@
 
 static int tcp_cork(ME_P_ int fd)
 {
-	int yes = 1;
+	static int yes = 1;
 	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &yes, sizeof(yes));
 }
 
 static int tcp_nocork(ME_P_ int fd)
 {
-	int no = 0;
+	static int no = 0;
 	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &no, sizeof(no));
 }
 
