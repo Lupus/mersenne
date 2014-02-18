@@ -11,6 +11,7 @@
 		} while (0)
 #define mp_uint(fpc) (fpc->obj->via.u64)
 #define mp_raw(fpc) (fpc->obj->via.raw)
+#define mp_array(fpc) (fpc->obj->via.array)
 #define mp_raw_cpy(fpc, x) memcpy(x, mp_raw(fpc).ptr, mp_raw(fpc).size)
 #define mp_raw_dup(fpc, x, y) do {                                    \
 			x = malloc(mp_raw(fpc).size);                 \
@@ -43,6 +44,13 @@
 		}
 	}
 
+	action validate_ip_string_length {
+		if (mp_raw(fpc).size >= ME_CMT_IP_SIZE) {
+			elog("invalid ip string length: %d", mp_raw(fpc).size);
+			fbreak;
+		}
+	}
+
 	action validate_pxs_value_length {
 		if (0 >= mp_raw(fpc).size) {
 			elog("empty paxos value received");
@@ -53,6 +61,7 @@
 	m_type = MOBJ_POS_INT;
 	iid = MOBJ_POS_INT;
 	uuid = MOBJ_RAW @validate_uuid_length;
+	ip_string = MOBJ_RAW @validate_ip_string_length;
 	pxs_value = MOBJ_RAW @validate_pxs_value_length;
 	arr_start = MOBJ_ARRAY;
 	arr_end = MOBJ_END;
@@ -67,22 +76,38 @@
 		@{ fret; };
 
 	m_arrived_value :=
-		uuid @{
-			mp_raw_cpy(fpc, r->arrived_value.request_id);
+		pxs_value @{
+			mp_raw_opt(fpc, r->arrived_value.buf,
+					r->arrived_value.size);
 		} .
 		iid @{
 			r->arrived_value.iid = mp_uint(fpc);
 		}
 		@{ fret; };
 
-	m_other_value :=
-		pxs_value @{
-			mp_raw_opt(fpc, r->other_value.buf,
-					r->other_value.size);
-		} .
-		iid @{
-			r->other_value.iid = mp_uint(fpc);
+	m_redirect :=
+		ip_string @{
+			strncpy(r->redirect.ip, mp_raw(fpc).ptr,
+					mp_raw(fpc).size);
 		}
+		@{ fret; };
+
+	m_server_hello :=
+		arr_start @{
+			r->server_hello.peers = calloc(mp_array(fpc).size,
+					sizeof(void *));
+			r->server_hello.count = mp_array(fpc).size;
+			i = 0;
+		} .
+		ip_string+ @{
+			assert(i < r->server_hello.count);
+			r->server_hello.peers[i] = malloc(mp_raw(fpc).size + 1);
+			memcpy(r->server_hello.peers[i], mp_raw(fpc).ptr,
+					mp_raw(fpc).size);
+			r->server_hello.peers[i][mp_raw(fpc).size] = '\0';
+			i++;
+		} .
+		arr_end
 		@{ fret; };
 
 	action dispatch_m_type {
@@ -91,11 +116,14 @@
 		case ME_CMT_NEW_VALUE:
 			fcall m_new_value;
 			break;
-		case ME_CMT_ARRIVED_OTHER_VALUE:
-			fcall m_other_value;
-			break;
 		case ME_CMT_ARRIVED_VALUE:
 			fcall m_arrived_value;
+			break;
+		case ME_CMT_REDIRECT:
+			fcall m_redirect;
+			break;
+		case ME_CMT_SERVER_HELLO:
+			fcall m_server_hello;
 			break;
 		default:
 			elog("invalid message type: %ld", mp_uint(fpc));
@@ -122,6 +150,7 @@ int me_cli_msg_unpack(msgpack_object *obj, union me_cli_any *r,
 	/* Other variables */
 	struct mppr_tokens *tokens;
 	int error = 0;
+	unsigned int i;
 	%% write init;
 
 	tokens = mppr_tokenize_object(obj);
@@ -143,6 +172,7 @@ int me_cli_msg_unpack(msgpack_object *obj, union me_cli_any *r,
 #undef elog
 #undef mp_uint
 #undef mp_raw
+#undef mp_array
 #undef mp_raw_cpy
 #undef mp_raw_dup
 #undef mp_raw_ref
@@ -152,8 +182,10 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 {
 	struct me_cli_new_value *new_value;
 	struct me_cli_arrived_value *arrived_value;
-	struct me_cli_arrived_other_value *other_value;
+	struct me_cli_redirect  *redirect;
+	struct me_cli_server_hello *server_hello;
 	int retval;
+	unsigned int i;
 	#define rv(stmt) do {                  \
 			retval = (stmt);       \
 			if (retval)            \
@@ -176,19 +208,28 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 		mp_raw_sizeof(new_value->request_id);
 		mp_raw(new_value->buf, new_value->size);
 		break;
-	case ME_CMT_ARRIVED_OTHER_VALUE:
-		other_value = &u->other_value;
-		mp_array(3);
-		mp_uint(u->m_type);
-		mp_raw(other_value->buf, other_value->size);
-		mp_uint(other_value->iid);
-		break;
 	case ME_CMT_ARRIVED_VALUE:
 		arrived_value = &u->arrived_value;
 		mp_array(3);
 		mp_uint(u->m_type);
-		mp_raw_sizeof(arrived_value->request_id);
+		mp_raw(arrived_value->buf, arrived_value->size);
 		mp_uint(arrived_value->iid);
+		break;
+	case ME_CMT_REDIRECT:
+		redirect = &u->redirect;
+		mp_array(2);
+		mp_uint(u->m_type);
+		mp_raw(redirect->ip, strlen(redirect->ip));
+		break;
+	case ME_CMT_SERVER_HELLO:
+		server_hello = &u->server_hello;
+		mp_array(2);
+		mp_uint(u->m_type);
+		mp_array(server_hello->count);
+		for (i = 0; i < server_hello->count; i++) {
+			mp_raw(server_hello->peers[i],
+					strlen(server_hello->peers[i]));
+		}
 		break;
 	}
 	return 0;
@@ -201,19 +242,27 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 
 void me_cli_msg_free(union me_cli_any *u)
 {
+	unsigned int i;
 	struct me_cli_new_value *new_value;
-	struct me_cli_arrived_other_value *other_value;
+	struct me_cli_arrived_value *arrived_value;
+	struct me_cli_server_hello *server_hello;
 
 	switch (u->m_type) {
 	case ME_CMT_NEW_VALUE:
 		new_value = &u->new_value;
 		free(new_value->buf);
 		break;
-	case ME_CMT_ARRIVED_OTHER_VALUE:
-		other_value = &u->other_value;
-		free(other_value->buf);
-		break;
 	case ME_CMT_ARRIVED_VALUE:
+		arrived_value = &u->arrived_value;
+		free(arrived_value->buf);
+		break;
+	case ME_CMT_REDIRECT:
+		break;
+	case ME_CMT_SERVER_HELLO:
+		server_hello = &u->server_hello;
+		for (i = 0; i < server_hello->count; i++)
+			free(server_hello->peers[i]);
+		free(server_hello->peers);
 		break;
 	}
 }

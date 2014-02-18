@@ -46,11 +46,6 @@ struct pro_msg_me_message {
 	struct msg_info info;
 };
 
-struct pro_msg_client_value {
-	struct pro_msg_base base;
-	struct buffer *value;
-};
-
 struct pending_value {
 	struct buffer *v;
 	struct pending_value *next, *prev;
@@ -62,6 +57,8 @@ struct pro_context {
 	uint64_t next_ready;
 	struct pending_value *pending;
 	int pending_size;
+	struct fbr_cond_var pending_cond;
+	struct fbr_mutex pending_mutex;
 };
 
 #define PRO_CONTEXT_INITIALIZER { \
@@ -74,5 +71,6 @@ struct pro_context {
 void pro_fiber(struct fbr_context *fiber_context, void *_arg);
 void pro_start(ME_P);
 void pro_stop(ME_P);
+int pro_push_value(ME_P_ struct buffer *value);
 
 #endif

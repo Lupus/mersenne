@@ -1,3 +1,2 @@
 #!/bin/bash
-export UNIX_SOCKET=./socks/$1
-exec ./build/testing/strings_client $2 $3
+exec ./build/testing/strings_client 127.0.0.2:6328 $1 $2

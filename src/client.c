@@ -31,6 +31,11 @@
 #include <mersenne/sharedmem.h>
 #include <mersenne/proto.h>
 
+struct connection_fiber_arg {
+	int fd;
+	struct fbr_mutex *mutex;
+};
+
 static int tcp_cork(ME_P_ int fd)
 {
 	static int yes = 1;
@@ -43,23 +48,26 @@ static int tcp_nocork(ME_P_ int fd)
 	return setsockopt(fd, IPPROTO_TCP, TCP_CORK, &no, sizeof(no));
 }
 
-static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
+static int inform_client(ME_P_ struct connection_fiber_arg *arg, uint64_t iid,
+		struct buffer *buffer)
 {
 	msgpack_sbuffer *buf = msgpack_sbuffer_new();
 	msgpack_packer pk;
 	union me_cli_any me_msg;
 	int retval;
 
-	me_msg.m_type = ME_CMT_ARRIVED_OTHER_VALUE;
-	me_msg.other_value.buf = buffer->ptr;
-	me_msg.other_value.size = buffer->size1;
-	me_msg.other_value.iid = iid;
+	me_msg.m_type = ME_CMT_ARRIVED_VALUE;
+	me_msg.arrived_value.buf = buffer->ptr;
+	me_msg.arrived_value.size = buffer->size1;
+	me_msg.arrived_value.iid = iid;
 	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
 	retval = me_cli_msg_pack(&pk, &me_msg);
 	if (retval)
 		return retval;
 
-	retval = fbr_write_all(&mctx->fbr, fd, buf->data, buf->size);
+	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
+	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
 	if (retval < buf->size) {
 		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
 				strerror(errno));
@@ -70,12 +78,8 @@ static int inform_client(ME_P_ int fd, uint64_t iid, struct buffer *buffer)
 	return 0;
 }
 
-struct connection_fiber_arg {
-	int fd;
-	int is_tcp;
-};
-
-void client_informer_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
+static void client_informer_loop_iter(ME_P_ struct fbr_buffer *buffer,
+	struct connection_fiber_arg *arg)
 {
 	int retval;
 	struct lea_instance_info instance, *instance_ptr;
@@ -84,7 +88,7 @@ void client_informer_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
 	memcpy(&instance, instance_ptr, sizeof(instance));
 	fbr_buffer_read_advance(&mctx->fbr, buffer);
 
-	retval = inform_client(ME_A_ fd, instance.iid, instance.buffer);
+	retval = inform_client(ME_A_ arg, instance.iid, instance.buffer);
 
 	sm_free(instance.buffer);
 
@@ -93,7 +97,8 @@ void client_informer_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
 				" failed");
 }
 
-void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
+static void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer,
+		struct connection_fiber_arg *arg)
 {
 	int retval;
 	size_t count, i;
@@ -101,15 +106,15 @@ void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer, int fd)
 	fbr_buffer_wait_read(&mctx->fbr, buffer, sz);
 	count = fbr_buffer_bytes(&mctx->fbr, buffer) / sz;
 
-	retval = tcp_cork(ME_A_ fd);
+	retval = tcp_cork(ME_A_ arg->fd);
 	if (retval)
 		fbr_log_w(&mctx->fbr, "enabling of TCP_CORK has failed: %s",
 				strerror(errno));
 	for (i = 0; i < count; i++) {
-		client_informer_loop_iter(ME_A_ buffer, fd);
+		client_informer_loop_iter(ME_A_ buffer, arg);
 	}
 	if (0 == retval) {
-		retval = tcp_nocork(ME_A_ fd);
+		retval = tcp_nocork(ME_A_ arg->fd);
 		if (retval)
 			fbr_log_w(&mctx->fbr,
 					"disabling of TCP_CORK has failed: %s",
@@ -123,7 +128,6 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_id_t learner;
 	struct connection_fiber_arg *arg_p = _arg;
 	struct connection_fiber_arg arg = *arg_p;
-	int fd = arg.fd;
 	int retval;
 	struct lea_fiber_arg lea_arg;
 	struct fbr_buffer lea_buffer;
@@ -138,12 +142,55 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	retval = fbr_transfer(&mctx->fbr, learner);
 	assert(0 == retval);
 
-	if (arg.is_tcp) {
-		for (;;)
-			client_informer_tcp_loop_iter(ME_A_ lea_arg.buffer, fd);
-	} else {
-		for (;;)
-			client_informer_loop_iter(ME_A_ lea_arg.buffer, fd);
+	for (;;)
+		client_informer_tcp_loop_iter(ME_A_ lea_arg.buffer, &arg);
+}
+
+static int redirect_client(ME_P_ struct connection_fiber_arg *arg)
+{
+	msgpack_sbuffer *buf = msgpack_sbuffer_new();
+	msgpack_packer pk;
+	union me_cli_any me_msg;
+	int retval;
+	char *addr_str;
+	struct me_peer *leader;
+
+	me_msg.m_type = ME_CMT_REDIRECT;
+	leader = ldr_get_or_wait_for_leader(ME_A);
+	if (leader == mctx->me)
+		return 1;
+	addr_str = inet_ntoa(leader->addr.sin_addr);
+	strncpy(me_msg.redirect.ip, addr_str, ME_CMT_IP_SIZE);
+	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	retval = me_cli_msg_pack(&pk, &me_msg);
+	if (retval)
+		return retval;
+
+	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
+	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	if (retval < buf->size) {
+		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
+				strerror(errno));
+		return -1;
+	}
+	msgpack_sbuffer_free(buf);
+	fbr_log_i(&mctx->fbr, "redirected client to %s", me_msg.redirect.ip);
+	return 0;
+}
+
+void leadership_change_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct connection_fiber_arg *arg_p = _arg;
+	struct connection_fiber_arg arg = *arg_p;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+
+	for (;;) {
+		ldr_wait_for_leader_change(ME_A);
+		if (!ldr_is_leader(ME_A))
+			redirect_client(ME_A_ &arg);
 	}
 }
 
@@ -151,7 +198,6 @@ int process_message(ME_P_ struct me_cli_new_value *nv,
 		struct fbr_buffer *pro_buf)
 {
 	struct buffer *value;
-	struct pro_msg_client_value *msg_client_value;
 	char *buf;
 	value = buf_sm_copy(nv->buf, nv->size);
 	if (fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
@@ -161,14 +207,48 @@ int process_message(ME_P_ struct me_cli_new_value *nv,
 		fbr_log_d(&mctx->fbr, "Got value: ``%s''", buf);
 		free(buf);
 	}
-	buffer_ensure_writable(ME_A_ pro_buf,
-			sizeof(struct pro_msg_client_value));
-	msg_client_value = fbr_buffer_alloc_prepare(&mctx->fbr,
-			pro_buf, sizeof(struct pro_msg_client_value));
-	msg_client_value->base.type = PRO_MSG_CLIENT_VALUE;
-	msg_client_value->value = sm_in_use(value);
-	fbr_buffer_alloc_commit(&mctx->fbr, pro_buf);
+	pro_push_value(ME_A_ value);
 	sm_free(value);
+	return 0;
+}
+
+static int send_server_hello(ME_P_ struct connection_fiber_arg *arg)
+{
+	msgpack_sbuffer *buf = msgpack_sbuffer_new();
+	msgpack_packer pk;
+	union me_cli_any me_msg;
+	int retval;
+	char **peers;
+	unsigned int count, i;
+	struct me_peer *p;
+
+	count = HASH_COUNT(mctx->peers);
+	peers = calloc(count, sizeof(void *));
+	for (i = 0, p = mctx->peers; NULL != p; p = p->hh.next, i++)
+		peers[i] = strdup(inet_ntoa(p->addr.sin_addr));
+
+	me_msg.m_type = ME_CMT_SERVER_HELLO;
+	me_msg.server_hello.count = count;
+	me_msg.server_hello.peers = peers;
+	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	retval = me_cli_msg_pack(&pk, &me_msg);
+	for (i = 0; i < count; i++) {
+		free(peers[i]);
+	}
+	free(peers);
+	if (retval)
+		return retval;
+
+	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
+	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	if (retval < buf->size) {
+		msgpack_sbuffer_free(buf);
+		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
+				strerror(errno));
+		return -1;
+	}
+	msgpack_sbuffer_free(buf);
 	return 0;
 }
 
@@ -184,6 +264,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	ssize_t retval;
 	struct fbr_buffer *pro_buf;
 	fbr_id_t informer;
+	fbr_id_t leader_change;
 	char *error = NULL;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -200,9 +281,27 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		goto conn_finish;
 	}
 
-	informer = fbr_create(&mctx->fbr, "informer",
+	retval = send_server_hello(ME_A_ &arg);
+	if (retval)
+		goto conn_finish;
+
+	if (!ldr_is_leader(ME_A)) {
+		retval = redirect_client(ME_A_ &arg);
+		if (0 >= retval)
+			/* Either we failed, or we told the client about
+			 * the current leader
+			 */
+			goto conn_finish;
+		/* We gained leadership */
+	}
+
+	informer = fbr_create(&mctx->fbr, "client/informer",
 			client_informer_fiber, &arg, 0);
 	fbr_transfer(&mctx->fbr, informer);
+
+	leader_change = fbr_create(&mctx->fbr, "client/leader_change",
+			leadership_change_fiber, &arg, 0);
+	fbr_transfer(&mctx->fbr, leader_change);
 
 	fbr_log_i(&mctx->fbr, "Connection fiber has started");
 	for (;;) {
@@ -234,7 +333,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 				goto conn_finish;
 			}
 
-			retval = process_message(ME_A_ &u.new_value, pro_buf);
+			retval = process_message(ME_A_ &u.new_value,
+					pro_buf);
 			if (retval)
 				goto conn_finish;
 		}
@@ -245,31 +345,6 @@ conn_finish:
 	close(fd);
 }
 
-void clt_fiber(struct fbr_context *fiber_context, void *_arg)
-{
-	struct me_context *mctx;
-	int sockfd;
-	struct sockaddr_un addr;
-	socklen_t addrlen = sizeof(addr);
-	fbr_id_t fiber;
-	struct connection_fiber_arg arg;
-
-	mctx = container_of(fiber_context, struct me_context, fbr);
-	arg.is_tcp = 0;
-
-	for (;;) {
-		sockfd = fbr_accept(&mctx->fbr, mctx->client_fd,
-				(struct	sockaddr *)&addr, &addrlen);
-		if (-1 == sockfd)
-			err(EXIT_FAILURE, "fbr_accept failed");
-
-		arg.fd = sockfd;
-		fiber = fbr_create(&mctx->fbr, "client",
-				connection_fiber, &arg, 0);
-		fbr_transfer(&mctx->fbr, fiber);
-	}
-}
-
 void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
@@ -278,9 +353,11 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 	socklen_t addrlen = sizeof(addr);
 	fbr_id_t fiber;
 	struct connection_fiber_arg arg;
+	struct fbr_mutex fd_mutex;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	arg.is_tcp = 1;
+	fbr_mutex_init(&mctx->fbr, &fd_mutex);
+	arg.mutex = &fd_mutex;
 
 	for (;;) {
 		sockfd = fbr_accept(&mctx->fbr, mctx->client_tcp_fd,

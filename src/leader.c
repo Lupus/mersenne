@@ -32,6 +32,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/peers.h>
 
 #define TIME_DELTA mctx->args_info.leader_delta_arg
 #define TIME_EPSILON mctx->args_info.leader_epsilon_arg
@@ -124,6 +125,38 @@ void gained_leadership(ME_P)
 	pro_start(ME_A);
 }
 
+struct me_peer *ldr_get_or_wait_for_leader(ME_P)
+{
+	struct fbr_mutex mutex;
+	if (-1 == mctx->ldr.leader) {
+		fbr_mutex_init(&mctx->fbr, &mutex);
+		while (-1 == mctx->ldr.leader) {
+			fbr_mutex_lock(&mctx->fbr, &mutex);
+			fbr_cond_wait(&mctx->fbr, &mctx->ldr.changed_cond,
+					&mutex);
+			fbr_mutex_unlock(&mctx->fbr, &mutex);
+		}
+	}
+	fbr_mutex_destroy(&mctx->fbr, &mutex);
+	assert(mctx->ldr.leader >= 0);
+	return find_peer_by_index(ME_A_ mctx->ldr.leader);
+}
+
+void ldr_wait_for_leader_change(ME_P)
+{
+	int old_leader;
+	struct fbr_mutex mutex;
+	fbr_mutex_init(&mctx->fbr, &mutex);
+	old_leader = mctx->ldr.leader;
+	while (old_leader == mctx->ldr.leader) {
+		fbr_mutex_lock(&mctx->fbr, &mutex);
+		fbr_cond_wait(&mctx->fbr, &mctx->ldr.changed_cond,
+				&mutex);
+		fbr_mutex_unlock(&mctx->fbr, &mutex);
+	}
+	fbr_mutex_destroy(&mctx->fbr, &mutex);
+}
+
 void update_leader(ME_P_ int new_leader)
 {
 	int old_leader;
@@ -135,6 +168,7 @@ void update_leader(ME_P_ int new_leader)
 			gained_leadership(ME_A);
 	}
 	mctx->ldr.leader = new_leader;
+	fbr_cond_signal(&mctx->fbr, &mctx->ldr.changed_cond);
 	fbr_log_i(&mctx->fbr, "R %d: Leader=%d", mctx->ldr.r, mctx->ldr.leader);
 }
 
@@ -403,6 +437,7 @@ void ldr_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &buffer);
 	fbr_mutex_init(&mctx->fbr, &mctx->ldr.mutex);
 	fbr_cond_init(&mctx->fbr, &mctx->ldr.timeout_cond);
+	fbr_cond_init(&mctx->fbr, &mctx->ldr.changed_cond);
 
 	delta_fiber_id = fbr_create(&mctx->fbr, "leader/delta_fiber", delta_fiber,
 			NULL, 0);

@@ -47,6 +47,7 @@ struct proposer_context {
 	struct fbr_cond_var instance_to_cond;
 	struct fbr_mutex instance_to_mutex;
 	fbr_id_t instance_to_fiber_id;
+	fbr_id_t vqueue_fiber_id;
 	struct me_context *mctx;
 	int need_to_run;
 };
@@ -92,12 +93,23 @@ static int pending_append(ME_P_ struct buffer *from)
 	struct pending_value *pv;
 	if(mctx->pxs.pro.pending_size > mctx->args_info.proposer_queue_size_arg)
 		return -1;
-	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
+	pv = calloc(1, sizeof(struct pending_value));
 	pv->v = sm_in_use(from);
 	DL_APPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
 	return 0;
 }
+
+int pro_push_value(ME_P_ struct buffer *value)
+{
+	int retval;
+	retval = pending_append(ME_A_ value);
+	if (retval)
+		return retval;
+	fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.pending_cond);
+	return 0;
+}
+
 
 static int pending_shift(ME_P_ struct buffer **pptr)
 {
@@ -108,14 +120,14 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	DL_DELETE(mctx->pxs.pro.pending, pv);
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
-	fbr_free(&mctx->fbr, pv);
+	free(pv);
 	return 1;
 }
 
 static void pending_unshift(ME_P_ struct buffer *from)
 {
 	struct pending_value *pv;
-	pv = fbr_calloc(&mctx->fbr, 1, sizeof(struct pending_value));
+	pv = calloc(1, sizeof(struct pending_value));
 	pv->v = sm_in_use(from);
 	DL_PREPEND(mctx->pxs.pro.pending, pv);
 	mctx->pxs.pro.pending_size++;
@@ -286,6 +298,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			switch_instance(ME_A_ instance,
 					IS_P1_READY_NO_VALUE,
 					&new_base);
+					*/
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
@@ -631,32 +644,47 @@ static void proposer_init(ME_P_ struct proposer_context *proposer_context,
 	}
 }
 
-static void do_client_value(ME_P_ struct buffer *buf)
+static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 {
-	struct ie_nv nv;
+	struct me_context *mctx;
+	struct fbr_mutex *m;
+	struct fbr_cond_var *cond;
 	struct pro_instance *instance;
+	struct ie_nv nv;
 	uint64_t i, j;
-	uint64_t start = mctx->pxs.pro.lowest_non_closed;
-	uint64_t next_ready = mctx->pxs.pro.next_ready;
-	if (next_ready > start)
-		start = next_ready;
-	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
-		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
-		if (IS_P1_READY_NO_VALUE == instance->state) {
-			nv.b.type = IE_NV;
-			nv.buffer = sm_in_use(buf);
-			run_instance(ME_A_ instance, &nv.b);
-			mctx->pxs.pro.next_ready = i + 1;
-			return;
+	uint64_t start;
+	uint64_t next_ready;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	m = &mctx->pxs.pro.pending_mutex;
+	cond = &mctx->pxs.pro.pending_cond;
+	for (;;) {
+		fbr_mutex_lock(&mctx->fbr, m);
+		fbr_cond_wait(&mctx->fbr, cond, m);
+		fbr_mutex_unlock(&mctx->fbr, m);
+		if (0 == mctx->pxs.pro.pending_size)
+			continue;
+		start = mctx->pxs.pro.lowest_non_closed;
+		next_ready = mctx->pxs.pro.next_ready;
+		if (next_ready > start)
+			start = next_ready;
+		for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+			instance = mctx->pxs.pro.instances +
+				(i % PRO_INSTANCE_WINDOW);
+			if (IS_P1_READY_NO_VALUE == instance->state) {
+				nv.b.type = IE_NV;
+				if (!pending_shift(ME_A_ &nv.buffer))
+					break;
+				run_instance(ME_A_ instance, &nv.b);
+				mctx->pxs.pro.next_ready = i + 1;
+			}
 		}
 	}
-	pending_append(ME_A_ buf);
 }
 
 static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 {
 	struct me_paxos_message *pmsg;
-	struct buffer *buf;
 
 	pmsg = &msg->me_message_u.paxos_message;
 
@@ -666,11 +694,6 @@ static void do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 			break;
 		case ME_PAXOS_REJECT:
 			do_reject(ME_A_ pmsg, from);
-			break;
-		case ME_PAXOS_CLIENT_VALUE:
-			buf = buf_sm_steal(pmsg->data.me_paxos_msg_data_u.client_value.v);
-			do_client_value(ME_A_ buf);
-			sm_free(buf);
 			break;
 		default:
 			errx(EXIT_FAILURE, "invalid paxos message type for "
@@ -733,17 +756,6 @@ void process_fb_me_message(ME_P_ struct fbr_buffer *fb)
 	sm_free(msg_info->msg);
 }
 
-void process_fb_client_value(ME_P_ struct fbr_buffer *fb)
-{
-	struct pro_msg_client_value pro_client, *pro_client_ptr;
-	const size_t x = sizeof(struct pro_msg_client_value);
-	pro_client_ptr = fbr_buffer_read_address(&mctx->fbr, fb, x);
-	memcpy(&pro_client, pro_client_ptr, x);
-	fbr_buffer_read_advance(&mctx->fbr, fb);
-	do_client_value(ME_A_ pro_client.value);
-	sm_free(pro_client.value);
-}
-
 static void process_fb(ME_P_ struct fbr_buffer *fb)
 {
 	struct pro_msg_base *base;
@@ -757,9 +769,6 @@ static void process_fb(ME_P_ struct fbr_buffer *fb)
 		switch(type) {
 		case PRO_MSG_ME_MESSAGE:
 			process_fb_me_message(ME_A_ fb);
-			break;
-		case PRO_MSG_CLIENT_VALUE:
-			process_fb_client_value(ME_A_ fb);
 			break;
 		default:
 			abort();
@@ -812,6 +821,11 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	assert(!fbr_id_isnull(proposer_context->instance_to_fiber_id));
 	fbr_transfer(&mctx->fbr, proposer_context->instance_to_fiber_id);
 
+	proposer_context->vqueue_fiber_id = fbr_create(&mctx->fbr,
+			"proposer/vqueue", vqueue_fiber, proposer_context, 0);
+	assert(!fbr_id_isnull(proposer_context->vqueue_fiber_id));
+	fbr_transfer(&mctx->fbr, proposer_context->vqueue_fiber_id);
+
 	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
 			fbr_buffer_cond_read(&mctx->fbr, &fb),
 			&fb_mutex);
@@ -853,16 +867,6 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
-static void send_proxy_value(ME_P_ struct buffer *buf)
-{
-	struct me_message msg;
-	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
-	msg.super_type = ME_PAXOS;
-	data->type = ME_PAXOS_CLIENT_VALUE;
-	data->me_paxos_msg_data_u.client_value.v = buf;
-	msg_send_to(ME_A_ &msg, mctx->ldr.leader);
-}
-
 static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
@@ -872,7 +876,6 @@ static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 	enum pro_msg_type type;
 	struct pro_msg_me_message pro_msg, *pro_msg_ptr;
 	struct msg_info *msg_info;
-	struct pro_msg_client_value pro_client, *pro_client_ptr;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
@@ -899,15 +902,6 @@ static void proxy_fiber(struct fbr_context *fiber_context, void *_arg)
 				fbr_buffer_read_advance(&mctx->fbr, &fb);
 				msg_info = &pro_msg.info;
 				sm_free(msg_info->msg);
-				break;
-			case PRO_MSG_CLIENT_VALUE:
-				pro_client_ptr = fbr_buffer_read_address(&mctx->fbr,
-						&fb, sizeof(pro_client));
-				memcpy(&pro_client, pro_client_ptr,
-						sizeof(pro_client));
-				fbr_buffer_read_advance(&mctx->fbr, &fb);
-				send_proxy_value(ME_A_ pro_client.value);
-				sm_free(pro_client.value);
 				break;
 			default:
 				abort();

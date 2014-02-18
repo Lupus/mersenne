@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <assert.h>
 #include <err.h>
+#include <errno.h>
 #include <unistd.h>
 #include <ev.h>
 #include <uthash.h>
@@ -29,6 +30,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/un.h>
 #include <uuid/uuid.h>
 
@@ -76,6 +78,10 @@ struct client_context {
 	struct fbr_mutex *mutex;
 	int concurrency;
 	struct client_stats stats;
+	char *initial_ipp;
+	int initial_port;
+	struct sockaddr_in *peers;
+	unsigned int peer_count;
 };
 
 static struct timespec diff(struct timespec start, struct timespec end)
@@ -120,9 +126,11 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 
 	fbr_mutex_lock(&cc->fbr, cc->mutex);
 	assert(buf->size > 0);
+	//printf("trying to write...\n");
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
 	if (retval < buf->size)
 		err(EXIT_FAILURE, "fbr_write_all");
+	//printf("done writing\n");
 	fbr_mutex_unlock(&cc->fbr, cc->mutex);
 	msgpack_sbuffer_free(buf);
 	ev_now_update(cc->loop);
@@ -149,8 +157,10 @@ static void client_finished(struct client_context *cc)
 	printf("Values timed out: %d\n", cc->stats.timeouts);
 	printf("Average turnaround time: %f\n", turnaround);
 	printf("Other values received: %d\n", cc->stats.other);
-	printf("Average throughput (transactions/second): %.3f\n", cc->stats.received / elapsed);
-	printf("Average throughput (bytes/second): %.3f\n", VALUE_SIZE * cc->stats.received / elapsed);
+	printf("Average throughput (transactions/second): %.3f\n",
+			cc->stats.received / elapsed);
+	printf("Average throughput (bytes/second): %.3f\n",
+			VALUE_SIZE * cc->stats.received / elapsed);
 	printf("==========================================\n");
 }
 
@@ -187,6 +197,116 @@ static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
 	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
 }
 
+static void tcp_nodelay(int fd)
+{
+	static int yes = 1;
+	int retval;
+	retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+	if (retval)
+		err(EXIT_FAILURE, "setsockopt(TCP_NODELAY)");
+}
+
+static void reconnect_to_any_online_l(struct client_context *cc, int lock)
+{
+	int retval;
+	unsigned int i;
+	unsigned int retries = 0;
+
+	if (lock)
+		fbr_mutex_lock(&cc->fbr, cc->mutex);
+
+retry:
+	for (i = 0; i < cc->peer_count; i++) {
+		close(cc->fd);
+
+		if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+			err(EXIT_FAILURE, "failed to create a client socket");
+
+		if (fbr_fd_nonblock(&cc->fbr, cc->fd))
+			err(EXIT_FAILURE, "fbr_fd_nonblock");
+
+		retval = fbr_connect(&cc->fbr, cc->fd, (void *)&cc->peers[i],
+				sizeof(cc->peers[i]));
+		if (-1 == retval) {
+			printf("reconnect to %s failed: %s\n",
+					inet_ntoa(cc->peers[i].sin_addr),
+					strerror(errno));
+			continue;
+		}
+		tcp_nodelay(cc->fd);
+		printf("Reconnected to %s\n",
+				inet_ntoa(cc->peers[i].sin_addr));
+		fbr_mutex_unlock(&cc->fbr, cc->mutex);
+		return;
+	}
+	retries++;
+	if (retries > 5)
+		errx(EXIT_FAILURE, "unable to reconnect to any online instance");
+	fbr_sleep(&cc->fbr, 1.0);
+	goto retry;
+}
+
+static void reconnect_to_any_online(struct client_context *cc)
+{
+	reconnect_to_any_online_l(cc, 1);
+}
+
+static void reconnect(struct client_context *cc, const char *ip)
+{
+	int retval;
+	struct sockaddr_in addr;
+
+	fbr_mutex_lock(&cc->fbr, cc->mutex);
+	close(cc->fd);
+
+	memset(&addr, 0, sizeof(addr));
+	addr.sin_family = AF_INET;
+
+	retval = inet_aton(ip, &addr.sin_addr);
+	if (0 == retval)
+		errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
+
+	addr.sin_port = cc->initial_port;
+
+	if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+		err(EXIT_FAILURE, "failed to create a client socket");
+
+	if (fbr_fd_nonblock(&cc->fbr, cc->fd))
+		err(EXIT_FAILURE, "fbr_fd_nonblock");
+
+	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
+	if (-1 == retval) {
+		fbr_sleep(&cc->fbr, 0.5);
+		reconnect_to_any_online_l(cc, 0);
+		return;
+	}
+
+	tcp_nodelay(cc->fd);
+
+	printf("Reconnected to %s\n", ip);
+	fbr_mutex_unlock(&cc->fbr, cc->mutex);
+}
+
+
+static void load_peer_list(struct client_context *cc, union me_cli_any *u)
+{
+	int retval;
+	unsigned int i;
+	struct me_cli_server_hello *server_hello = &u->server_hello;
+	if (NULL != cc->peers)
+		free(cc->peers);
+	cc->peers = calloc(server_hello->count, sizeof(struct sockaddr_in));
+	cc->peer_count = server_hello->count;
+	for (i = 0; i < server_hello->count; i++) {
+		retval = inet_aton(server_hello->peers[i],
+				&cc->peers[i].sin_addr);
+		if (0 == retval)
+			errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
+		cc->peers[i].sin_family = AF_INET;
+		cc->peers[i].sin_port = cc->initial_port;
+	}
+}
+
 void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
@@ -199,6 +319,7 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 
+on_redirect:
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
 
@@ -208,11 +329,15 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 		retval = fbr_read(&cc->fbr, cc->fd,
 				msgpack_unpacker_buffer(&pac),
 				msgpack_unpacker_buffer_capacity(&pac));
-		if (-1 == retval)
-			err(EXIT_FAILURE, "fbr_read");
+		if (-1 == retval) {
+			warn("fbr_read");
+			reconnect_to_any_online(cc);
+			goto on_redirect;
+		}
 		if (0 == retval) {
-			close(cc->fd);
-			errx(EXIT_FAILURE, "disconnected from mersenne");
+			warnx("disconnected from mersenne");
+			reconnect_to_any_online(cc);
+			goto on_redirect;
 		}
 		msgpack_unpacker_buffer_consumed(&pac, retval);
 		while (msgpack_unpacker_next(&pac, &result)) {
@@ -222,12 +347,22 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 				errx(EXIT_FAILURE, "me_cli_msg_unpack: %s",
 						error);
 
-			if (ME_CMT_ARRIVED_OTHER_VALUE != u.m_type)
+			switch (u.m_type) {
+			case ME_CMT_ARRIVED_VALUE:
+				buffer.ptr = u.arrived_value.buf;
+				buffer.size = u.arrived_value.size;
+				next_value(cc, &buffer);
+				break;
+			case ME_CMT_REDIRECT:
+				reconnect(cc, u.redirect.ip);
+				msgpack_unpacker_reset(&pac);
+				goto on_redirect;
+			case ME_CMT_SERVER_HELLO:
+				load_peer_list(cc, &u);
+				break;
+			default:
 				errx(EXIT_FAILURE, "unexpected message");
-
-			buffer.ptr = u.other_value.buf;
-			buffer.size = u.other_value.size;
-			next_value(cc, &buffer);
+			}
 		}
 	}
 }
@@ -256,20 +391,49 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
+static void parse_ipp(const char *ipp_buf, struct sockaddr_in *addr)
+{
+	int port;
+	int retval;
+	char *colon = strchr(ipp_buf, ':');
+
+	if (colon == NULL)
+		errx(EXIT_FAILURE, "Endpoint spec should be in format"
+					" xxx.xxx.xxx.xxx:yyyyy");
+	*colon = 0;
+
+	memset(addr, 0, sizeof(*addr));
+	addr->sin_family = AF_INET;
+
+	if (strcmp(ipp_buf, "0.0.0.0") != 0) {
+		retval = inet_aton(ipp_buf, &addr->sin_addr);
+		if (0 == retval)
+			errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
+	} else {
+		addr->sin_addr.s_addr = INADDR_ANY;
+	}
+
+	port = atoi(colon + 1); /* port is next after ':' */
+	if (port <= 0 || port >= 0xffff)
+		errx(EXIT_FAILURE, "bad port: %s", colon + 1);
+
+	addr->sin_port = htons(port);
+}
+
 void set_up_socket(struct client_context *cc)
 {
-	struct sockaddr_un addr;
-	char *rendezvous = getenv("UNIX_SOCKET");
-
-	if ((cc->fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
+	int retval;
+	struct sockaddr_in addr;
+	parse_ipp(cc->initial_ipp, &addr);
+	cc->initial_port = addr.sin_port;
+	if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
 		err(EXIT_FAILURE, "failed to create a client socket");
 
-	addr.sun_family = AF_UNIX;
-	strcpy(addr.sun_path, rendezvous);
-	if (-1 == connect(cc->fd, (struct sockaddr *)&addr, sizeof(addr)))
-		err(EXIT_FAILURE, "connect to unix socket failed");
-
 	fbr_fd_nonblock(&cc->fbr, cc->fd);
+	tcp_nodelay(cc->fd);
+	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
+	if (-1 == retval)
+		err(EXIT_FAILURE, "fbr_connect");
 }
 
 static void init_values(struct client_context *cc)
@@ -292,7 +456,6 @@ static void init_values(struct client_context *cc)
 	}
 	cc->values = values;
 }
-
 
 void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
@@ -340,12 +503,14 @@ int main(int argc, char *argv[]) {
 	signal(SIGPIPE, SIG_IGN);
 
 	srand((unsigned int) time(NULL));
+	memset(&cc, 0x00, sizeof(cc));
 	cc.loop = EV_DEFAULT;
 	fbr_init(&cc.fbr, cc.loop);
 
-	assert(3 == argc);
-	cc.concurrency = atoi(argv[1]);
-	cc.stats.total = atoi(argv[2]);
+	assert(4 == argc);
+	cc.initial_ipp = argv[1];
+	cc.concurrency = atoi(argv[2]);
+	cc.stats.total = atoi(argv[3]);
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;

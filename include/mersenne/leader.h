@@ -34,6 +34,7 @@ struct ldr_context {
 	int delta_count;
 	struct fbr_cond_var timeout_cond;
 	struct fbr_mutex mutex;
+	struct fbr_cond_var changed_cond;
 	int timed_out;
 	struct ev_timer delta_timer;
 };
@@ -47,6 +48,8 @@ struct ldr_context {
 
 void ldr_fiber(struct fbr_context *fiber_context, void *_arg);
 int ldr_is_leader(ME_P);
+struct me_peer *ldr_get_or_wait_for_leader(ME_P);
+void ldr_wait_for_leader_change(ME_P);
 int ldr_round_length(ME_P);
 
 #endif

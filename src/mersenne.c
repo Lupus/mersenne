@@ -69,26 +69,6 @@ static void set_up_udp_socket(ME_P)
 		err(EXIT_FAILURE, "bind failed");
 }
 
-static void set_up_client_socket(ME_P)
-{
-	struct sockaddr_un addr;
-	char *rendezvous = mctx->args_info.client_socket_arg;
-
-	if ((mctx->client_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0)
-		err(EXIT_FAILURE, "failed to create a client socket");
-
-	make_socket_non_blocking(mctx->client_fd);
-
-	addr.sun_family = AF_UNIX;
-	strcpy(addr.sun_path, rendezvous);
-	unlink(rendezvous);
-	/* bind to receive address */
-	if (bind(mctx->client_fd, (struct sockaddr *) &addr, sizeof(addr)) < 0)
-		err(EXIT_FAILURE, "client socket bind failed");
-	if (-1 == listen(mctx->client_fd, LISTEN_BACKLOG))
-               err(EXIT_FAILURE, "client socket listen failed");
-}
-
 static void set_up_client_tcp_socket(ME_P)
 {
 	static const int yes = 1;
@@ -108,16 +88,7 @@ static void set_up_client_tcp_socket(ME_P)
 		err(EXIT_FAILURE, "failed to set SO_REUSEADDR");
 
 	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-	if (0 != strcmp(mctx->args_info.client_address_arg, "0.0.0.0")) {
-		retval = inet_aton(mctx->args_info.client_address_arg,
-				&addr.sin_addr);
-		if (0 == retval)
-			err(EXIT_FAILURE, "inet_pton");
-	} else {
-		addr.sin_addr.s_addr = INADDR_ANY;
-	}
-
+	memcpy(&addr, &mctx->me->addr, sizeof(mctx->me->addr));
 	port = mctx->args_info.client_port_arg;
 	if (port <= 0 || port >= 0xffff)
 		errx(EXIT_FAILURE, "invalid client port number");
@@ -206,9 +177,7 @@ static void mersenne_start(ME_P)
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
 
 	set_up_udp_socket(ME_A);
-	set_up_client_socket(ME_A);
-	if (mctx->args_info.client_address_given)
-		set_up_client_tcp_socket(ME_A);
+	set_up_client_tcp_socket(ME_A);
 
 	pxs_fiber_init(ME_A);
 
@@ -220,23 +189,14 @@ static void mersenne_start(ME_P)
 			0);
 	fbr_transfer(&mctx->fbr, mctx->fiber_leader);
 
-	mctx->fiber_client = fbr_create(&mctx->fbr, "client", clt_fiber, NULL,
-			0);
-	fbr_transfer(&mctx->fbr, mctx->fiber_client);
-
-	if (mctx->args_info.client_address_given) {
-		mctx->fiber_tcp_client = fbr_create(&mctx->fbr, "client",
-				clt_tcp_fiber, NULL, 0);
-		fbr_transfer(&mctx->fbr, mctx->fiber_tcp_client);
-	}
+	mctx->fiber_tcp_client = fbr_create(&mctx->fbr, "client",
+			clt_tcp_fiber, NULL, 0);
+	fbr_transfer(&mctx->fbr, mctx->fiber_tcp_client);
 }
 
 static void mersenne_stop(ME_P)
 {
-	if (mctx->args_info.client_address_given) {
-		fbr_reclaim(&mctx->fbr, mctx->fiber_tcp_client);
-	}
-	fbr_reclaim(&mctx->fbr, mctx->fiber_client);
+	fbr_reclaim(&mctx->fbr, mctx->fiber_tcp_client);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_leader);
 	fbr_reclaim(&mctx->fbr, mctx->fiber_listener);
 	pxs_fiber_shutdown(ME_A);
@@ -370,6 +330,8 @@ int main(int argc, char *argv[])
 	fbr_init(&mctx->fbr, mctx->loop);
 	fbr_eio_init();
 	setup_logging(ME_A);
+	fbr_mutex_init(&mctx->fbr, &mctx->pxs.pro.pending_mutex);
+	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
 	fbr_transfer(&mctx->fbr, mctx->fiber_main);
@@ -378,6 +340,8 @@ int main(int argc, char *argv[])
 	ev_loop(context.loop, 0);
 	fbr_log_i(&mctx->fbr, "Exiting");
 
+	fbr_mutex_destroy(&mctx->fbr, &mctx->pxs.pro.pending_mutex);
+	fbr_cond_destroy(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	fbr_destroy(&mctx->fbr);
 
 	cmdline_parser_free(&mctx->args_info);
