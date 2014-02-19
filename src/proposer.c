@@ -589,15 +589,13 @@ static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct pro_instance *instance;
 	struct me_paxos_reject_data *data;
 	struct ie_base base;
-	uint64_t db;
 	base.type = IE_TO;
 	data = &pmsg->data.me_paxos_msg_data_u.reject;
 	if(data->i < mctx->pxs.pro.lowest_non_closed)
 		return;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	if(IS_P1_PENDING == instance->state || IS_P2_PENDING == instance->state) {
-		db = decode_ballot(ME_A_ data->b);
-		instance->b = encode_ballot(ME_A_ db + 1);
+		instance->b = data->b;
 		run_instance(ME_A_ instance, &base);
 	}
 }
@@ -795,7 +793,7 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	if (mctx->me->pxs.is_acceptor)
-		starting_iid = acs_get_highest_finalized(ME_A);
+		starting_iid = acs_get_highest_finalized(ME_A) + 1;
 
 	proposer_context = fbr_alloc(&mctx->fbr,
 			sizeof(struct proposer_context));

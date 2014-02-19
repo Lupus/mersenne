@@ -287,7 +287,6 @@ static void reconnect(struct client_context *cc, const char *ip)
 	fbr_mutex_unlock(&cc->fbr, cc->mutex);
 }
 
-
 static void load_peer_list(struct client_context *cc, union me_cli_any *u)
 {
 	int retval;

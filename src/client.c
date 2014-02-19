@@ -136,7 +136,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	fbr_buffer_init(&mctx->fbr, &lea_buffer, 1);
 	lea_arg.buffer = &lea_buffer;
-	lea_arg.starting_iid = 0;
+	lea_arg.starting_iid = 1;
 	learner = fbr_create(&mctx->fbr, "informer/learner", lea_fiber,
 			&lea_arg, 0);
 	retval = fbr_transfer(&mctx->fbr, learner);
