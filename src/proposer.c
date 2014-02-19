@@ -298,7 +298,6 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			switch_instance(ME_A_ instance,
 					IS_P1_READY_NO_VALUE,
 					&new_base);
-					*/
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
@@ -590,13 +589,15 @@ static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct pro_instance *instance;
 	struct me_paxos_reject_data *data;
 	struct ie_base base;
+	uint64_t db;
 	base.type = IE_TO;
 	data = &pmsg->data.me_paxos_msg_data_u.reject;
 	if(data->i < mctx->pxs.pro.lowest_non_closed)
 		return;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
 	if(IS_P1_PENDING == instance->state || IS_P2_PENDING == instance->state) {
-		instance->b = data->b;
+		db = decode_ballot(ME_A_ data->b);
+		instance->b = encode_ballot(ME_A_ db + 1);
 		run_instance(ME_A_ instance, &base);
 	}
 }

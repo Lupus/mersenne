@@ -382,6 +382,8 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 	if (!mctx->me->pxs.is_acceptor)
 		return;
 	highest_finalized = acs_get_highest_finalized(ME_A);
+	if (0 == highest_finalized)
+		return;
 	for (i = start; i <= highest_finalized; i++) {
 		r = acs_find_record_ro(ME_A_ i);
 		if (NULL == r)
