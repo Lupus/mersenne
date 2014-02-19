@@ -34,6 +34,7 @@
 struct connection_fiber_arg {
 	int fd;
 	struct fbr_mutex *mutex;
+	uint64_t starting_iid;
 };
 
 static int tcp_cork(ME_P_ int fd)
@@ -136,7 +137,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	fbr_buffer_init(&mctx->fbr, &lea_buffer, 1);
 	lea_arg.buffer = &lea_buffer;
-	lea_arg.starting_iid = 1;
+	lea_arg.starting_iid = arg.starting_iid;
 	learner = fbr_create(&mctx->fbr, "informer/learner", lea_fiber,
 			&lea_arg, 0);
 	retval = fbr_transfer(&mctx->fbr, learner);
@@ -265,6 +266,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_buffer *pro_buf;
 	fbr_id_t informer;
 	fbr_id_t leader_change;
+	int informer_started = 0;
 	char *error = NULL;
 
        	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -295,10 +297,6 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		/* We gained leadership */
 	}
 
-	informer = fbr_create(&mctx->fbr, "client/informer",
-			client_informer_fiber, &arg, 0);
-	fbr_transfer(&mctx->fbr, informer);
-
 	leader_change = fbr_create(&mctx->fbr, "client/leader_change",
 			leadership_change_fiber, &arg, 0);
 	fbr_transfer(&mctx->fbr, leader_change);
@@ -327,16 +325,31 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 				goto conn_finish;
 			}
 
-			if (ME_CMT_NEW_VALUE != u.m_type) {
+			switch(u.m_type) {
+			case ME_CMT_NEW_VALUE:
+				retval = process_message(ME_A_ &u.new_value,
+						pro_buf);
+				if (retval)
+					goto conn_finish;
+				break;
+			case ME_CMT_CLIENT_HELLO:
+				if(informer_started)
+					continue;
+				arg.starting_iid = u.client_hello.starting_iid;
+				if (0 == arg.starting_iid)
+					arg.starting_iid = 1;
+				informer = fbr_create(&mctx->fbr,
+						"client/informer",
+						client_informer_fiber, &arg, 0);
+				fbr_transfer(&mctx->fbr, informer);
+
+				informer_started = 1;
+				break;
+			default:
 				fbr_log_w(&mctx->fbr, "bad m_type: %d",
 						u.m_type);
 				goto conn_finish;
 			}
-
-			retval = process_message(ME_A_ &u.new_value,
-					pro_buf);
-			if (retval)
-				goto conn_finish;
 		}
 	}
 conn_finish:

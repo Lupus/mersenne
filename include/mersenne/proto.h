@@ -6,6 +6,7 @@ enum me_cli_message_type {
 	ME_CMT_ARRIVED_VALUE = 1,
 	ME_CMT_REDIRECT = 2,
 	ME_CMT_SERVER_HELLO = 1000,
+	ME_CMT_CLIENT_HELLO = 1001,
 };
 
 struct me_cli_new_value {
@@ -35,12 +36,18 @@ struct me_cli_server_hello {
 	unsigned int count;
 };
 
+struct me_cli_client_hello {
+	enum me_cli_message_type m_type;
+	uint64_t starting_iid;
+};
+
 union me_cli_any {
 	enum me_cli_message_type m_type;
 	struct me_cli_new_value new_value;
 	struct me_cli_arrived_value arrived_value;
 	struct me_cli_redirect redirect;
 	struct me_cli_server_hello server_hello;
+	struct me_cli_client_hello client_hello;
 };
 
 int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *msg);

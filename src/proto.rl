@@ -110,6 +110,13 @@
 		arr_end
 		@{ fret; };
 
+	m_client_hello :=
+		iid @{
+			r->client_hello.starting_iid = mp_uint(fpc);
+		}
+		@{ fret; };
+
+
 	action dispatch_m_type {
 		r->m_type = mp_uint(fpc);
 		switch (mp_uint(fpc)) {
@@ -124,6 +131,9 @@
 			break;
 		case ME_CMT_SERVER_HELLO:
 			fcall m_server_hello;
+			break;
+		case ME_CMT_CLIENT_HELLO:
+			fcall m_client_hello;
 			break;
 		default:
 			elog("invalid message type: %ld", mp_uint(fpc));
@@ -150,7 +160,7 @@ int me_cli_msg_unpack(msgpack_object *obj, union me_cli_any *r,
 	/* Other variables */
 	struct mppr_tokens *tokens;
 	int error = 0;
-	unsigned int i;
+	unsigned int i = 0;
 	%% write init;
 
 	tokens = mppr_tokenize_object(obj);
@@ -184,6 +194,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 	struct me_cli_arrived_value *arrived_value;
 	struct me_cli_redirect  *redirect;
 	struct me_cli_server_hello *server_hello;
+	struct me_cli_client_hello *client_hello;
 	int retval;
 	unsigned int i;
 	#define rv(stmt) do {                  \
@@ -231,6 +242,12 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 					strlen(server_hello->peers[i]));
 		}
 		break;
+	case ME_CMT_CLIENT_HELLO:
+		client_hello = &u->client_hello;
+		mp_array(2);
+		mp_uint(u->m_type);
+		mp_uint(client_hello->starting_iid);
+		break;
 	}
 	return 0;
 	#undef mp_array
@@ -263,6 +280,8 @@ void me_cli_msg_free(union me_cli_any *u)
 		for (i = 0; i < server_hello->count; i++)
 			free(server_hello->peers[i]);
 		free(server_hello->peers);
+		break;
+	case ME_CMT_CLIENT_HELLO:
 		break;
 	}
 }

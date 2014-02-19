@@ -82,6 +82,7 @@ struct client_context {
 	int initial_port;
 	struct sockaddr_in *peers;
 	unsigned int peer_count;
+	uint64_t last_iid;
 };
 
 static struct timespec diff(struct timespec start, struct timespec end)
@@ -296,7 +297,9 @@ static void load_peer_list(struct client_context *cc, union me_cli_any *u)
 		free(cc->peers);
 	cc->peers = calloc(server_hello->count, sizeof(struct sockaddr_in));
 	cc->peer_count = server_hello->count;
+	printf("Updated peers list:\n");
 	for (i = 0; i < server_hello->count; i++) {
+		printf(" - %s\n", server_hello->peers[i]);
 		retval = inet_aton(server_hello->peers[i],
 				&cc->peers[i].sin_addr);
 		if (0 == retval)
@@ -304,6 +307,32 @@ static void load_peer_list(struct client_context *cc, union me_cli_any *u)
 		cc->peers[i].sin_family = AF_INET;
 		cc->peers[i].sin_port = cc->initial_port;
 	}
+}
+
+static int send_client_hello(struct client_context *cc)
+{
+	msgpack_sbuffer *buf = msgpack_sbuffer_new();
+	msgpack_packer pk;
+	union me_cli_any me_msg;
+	int retval;
+
+	me_msg.m_type = ME_CMT_CLIENT_HELLO;
+	me_msg.client_hello.starting_iid = cc->last_iid + 1;
+	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	retval = me_cli_msg_pack(&pk, &me_msg);
+	if (retval)
+		errx(EXIT_FAILURE, "failed to pack a message");
+
+	fbr_mutex_lock(&cc->fbr, cc->mutex);
+	assert(buf->size > 0);
+	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
+	fbr_mutex_unlock(&cc->fbr, cc->mutex);
+	if (retval < buf->size) {
+		msgpack_sbuffer_free(buf);
+		return -1;
+	}
+	msgpack_sbuffer_free(buf);
+	return 0;
 }
 
 void fiber_reader(struct fbr_context *fiber_context, void *_arg)
@@ -319,6 +348,12 @@ void fiber_reader(struct fbr_context *fiber_context, void *_arg)
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 
 on_redirect:
+	retval = send_client_hello(cc);
+	if (retval) {
+		warn("send_client_hello");
+		reconnect_to_any_online(cc);
+		goto on_redirect;
+	}
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
 
@@ -350,6 +385,7 @@ on_redirect:
 			case ME_CMT_ARRIVED_VALUE:
 				buffer.ptr = u.arrived_value.buf;
 				buffer.size = u.arrived_value.size;
+				cc->last_iid = u.arrived_value.iid;
 				next_value(cc, &buffer);
 				break;
 			case ME_CMT_REDIRECT:
