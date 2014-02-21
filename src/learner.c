@@ -149,6 +149,8 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 		instance = get_instance(context, i);
 		instance->modified = ev_now(mctx->loop);
 	}
+	fbr_log_d(&mctx->fbr, "requested retransmits from %ld to %ld",
+			from, to);
 }
 
 static ev_tstamp age(ME_P_ struct lea_instance *instance)
@@ -168,7 +170,7 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	struct lea_instance *instance;
 	int collecting_gap = 0;
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
-		if (i == context->highest_seen) {
+		if (i > context->highest_seen) {
 			if (collecting_gap)
 				send_retransmit(ME_A_ context, from, i - 1);
 			break;
@@ -354,7 +356,7 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 	for (;;) {
 		next_aged = min_window_age(ME_A_ context);
 		fbr_sleep(&mctx->fbr, next_aged);
-		if (context->highest_seen > context->first_non_delivered +
+		if (context->highest_seen >= context->first_non_delivered +
 				LEA_INSTANCE_WINDOW) {
 			fbr_log_d(&mctx->fbr, "learner is lagging behind"
 					" highest seen: %zu, first non"
@@ -363,7 +365,7 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 					context->first_non_delivered);
 			retransmit_window(ME_A_ context);
 			retransmit_next_window(ME_A_ context);
-		} else if(context->highest_seen > context->first_non_delivered) {
+		} else if(context->highest_seen >= context->first_non_delivered) {
 			fbr_log_d(&mctx->fbr, "learner is out of sync, highest"
 					" seen: %zu, first non delivered: %zu",
 					context->highest_seen,

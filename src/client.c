@@ -205,7 +205,8 @@ int process_message(ME_P_ struct me_cli_new_value *nv,
 		buf = malloc(value->size1 + 1);
 		memcpy(buf, value->ptr, value->size1);
 		buf[value->size1] = '\0';
-		fbr_log_d(&mctx->fbr, "Got value: ``%s''", buf);
+		fbr_log_d(&mctx->fbr, "Got value: ``%s'' size=(%zd)", buf,
+				nv->size);
 		free(buf);
 	}
 	pro_push_value(ME_A_ value);
@@ -338,6 +339,9 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 				arg.starting_iid = u.client_hello.starting_iid;
 				if (0 == arg.starting_iid)
 					arg.starting_iid = 1;
+				fbr_log_d(&mctx->fbr, "starting informer fiber"
+						" at instance %ld",
+						arg.starting_iid);
 				informer = fbr_create(&mctx->fbr,
 						"client/informer",
 						client_informer_fiber, &arg, 0);
