@@ -5,6 +5,13 @@ project(mersenne C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
+option(USE_LTO "Use Link-Time Optimization" FALSE)
+option(USE_ASAN "Use AddressSanitizer" FALSE)
+option(LINK_ASAN_LIB "Link AddressSanitizer library (for gcc)" FALSE)
+if(USE_LTO)
+	set(WANT_LTO TRUE)
+endif()
+
 add_subdirectory(evfibers)
 add_subdirectory(msgpack-proto-ragel)
 
@@ -25,7 +32,22 @@ include_directories(
 	"${CMAKE_CURRENT_BINARY_DIR}/msgpack-proto-ragel/include"
 	)
 
-set(CMAKE_C_FLAGS "-Wall -Werror -fno-strict-aliasing")
+set(CMAKE_C_FLAGS "-Wall -fno-strict-aliasing")
+if(USE_LTO)
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto -fwhole-program")
+	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -flto -fuse-linker-plugin -fwhole-program")
+	set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -flto -fuse-linker-plugin -fwhole-program")
+endif()
+if(USE_ASAN)
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+endif()
+
+if(LINK_ASAN_LIB)
+	set(ASAN_LIBS "asan")
+else()
+	set(ASAN_LIBS "")
+endif()
+
 set(MERSENNE_PROTO "src/acc.proto")
 add_custom_command(
 	OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
@@ -94,6 +116,7 @@ target_link_libraries(mersenne
 	${EVFIBERS_EMBED_LIBS}
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
+	${ASAN_LIBS}
 	crypto
 	z
 	uuid
