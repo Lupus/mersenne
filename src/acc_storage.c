@@ -1028,6 +1028,29 @@ void acs_set_highest_finalized(ME_P_ uint64_t iid)
 	ctx->dirty = 1;
 }
 
+void acs_vacuum(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	struct acc_instance_record *r, *x;
+	int trunc;
+	trunc = mctx->args_info.acceptor_truncate_arg;
+
+	/*
+	printf("%ld <= %d == %d\n", ctx->highest_finalized, trunc,
+			ctx->highest_finalized <= trunc);
+			*/
+	if (ctx->highest_finalized <= trunc)
+			return;
+	HASH_ITER(hh, ctx->instances, r, x) {
+		if (r->iid >= ctx->highest_finalized - trunc)
+			continue;
+		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
+		HASH_DEL(ctx->instances, r);
+		sm_free(r->v);
+		free(r);
+	}
+}
+
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {

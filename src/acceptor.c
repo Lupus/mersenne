@@ -257,6 +257,7 @@ static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 		}
 		acs_set_highest_finalized(ME_A_ last_iid);
 		acs_batch_finish(ME_A);
+		acs_vacuum(ME_A);
 	}
 }
 
