@@ -1216,6 +1216,20 @@ ssize_t fbr_recvfrom(FBR_P_ int sockfd, void *buf, size_t len, int flags,
 		struct sockaddr *src_addr, socklen_t *addrlen);
 
 /**
+ * Fiber friendly libc recv wrapper.
+ * @param [in] sockfd file descriptor to read from
+ * @param [in] buf pointer to some user-allocated buffer
+ * @param [in] len maximum number of bytes to read
+ * @param [in] flags just flags, see man recvfrom for details
+ * @return number of bytes read on success, -1 in case of error and errno set
+ *
+ * This function is used to receive messages from a socket.
+ *
+ * Possible errno values are described in recv man page.
+ */
+ssize_t fbr_recv(FBR_P_ int sockfd, void *buf, size_t len, int flags);
+
+/**
  * Fiber friendly libc sendto wrapper.
  * @param [in] sockfd file descriptor to write to
  * @param [in] buf pointer to some user-allocated buffer
@@ -1234,6 +1248,19 @@ ssize_t fbr_recvfrom(FBR_P_ int sockfd, void *buf, size_t len, int flags,
  */
 ssize_t fbr_sendto(FBR_P_ int sockfd, const void *buf, size_t len, int flags, const
 		struct sockaddr *dest_addr, socklen_t addrlen);
+
+/**
+ *
+ * Fiber friendly libc send wrapper.
+ * @param [in] sockfd file descriptor to write to
+ * @param [in] buf pointer to some user-allocated buffer
+ * @param [in] len maximum number of bytes to write
+ * @param [in] flags just flags, see man sendto for details
+ * @return number of bytes written on success, -1 in case of error and errno set
+ *
+ * This function is used to send messages to a socket.
+ */
+ssize_t fbr_send(FBR_P_ int sockfd, const void *buf, size_t len, int flags);
 
 /**
  * Fiber friendly libc accept wrapper.
