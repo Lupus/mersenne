@@ -1046,8 +1046,10 @@ void acs_vacuum(ME_P)
 			continue;
 		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
 		HASH_DEL(ctx->instances, r);
-		sm_free(r->v);
-		free(r);
+		if (!r->is_cow) {
+			sm_free(r->v);
+			free(r);
+		}
 	}
 }
 
