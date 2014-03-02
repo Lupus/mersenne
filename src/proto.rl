@@ -87,8 +87,9 @@
 
 	m_redirect :=
 		ip_string @{
-			strncpy(r->redirect.ip, mp_raw(fpc).ptr,
+			memcpy(r->redirect.ip, mp_raw(fpc).ptr,
 					mp_raw(fpc).size);
+			r->redirect.ip[mp_raw(fpc).size] = '\0';
 		}
 		@{ fret; };
 
