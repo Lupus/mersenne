@@ -396,22 +396,34 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 	context->highest_seen = context->first_non_delivered;
 }
 
-void lea_context_destructor(struct fbr_context *fiber_context, void *ptr,
-		void *context)
+struct lea_context_destructor_arg {
+	struct me_context *mctx;
+	struct learner_context *lcontext;
+};
+
+void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 {
-	struct me_context *mctx = context;
-	struct learner_context *lcontext = ptr;
+	struct lea_context_destructor_arg *arg = _arg;
+	struct me_context *mctx = arg->mctx;
+	struct learner_context *lcontext = arg->lcontext;
+	uint64_t j;
+	struct lea_instance *instance;
+
 	TAILQ_REMOVE(&mctx->learners, &lcontext->item, entries);
 	fbr_buffer_destroy(&mctx->fbr, &lcontext->buffer);
+	for (j = 0; j < LEA_INSTANCE_WINDOW; j++) {
+		instance = lcontext->instances + j;
+		free(instance->acks);
+	}
+	free(lcontext->instances);
+	free(lcontext);
 }
 
 static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 {
 	struct learner_context *context;
 
-	context = fbr_alloc(&mctx->fbr, sizeof(struct learner_context));
-	fbr_alloc_set_destructor(&mctx->fbr, context, lea_context_destructor,
-			mctx);
+	context = calloc(1, sizeof(struct learner_context));
 	context->first_non_delivered = arg->starting_iid;
 	context->mctx = mctx;
 	context->arg = arg;
@@ -422,7 +434,7 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->item.id = fbr_self(&mctx->fbr);
 	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
 	context->next_retransmit = ~0ULL; // "infinity"
-	context->instances = fbr_calloc(&mctx->fbr, LEA_INSTANCE_WINDOW,
+	context->instances = calloc(LEA_INSTANCE_WINDOW,
 			sizeof(struct lea_instance));
 	context->highest_seen = context->first_non_delivered;
 
@@ -438,8 +450,7 @@ static void init_window(ME_P_ struct learner_context *context)
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = context->instances + j;
 		instance->closed = 0;
-		instance->acks = fbr_calloc(&mctx->fbr,
-				pxs_acceptors_count(ME_A),
+		instance->acks = calloc(pxs_acceptors_count(ME_A),
 				sizeof(struct lea_ack));
 		instance->modified = ev_now(mctx->loop);
 		instance->iid = i;
@@ -457,9 +468,16 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_buffer *fb;
 	struct msg_info info, *ptr;
 	fbr_id_t hole_checker;
+	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
+	struct lea_context_destructor_arg dtor_arg;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	context = init_context(ME_A_ _arg);
+	dtor_arg.mctx = mctx;
+	dtor_arg.lcontext = context;
+	dtor.func = lea_context_destructor;
+	dtor.arg = &dtor_arg;
+	fbr_destructor_add(&mctx->fbr, &dtor);
 	fb = &context->buffer;
 
 	try_local_delivery(ME_A_ context);

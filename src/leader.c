@@ -42,7 +42,7 @@ struct bm_mask *get_trust(ME_P)
 	struct bm_mask *bmp;
 	struct me_peer *p;
 	int nbits = HASH_COUNT(mctx->peers);
-	bmp = fbr_alloc(&mctx->fbr, bm_size(nbits));
+	bmp = malloc(bm_size(nbits));
 	bm_init(bmp, nbits);
 
 	for(p=mctx->peers; p != NULL; p=p->hh.next) {
@@ -207,7 +207,7 @@ void send_ok(ME_P_ int s)
 	data->me_leader_msg_data_u.ok.k = s;
 
 	msg_send_all(ME_A_ &msg);
-	fbr_free(&mctx->fbr, data->me_leader_msg_data_u.ok.trust);
+	free(data->me_leader_msg_data_u.ok.trust);
 }
 
 void send_ack(ME_P_ int s, int to)
