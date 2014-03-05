@@ -21,14 +21,18 @@
 #ifndef _SHAREDMEM_H_
 #define _SHAREDMEM_H_
 
-typedef void(*sm_destructor_t)(void *context, void *ptr);
-void * sm_alloc(size_t size);
-void * sm_alloc_ext(size_t size, sm_destructor_t destructor, void *context);
-void * sm_calloc(size_t nmemb, size_t size);
-void * sm_calloc_ext(size_t nmemb, size_t size, sm_destructor_t destructor, void *context);
+#include <stdlib.h>
+
+typedef void (*sm_destructor_t)(void *context, void *ptr);
+void *sm_alloc(size_t size);
+void *sm_alloc_ext(size_t size, sm_destructor_t destructor, void *context);
+void *sm_calloc(size_t nmemb, size_t size);
+void *sm_calloc_ext(size_t nmemb, size_t size, sm_destructor_t destructor,
+		void *context);
 void sm_set_destructor(void *ptr, sm_destructor_t destructor, void *context);
 size_t sm_size(void *ptr);
-void * sm_in_use(void *ptr) __attribute__ ((warn_unused_result));
+void *sm_in_use(void *ptr) __attribute__ ((warn_unused_result));
 void sm_free(void *ptr);
+void sm_report_leaked();
 
 #endif

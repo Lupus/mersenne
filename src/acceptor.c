@@ -224,12 +224,13 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_CREATE)) {
 		r->iid = iid;
 		r->b = 0ULL;
-		r->v = buffer;
+		r->v = sm_in_use(buffer);
 		r->vb = 0ULL;
 		acs_store_record(ME_A_ r);
 	} else {
 		if (NULL == r->v || 0 != buf_cmp(r->v, buffer)) {
-			r->v = buffer;
+			sm_free(r->v);
+			r->v = sm_in_use(buffer);
 			acs_store_record(ME_A_ r);
 		}
 	}
@@ -253,6 +254,7 @@ static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
 			fbr_buffer_read_advance(&mctx->fbr, lea_fb);
 			do_delivered_value(ME_A_ instance_info.iid,
 					instance_info.buffer);
+			sm_free(instance_info.buffer);
 			last_iid = instance_info.iid;
 		}
 		acs_set_highest_finalized(ME_A_ last_iid);

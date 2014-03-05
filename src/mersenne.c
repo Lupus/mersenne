@@ -347,5 +347,7 @@ int main(int argc, char *argv[])
 	cmdline_parser_free(&mctx->args_info);
 	free(params);
 
+	sm_report_leaked();
+
 	return 0;
 }

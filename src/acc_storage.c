@@ -1137,7 +1137,14 @@ void acs_free_record(ME_P_ struct acc_instance_record *record)
 void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	struct acc_instance_record *r, *x;
 	wal_log_close(ME_A_ ctx->wal);
+	HASH_ITER(hh, ctx->instances, r, x) {
+		HASH_DEL(ctx->instances, r);
+		sm_free(r->v);
+		free(r);
+	}
+
 	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
 	free(ctx->wal);
 }
