@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 option(USE_LTO "Use Link-Time Optimization" FALSE)
 option(USE_ASAN "Use AddressSanitizer" FALSE)
 option(LINK_ASAN_LIB "Link AddressSanitizer library (for gcc)" FALSE)
+option(PERFLOG "Write performance log to stdout" FALSE)
 if(USE_LTO)
 	set(WANT_LTO TRUE)
 endif()
@@ -21,7 +22,9 @@ find_package(ProtoBufC REQUIRED)
 find_package(Ragel REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
-#add_definitions(-DME_WANT_PERFLOG)
+if(PERFLOG)
+	add_definitions(-DME_WANT_PERFLOG)
+endif()
 
 include_directories(
 	"${CMAKE_CURRENT_SOURCE_DIR}/include"
