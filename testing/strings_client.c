@@ -43,7 +43,7 @@
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size,add)
 
 #define VALUE_TO 1.0
-#define VALUE_SIZE 140
+#define VALUE_SIZE 1400
 
 struct buffer {
 	char *ptr;
@@ -59,7 +59,6 @@ struct my_value {
 };
 
 struct client_stats {
-	int total;
 	int received;
 	int timeouts;
 	int other;
@@ -178,24 +177,26 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 	cc->stats.received++;
 	ev_now_update(cc->loop);
 	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
-	if(cc->stats.received == cc->stats.total) {
-		client_finished(cc);
-		ev_break(cc->loop, EVBREAK_ALL);
-		return;
-	}
 	randomize_buffer(value->buf);
 	HASH_ADD_BUFFER(cc->values, buf, value);
 	submit_value(cc, value);
 	ev_timer_again(cc->loop, &value->timer);
 }
 
-static void value_timeout_cb (EV_P_ ev_timer *w, int revents)
+static void value_timeout_cb(EV_P_ ev_timer *w, int revents)
 {
 	struct client_context *cc = (struct client_context *)w->data;
 	struct my_value *value;
 	value = fbr_container_of(w, struct my_value, timer);
 	value->timed_out = 1;
 	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
+}
+
+static void run_timeout_cb(EV_P_ ev_timer *w, int revents)
+{
+	struct client_context *cc = (struct client_context *)w->data;
+	client_finished(cc);
+	ev_break(cc->loop, EVBREAK_ALL);
 }
 
 static void tcp_nodelay(int fd)
@@ -534,6 +535,7 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 int main(int argc, char *argv[]) {
 	struct client_context cc;
 	struct fbr_mutex mutex;
+	ev_timer stop_timer;
 
 	signal(SIGPIPE, SIG_IGN);
 
@@ -542,10 +544,12 @@ int main(int argc, char *argv[]) {
 	cc.loop = EV_DEFAULT;
 	fbr_init(&cc.fbr, cc.loop);
 
+	ev_timer_init(&stop_timer, run_timeout_cb, atoi(argv[3]), 0.0);
+	stop_timer.data = &cc;
+	ev_timer_start(cc.loop, &stop_timer);
 	assert(4 == argc);
 	cc.initial_ipp = argv[1];
 	cc.concurrency = atoi(argv[2]);
-	cc.stats.total = atoi(argv[3]);
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
 	cc.stats.other = 0;
