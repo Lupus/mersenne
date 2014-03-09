@@ -207,6 +207,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	uint64_t iid;
 #ifdef ME_WANT_PERFLOG
 	int i;
+	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
 	for (i = IS_EMPTY; i < IS_MAX; i++)
 		printf("PROPOSER_PERFLOG\t%zd\t%s\t%zd\t%f\n",
 				instance->iid,
