@@ -123,8 +123,8 @@ static void scan_log_dir(ME_P_ struct acs_log_dir *dir)
 		if (!ext_is_ok)
 			continue;
 
-		if (i > dir->lsn_arr_size) {
-			while (i > dir->lsn_arr_size)
+		if (i >= dir->lsn_arr_size) {
+			while (i >= dir->lsn_arr_size)
 				dir->lsn_arr_size *= 2;
 			dir->lsn_arr = realloc(dir->lsn_arr,
 					dir->lsn_arr_size * sizeof(uint64_t));
