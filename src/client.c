@@ -275,9 +275,6 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
 
-	pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
-	assert(NULL != pro_buf);
-
 	retval = fbr_fd_nonblock(&mctx->fbr, fd);
 	if (retval) {
 		fbr_log_e(&mctx->fbr, "fbr_fd_nonblock: %s", strerror(errno));
@@ -297,6 +294,9 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 			goto conn_finish;
 		/* We gained leadership */
 	}
+
+	pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
+	assert(NULL != pro_buf);
 
 	leader_change = fbr_create(&mctx->fbr, "client/leader_change",
 			leadership_change_fiber, &arg, 0);
