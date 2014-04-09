@@ -116,6 +116,9 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	case ME_PAXOS_CLIENT_VALUE:
 	case ME_PAXOS_PROMISE:
 	case ME_PAXOS_REJECT:
+		if (fbr_id_isnull(mctx->fiber_proposer))
+			/* Proposer is not available */
+			break;
 		fb = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
 		if (NULL == fb)
 			/* Proposer is not available */

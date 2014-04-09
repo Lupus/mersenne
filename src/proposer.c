@@ -880,6 +880,8 @@ void pro_start(ME_P)
 
 void pro_stop(ME_P)
 {
-	if (!fbr_id_isnull(mctx->fiber_proposer))
+	if (!fbr_id_isnull(mctx->fiber_proposer)) {
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
+		mctx->fiber_proposer = FBR_ID_NULL;
+	}
 }

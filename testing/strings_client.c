@@ -54,7 +54,10 @@ struct my_value {
 	struct buffer *buf;
 	struct ev_timer timer;
 	int timed_out;
+	int nreceived;
+	int nsent;
 	ev_tstamp sent;
+	int value_id;
 	UT_hash_handle hh;
 };
 
@@ -62,6 +65,8 @@ struct client_stats {
 	int received;
 	int timeouts;
 	int other;
+	int duplicates;
+	int extra_values;
 	ev_tstamp turnaround;
 	struct timespec started;
 };
@@ -82,6 +87,7 @@ struct client_context {
 	struct sockaddr_in *peers;
 	unsigned int peer_count;
 	uint64_t last_iid;
+	int last_value_id;
 };
 
 static struct timespec diff(struct timespec start, struct timespec end)
@@ -135,6 +141,15 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	msgpack_sbuffer_free(buf);
 	ev_now_update(cc->loop);
 	value->sent = ev_now(cc->loop);
+	value->nsent++;
+	/*
+	if (1 == value->nsent)
+		printf("%f\tsubmitted value #%d\n", ev_now(cc->loop),
+				value->value_id);
+	else
+		printf("%f\tsubmitted value #%d (+%d)\n", ev_now(cc->loop),
+				value->value_id, value->nsent - 1);
+	*/
 }
 
 static void client_finished(struct client_context *cc)
@@ -155,32 +170,15 @@ static void client_finished(struct client_context *cc)
 	printf("Value concurrency: %d\n", cc->concurrency);
 	printf("Values received: %d\n", cc->stats.received);
 	printf("Values timed out: %d\n", cc->stats.timeouts);
+	printf("Duplicate values received: %d\n", cc->stats.duplicates);
 	printf("Average turnaround time: %f\n", turnaround);
 	printf("Other values received: %d\n", cc->stats.other);
+	printf("Extra values received: %d\n", cc->stats.extra_values);
 	printf("Average throughput (transactions/second): %.3f\n",
 			cc->stats.received / elapsed);
 	printf("Average throughput (bytes/second): %.3f\n",
 			VALUE_SIZE * cc->stats.received / elapsed);
 	printf("==========================================\n");
-}
-
-static void next_value(struct client_context *cc, struct buffer *buf)
-{
-	struct my_value *value = NULL;
-
-	HASH_FIND_BUFFER(cc->values, buf, value);
-	if(NULL == value) {
-		cc->stats.other++;
-		return;
-	}
-	HASH_DEL(cc->values, value);
-	cc->stats.received++;
-	ev_now_update(cc->loop);
-	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
-	randomize_buffer(value->buf);
-	HASH_ADD_BUFFER(cc->values, buf, value);
-	submit_value(cc, value);
-	ev_timer_again(cc->loop, &value->timer);
 }
 
 static void value_timeout_cb(EV_P_ ev_timer *w, int revents)
@@ -190,6 +188,61 @@ static void value_timeout_cb(EV_P_ ev_timer *w, int revents)
 	value = fbr_container_of(w, struct my_value, timer);
 	value->timed_out = 1;
 	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
+}
+
+static struct my_value *new_value(struct client_context *cc)
+{
+	struct my_value *value;
+	value = calloc(1, sizeof(struct my_value));
+	ev_timer_init(&value->timer, value_timeout_cb, VALUE_TO, VALUE_TO);
+	value->timer.data = cc;
+	value->buf = malloc(sizeof(struct buffer));
+	value->buf->ptr = malloc(VALUE_SIZE);
+	value->buf->size = VALUE_SIZE;
+	value->value_id = cc->last_value_id++;
+	randomize_buffer(value->buf);
+	return value;
+}
+
+static void next_value(struct client_context *cc, struct buffer *buf)
+{
+	struct my_value *value = NULL;
+
+	HASH_FIND_BUFFER(cc->values, buf, value);
+	if (NULL == value) {
+		/*
+		printf("next_value called, got some other value\n");
+		*/
+		cc->stats.other++;
+		return;
+	}
+	if (value->nreceived > 0) {
+		cc->stats.duplicates++;
+		value->nreceived++;
+		/*
+		printf("%f\treceived value #%d (+%d)\n", ev_now(cc->loop),
+				value->value_id,
+				value->nreceived - 1);
+		*/
+		if (value->nreceived > value->nsent)
+			cc->stats.extra_values++;
+		return;
+	}
+	/*
+	printf("%f\treceived value #%d\n", ev_now(cc->loop),
+			value->value_id);
+	*/
+	value->nreceived = 1;
+	cc->stats.received++;
+	ev_now_update(cc->loop);
+	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
+	ev_timer_stop(cc->loop, &value->timer);
+	value->timed_out = 0;
+
+	value = new_value(cc);
+	HASH_ADD_BUFFER(cc->values, buf, value);
+	submit_value(cc, value);
+	ev_timer_start(cc->loop, &value->timer);
 }
 
 static void run_timeout_cb(EV_P_ ev_timer *w, int revents)
@@ -413,7 +466,7 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 	memset(&last_stats, 0x00, sizeof(last_stats));
-	for(;;) {
+	for (;;) {
 		fbr_sleep(fiber_context, interval);
 		current = cc->stats.other + cc->stats.received;
 		//printf("[STATS] Current = %d\n", current);
@@ -421,8 +474,13 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 		//printf("[STATS] Last = %d\n", last);
 		tx_per_second = (current - last) / interval;
 		printf("[STATS] %.3f transactions per second, values received:"
-				" %d, other: %d\n", tx_per_second,
-				cc->stats.received, cc->stats.other);
+				" %d, timed out: %d, duplicates: %d, extra: %d, other: %d\n",
+				tx_per_second,
+				cc->stats.received,
+				cc->stats.timeouts,
+				cc->stats.duplicates,
+				cc->stats.extra_values,
+				cc->stats.other);
 		last_stats = cc->stats;
 	}
 }
@@ -475,22 +533,16 @@ void set_up_socket(struct client_context *cc)
 static void init_values(struct client_context *cc)
 {
 	int i;
-	struct my_value *values = calloc(sizeof(struct my_value), cc->concurrency);
+	struct my_value **values = calloc(sizeof(void*), cc->concurrency);
 	assert(values);
 	cc->values = NULL;
 	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
-	for(i = 0; i < cc->concurrency; i++) {
-		ev_timer_init(&values[i].timer, value_timeout_cb, VALUE_TO, VALUE_TO);
-		values[i].timer.data = cc;
-		values[i].buf= malloc(sizeof(struct buffer));
-		values[i].buf->ptr = malloc(VALUE_SIZE);
-		values[i].buf->size = VALUE_SIZE;
-		randomize_buffer(values[i].buf);
-		HASH_ADD_BUFFER(cc->values, buf, values + i);
-		submit_value(cc, values + i);
-		ev_timer_start(cc->loop, &(values[i].timer));
+	for (i = 0; i < cc->concurrency; i++) {
+		values[i] = new_value(cc);
+		HASH_ADD_BUFFER(cc->values, buf, values[i]);
+		submit_value(cc, values[i]);
+		ev_timer_start(cc->loop, &(values[i]->timer));
 	}
-	cc->values = values;
 }
 
 void fiber_main(struct fbr_context *fiber_context, void *_arg)
@@ -524,6 +576,13 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		for (v = cc->values; v != NULL; v = v->hh.next) {
 			if (0 == v->timed_out)
 				continue;
+			if (v->nreceived > 0)
+				continue;
+			/*
+			printf("%f\ttimed out value #%d, total %d\n",
+					ev_now(cc->loop),
+					v->value_id, cc->stats.timeouts + 1);
+			*/
 			cc->stats.timeouts++;
 			submit_value(cc, v);
 			ev_timer_again(cc->loop, &v->timer);
@@ -550,8 +609,11 @@ int main(int argc, char *argv[]) {
 	assert(4 == argc);
 	cc.initial_ipp = argv[1];
 	cc.concurrency = atoi(argv[2]);
+	cc.last_value_id = 0;
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
+	cc.stats.duplicates = 0;
+	cc.stats.extra_values = 0;
 	cc.stats.other = 0;
 	fbr_mutex_init(&cc.fbr, &mutex);
 	fbr_cond_init(&cc.fbr, &cc.timeouts_cond);
