@@ -121,6 +121,7 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
 	free(pv);
+	fbr_log_i(&mctx->fbr, "Shifted pending value");
 	return 1;
 }
 

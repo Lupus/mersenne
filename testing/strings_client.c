@@ -133,6 +133,7 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	fbr_mutex_lock(&cc->fbr, cc->mutex);
 	assert(buf->size > 0);
 	//printf("trying to write...\n");
+	value->nsent++;
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
 	if (retval < buf->size)
 		err(EXIT_FAILURE, "fbr_write_all");
@@ -141,7 +142,6 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	msgpack_sbuffer_free(buf);
 	ev_now_update(cc->loop);
 	value->sent = ev_now(cc->loop);
-	value->nsent++;
 	/*
 	if (1 == value->nsent)
 		printf("%f\tsubmitted value #%d\n", ev_now(cc->loop),
@@ -204,7 +204,8 @@ static struct my_value *new_value(struct client_context *cc)
 	return value;
 }
 
-static void next_value(struct client_context *cc, struct buffer *buf)
+static void next_value(struct client_context *cc, struct buffer *buf,
+		uint64_t iid)
 {
 	struct my_value *value = NULL;
 
@@ -224,8 +225,11 @@ static void next_value(struct client_context *cc, struct buffer *buf)
 				value->value_id,
 				value->nreceived - 1);
 		*/
-		if (value->nreceived > value->nsent)
+		if (value->nreceived > value->nsent) {
+			printf("Extra value #%ld received: %d > %d\n", iid,
+					value->nreceived, value->nsent);
 			cc->stats.extra_values++;
+		}
 		return;
 	}
 	/*
@@ -440,7 +444,9 @@ on_redirect:
 				buffer.ptr = u.arrived_value.buf;
 				buffer.size = u.arrived_value.size;
 				cc->last_iid = u.arrived_value.iid;
-				next_value(cc, &buffer);
+				printf("Instance #%ld has arrived\n",
+						u.arrived_value.iid);
+				next_value(cc, &buffer, u.arrived_value.iid);
 				break;
 			case ME_CMT_REDIRECT:
 				reconnect(cc, u.redirect.ip);
@@ -615,6 +621,7 @@ int main(int argc, char *argv[]) {
 	cc.stats.duplicates = 0;
 	cc.stats.extra_values = 0;
 	cc.stats.other = 0;
+	cc.last_iid = 0;
 	fbr_mutex_init(&cc.fbr, &mutex);
 	fbr_cond_init(&cc.fbr, &cc.timeouts_cond);
 	cc.mutex = &mutex;

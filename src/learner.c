@@ -322,8 +322,10 @@ static void do_last_accepted(ME_P_ struct learner_context *context,
 	struct me_paxos_last_accepted_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
-	if (data->i > context->highest_seen)
+	if (data->i > context->highest_seen) {
+		fbr_log_d(&mctx->fbr, "updating highest seen to %ld", data->i);
 		context->highest_seen = data->i;
+	}
 }
 
 static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
@@ -390,10 +392,14 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 		r = acs_find_record_ro(ME_A_ i);
 		if (NULL == r)
 			break;
+		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
+				r->iid);
 		deliver_v(ME_A_ context, r->iid, r->vb, r->v);
 		context->first_non_delivered = i + 1;
 	}
 	context->highest_seen = context->first_non_delivered;
+	fbr_log_d(&mctx->fbr, "finished local delivery, highest seen =  %ld",
+		       context->highest_seen);
 }
 
 struct lea_context_destructor_arg {
@@ -437,6 +443,8 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->instances = calloc(LEA_INSTANCE_WINDOW,
 			sizeof(struct lea_instance));
 	context->highest_seen = context->first_non_delivered;
+	fbr_log_d(&mctx->fbr, "highest_seen = %ld, first_non_delivered = %ld",
+			context->highest_seen, context->first_non_delivered);
 
 	return context;
 }

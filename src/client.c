@@ -205,7 +205,7 @@ int process_message(ME_P_ struct me_cli_new_value *nv,
 		buf = malloc(value->size1 + 1);
 		memcpy(buf, value->ptr, value->size1);
 		buf[value->size1] = '\0';
-		fbr_log_d(&mctx->fbr, "Got value: ``%s'' size=(%zd)", buf,
+		fbr_log_d(&mctx->fbr, "Got new value: ``%s'' size=(%zd)", buf,
 				nv->size);
 		free(buf);
 	}
@@ -285,6 +285,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	if (retval)
 		goto conn_finish;
 
+	fbr_log_d(&mctx->fbr, "sent server hello");
+
 	if (!ldr_is_leader(ME_A)) {
 		retval = redirect_client(ME_A_ &arg);
 		if (0 >= retval)
@@ -334,7 +336,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 					goto conn_finish;
 				break;
 			case ME_CMT_CLIENT_HELLO:
-				if(informer_started)
+				if (informer_started)
 					continue;
 				arg.starting_iid = u.client_hello.starting_iid;
 				if (0 == arg.starting_iid)
