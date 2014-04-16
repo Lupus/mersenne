@@ -38,5 +38,6 @@ struct lea_instance_info {
 };
 
 void lea_fiber(struct fbr_context *fiber_context, void *_arg);
+void lea_local_fiber(struct fbr_context *fiber_context, void *_arg);
 
 #endif

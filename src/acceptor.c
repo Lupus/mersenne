@@ -237,32 +237,6 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	acs_free_record(ME_A_ r);
 }
 
-static void process_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
-{
-	struct lea_instance_info instance_info, *ptr;
-	const size_t lii_size = sizeof(struct lea_instance_info);
-	size_t count, i;
-	uint64_t last_iid = 0;
-
-	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, lii_size)) {
-		acs_batch_start(ME_A);
-		count = fbr_buffer_bytes(&mctx->fbr, lea_fb) / lii_size;
-		for (i = 0; i < count; i++) {
-			ptr = fbr_buffer_read_address(&mctx->fbr,
-					lea_fb, lii_size);
-			memcpy(&instance_info, ptr, lii_size);
-			fbr_buffer_read_advance(&mctx->fbr, lea_fb);
-			do_delivered_value(ME_A_ instance_info.iid,
-					instance_info.buffer);
-			sm_free(instance_info.buffer);
-			last_iid = instance_info.iid;
-		}
-		acs_set_highest_finalized(ME_A_ last_iid);
-		acs_batch_finish(ME_A);
-		acs_vacuum(ME_A);
-	}
-}
-
 static void do_acceptor_msg(ME_P_ struct msg_info *info)
 {
 	struct me_paxos_message *pmsg;
@@ -286,90 +260,94 @@ static void do_acceptor_msg(ME_P_ struct msg_info *info)
 	sm_free(info->msg);
 }
 
-static void process_fb(ME_P_ struct fbr_buffer *fb)
-{
-	struct msg_info info, *ptr;
-	const size_t msg_size = sizeof(struct msg_info);
-	size_t count, i;
-
-	while (fbr_buffer_can_read(&mctx->fbr, fb, msg_size)) {
-		acs_batch_start(ME_A);
-		count = fbr_buffer_bytes(&mctx->fbr, fb) / msg_size;
-		for (i = 0; i < count; i++) {
-			ptr = fbr_buffer_read_address(&mctx->fbr, fb,
-					msg_size);
-			memcpy(&info, ptr, msg_size);
-			fbr_buffer_read_advance(&mctx->fbr, fb);
-			do_acceptor_msg(ME_A_ &info);
-		}
-		acs_batch_finish(ME_A);
-	}
-}
-
-void acc_fiber(struct fbr_context *fiber_context, void *_arg)
+static void acc_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	fbr_id_t repeater;
 	fbr_id_t learner;
 	struct lea_fiber_arg lea_arg;
-	struct fbr_ev_cond_var ev_fb;
-	struct fbr_ev_cond_var ev_lea_fb;
-	struct fbr_mutex fb_mutex;
-	struct fbr_mutex lea_fb_mutex;
-	struct fbr_buffer fb, lea_fb;
-	struct fbr_ev_base *fb_events[3];
-	int n_events;
+	struct fbr_buffer lea_fb;
+	struct lea_instance_info instance_info, *ptr;
+	const size_t lii_size = sizeof(struct lea_instance_info);
+	size_t count, i;
+	uint64_t last_iid = 0;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	fbr_buffer_init(&mctx->fbr, &fb, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &fb);
-	fbr_mutex_init(&mctx->fbr, &fb_mutex);
 	fbr_buffer_init(&mctx->fbr, &lea_fb, 0);
-	fbr_mutex_init(&mctx->fbr, &lea_fb_mutex);
-
-	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
-			NULL, 0);
-	fbr_transfer(&mctx->fbr, repeater);
-
-	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
-			fbr_buffer_cond_read(&mctx->fbr, &fb),
-			&fb_mutex);
-	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
-			fbr_buffer_cond_read(&mctx->fbr, &lea_fb),
-			&lea_fb_mutex);
 
 	lea_arg.buffer = &lea_fb;
 	lea_arg.starting_iid = acs_get_highest_finalized(ME_A) + 1;
 	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
 			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
-
-	fb_events[0] = &ev_fb.ev_base;
-	fb_events[1] = &ev_lea_fb.ev_base;
-	fb_events[2] = NULL;
-
-	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
-	for (;;) {
-		fbr_mutex_lock(&mctx->fbr, &fb_mutex);
-		fbr_mutex_lock(&mctx->fbr, &lea_fb_mutex);
-		n_events = fbr_ev_wait_to(&mctx->fbr, fb_events, 0.5);
-		assert(-1 != n_events);
-		(void)n_events;
-		if (ev_fb.ev_base.arrived) {
-			process_fb(ME_A_ &fb);
-			fbr_mutex_unlock(&mctx->fbr, &fb_mutex);
+	fbr_log_d(&mctx->fbr, "acceptor informer started");
+loop:
+	while (fbr_buffer_wait_read(&mctx->fbr, &lea_fb, lii_size)) {
+		acs_batch_start(ME_A);
+		count = fbr_buffer_bytes(&mctx->fbr, &lea_fb) / lii_size;
+		fbr_log_d(&mctx->fbr, "reading %ld messages from fb", count);
+		for (i = 0; i < count; i++) {
+			ptr = fbr_buffer_read_address(&mctx->fbr,
+					&lea_fb, lii_size);
+			memcpy(&instance_info, ptr, lii_size);
+			fbr_buffer_read_advance(&mctx->fbr, &lea_fb);
+			do_delivered_value(ME_A_ instance_info.iid,
+					instance_info.buffer);
+			sm_free(instance_info.buffer);
+			last_iid = instance_info.iid;
 		}
-		if (ev_lea_fb.ev_base.arrived) {
-			process_lea_fb(ME_A_ &lea_fb);
-			fbr_mutex_unlock(&mctx->fbr, &lea_fb_mutex);
-		}
-		process_fb(ME_A_ &fb);
-		process_lea_fb(ME_A_ &lea_fb);
-		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
-			break;
+		acs_set_highest_finalized(ME_A_ last_iid);
+		acs_batch_finish(ME_A);
+		acs_vacuum(ME_A);
 	}
+	goto loop;
+}
+
+void acc_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	fbr_id_t repeater;
+	fbr_id_t informer;
+	struct fbr_buffer fb;
+	struct msg_info info, *ptr;
+	const size_t msg_size = sizeof(struct msg_info);
+	size_t count, i;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+
+	fbr_buffer_init(&mctx->fbr, &fb, 0);
+	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &fb);
+
+	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
+			NULL, 0);
+	fbr_transfer(&mctx->fbr, repeater);
+
+	informer = fbr_create(&mctx->fbr, "acceptor/informer",
+			acc_informer_fiber, NULL, 0);
+	fbr_transfer(&mctx->fbr, informer);
+
+	fbr_log_d(&mctx->fbr, "acceptor started");
+	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
+loop:
+	while (fbr_buffer_wait_read(&mctx->fbr, &fb, msg_size)) {
+		fbr_log_d(&mctx->fbr, "can read something");
+		acs_batch_start(ME_A);
+		count = fbr_buffer_bytes(&mctx->fbr, &fb) / msg_size;
+		fbr_log_d(&mctx->fbr, "reading %ld messages from fb", count);
+		for (i = 0; i < count; i++) {
+			ptr = fbr_buffer_read_address(&mctx->fbr, &fb,
+					msg_size);
+			memcpy(&info, ptr, msg_size);
+			fbr_buffer_read_advance(&mctx->fbr, &fb);
+			do_acceptor_msg(ME_A_ &info);
+		}
+		acs_batch_finish(ME_A);
+	}
+	if (!fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
+		goto loop;
+
 	acs_destroy(ME_A);
 	fbr_reclaim(&mctx->fbr, repeater);
+	fbr_reclaim(&mctx->fbr, informer);
 	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }

@@ -943,6 +943,8 @@ void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	fbr_mutex_init(&mctx->fbr, &ctx->snapshot_mutex);
+	fbr_mutex_init(&mctx->fbr, &ctx->batch_mutex);
+	fbr_cond_init(&mctx->fbr, &ctx->highest_finalized_changed);
 	ctx->wal = malloc(sizeof(*ctx->wal));
 	if (NULL == ctx->wal)
 		err(EXIT_FAILURE, "malloc");
@@ -954,18 +956,12 @@ void acs_batch_start(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
+	fbr_mutex_lock(&mctx->fbr, &ctx->batch_mutex);
 	ctx->writes_per_sync = 0;
 	ctx->in_batch = 1;
 	SLIST_INIT(&ctx->dirty_instances);
 	ctx->dirty = 0;
 }
-
-/*
-void wal_log_iov_collect(ME_P_ struct wal_log *log)
-int wal_log_iov_need_flush(ME_P_ struct wal_log *log)
-void wal_log_iov_flush(ME_P_ struct wal_log *log)
-void wal_log_iov_stop(ME_P_ struct wal_log *log)
-*/
 
 void acs_batch_finish(ME_P)
 {
@@ -990,8 +986,10 @@ void acs_batch_finish(ME_P)
 	wal_log_iov_flush(ME_A_ ctx->wal);
 	wal_log_iov_stop(ME_A_ ctx->wal);
 
-	if (0 == ctx->writes_per_sync)
+	if (0 == ctx->writes_per_sync) {
+		fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 		return;
+	}
 	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
 	else
@@ -1000,6 +998,7 @@ void acs_batch_finish(ME_P)
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
 	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
 		create_snapshot(ME_A);
+	fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 }
 
 uint64_t acs_get_highest_accepted(ME_P)
@@ -1026,6 +1025,7 @@ void acs_set_highest_finalized(ME_P_ uint64_t iid)
 	assert(1 == ctx->in_batch);
 	ctx->highest_finalized = iid;
 	ctx->dirty = 1;
+	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 
 void acs_vacuum(ME_P)
@@ -1145,6 +1145,8 @@ void acs_destroy(ME_P)
 		free(r);
 	}
 
+	fbr_cond_destroy(&mctx->fbr, &ctx->highest_finalized_changed);
 	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
+	fbr_mutex_destroy(&mctx->fbr, &ctx->batch_mutex);
 	free(ctx->wal);
 }

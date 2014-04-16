@@ -105,12 +105,11 @@ static void print_window(ME_P_ struct learner_context *context)
 }
 #endif
 
-static void deliver_v(ME_P_ struct learner_context *context, uint64_t iid,
+static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 		uint64_t b, struct buffer *v)
 {
 	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct lea_instance_info *info;
-	struct fbr_buffer *buffer = context->arg->buffer;
 
 	if (fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
 		snprintf(buf, v->size1 + 1, "%s", v->ptr);
@@ -129,8 +128,8 @@ static void deliver_v(ME_P_ struct learner_context *context, uint64_t iid,
 static inline void do_deliver(ME_P_ struct learner_context *context,
 		struct lea_instance *instance)
 {
-	deliver_v(ME_A_ context, instance->iid, instance->chosen->b,
-			instance->chosen->v);
+	deliver_v(ME_A_ context->arg->buffer, instance->iid,
+			instance->chosen->b, instance->chosen->v);
 }
 
 static void send_retransmit(ME_P_ struct learner_context *context,
@@ -394,7 +393,7 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 			break;
 		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
 				r->iid);
-		deliver_v(ME_A_ context, r->iid, r->vb, r->v);
+		deliver_v(ME_A_ context->arg->buffer, r->iid, r->vb, r->v);
 		context->first_non_delivered = i + 1;
 	}
 	context->highest_seen = context->first_non_delivered;
@@ -503,20 +502,55 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 
 		pmsg = &info.msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
-			case ME_PAXOS_LEARN:
-			case ME_PAXOS_RELEARN:
-				buf = info.buf;
-				do_learn(ME_A_ context, pmsg, buf, info.from);
-				sm_free(info.buf);
-				break;
-			case ME_PAXOS_LAST_ACCEPTED:
-				do_last_accepted(ME_A_ context, pmsg, info.from);
-				break;
-			default:
-				errx(EXIT_FAILURE,
-						"wrong message type for learner: %s",
-						strval_me_paxos_message_type(pmsg->data.type));
+		case ME_PAXOS_LEARN:
+		case ME_PAXOS_RELEARN:
+			buf = info.buf;
+			do_learn(ME_A_ context, pmsg, buf, info.from);
+			sm_free(info.buf);
+			break;
+		case ME_PAXOS_LAST_ACCEPTED:
+			do_last_accepted(ME_A_ context, pmsg, info.from);
+			break;
+		default:
+			errx(EXIT_FAILURE,
+					"wrong message type for learner: %s",
+					strval_me_paxos_message_type(
+						pmsg->data.type));
 		}
 		sm_free(info.msg);
+	}
+}
+
+void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct lea_fiber_arg *arg = _arg;
+	const struct acc_instance_record *r;
+	uint64_t i = arg->starting_iid > 0 ? arg->starting_iid : 1;
+	uint64_t highest_finalized = 0;
+	struct fbr_mutex mutex;
+	struct fbr_cond_var *cond;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
+	fbr_mutex_init(&mctx->fbr, &mutex);
+
+	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
+
+	for (;;) {
+		highest_finalized = acs_get_highest_finalized(ME_A);
+		for (; i <= highest_finalized; i++) {
+			r = acs_find_record_ro(ME_A_ i);
+			assert(r);
+			fbr_log_d(&mctx->fbr, "delivering %ld from local state",
+					r->iid);
+			deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
+		}
+		while (highest_finalized == acs_get_highest_finalized(ME_A)) {
+			fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
+			fbr_mutex_lock(&mctx->fbr, &mutex);
+			fbr_cond_wait(&mctx->fbr, cond, &mutex);
+			fbr_mutex_unlock(&mctx->fbr, &mutex);
+		}
 	}
 }

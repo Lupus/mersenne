@@ -77,7 +77,9 @@ struct acs_context {
 	struct acc_instance_record_slist dirty_instances;
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
+	struct fbr_cond_var highest_finalized_changed;
 	struct fbr_mutex snapshot_mutex;
+	struct fbr_mutex batch_mutex;
 	int dirty;
 };
 

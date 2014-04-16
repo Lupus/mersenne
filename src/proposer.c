@@ -840,7 +840,8 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	lea_arg.buffer = &lea_fb;
 	lea_arg.starting_iid = starting_iid;
-	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
+	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_local_fiber,
+			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
 	fb_events[0] = &ev_fb.ev_base;
 	fb_events[1] = &ev_lea_fb.ev_base;
