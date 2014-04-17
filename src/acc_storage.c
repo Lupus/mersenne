@@ -994,6 +994,9 @@ void acs_batch_finish(ME_P)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
 	else
 		wal_log_sync(ME_A_ ctx->wal);
+
+	acs_vacuum(ME_A);
+
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
 	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
@@ -1025,6 +1028,13 @@ void acs_set_highest_finalized(ME_P_ uint64_t iid)
 	assert(1 == ctx->in_batch);
 	ctx->highest_finalized = iid;
 	ctx->dirty = 1;
+	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
+}
+
+void acs_set_highest_finalized_async(ME_P_ uint64_t iid)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	ctx->highest_finalized = iid;
 	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 
