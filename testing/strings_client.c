@@ -444,8 +444,10 @@ on_redirect:
 				buffer.ptr = u.arrived_value.buf;
 				buffer.size = u.arrived_value.size;
 				cc->last_iid = u.arrived_value.iid;
+				/*
 				printf("Instance #%ld has arrived\n",
 						u.arrived_value.iid);
+				*/
 				next_value(cc, &buffer, u.arrived_value.iid);
 				break;
 			case ME_CMT_REDIRECT:
