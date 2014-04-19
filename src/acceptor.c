@@ -53,6 +53,7 @@ static void send_learn0(ME_P_ struct acc_instance_record *r, struct me_peer *to,
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	int final;
 
 	assert(r->v->size1 > 0);
 
@@ -62,8 +63,10 @@ static void send_learn0(ME_P_ struct acc_instance_record *r, struct me_peer *to,
 	else
 		data->type = ME_PAXOS_LEARN;
 	data->me_paxos_msg_data_u.learn.i = r->iid;
-	data->me_paxos_msg_data_u.learn.b = r->b;
+	data->me_paxos_msg_data_u.learn.b = r->vb;
 	data->me_paxos_msg_data_u.learn.v = r->v;
+	final = (r->iid <= acs_get_highest_finalized(ME_A));
+	data->me_paxos_msg_data_u.learn.final = final;
 	if(NULL == to)
 		msg_send_all(ME_A_ &msg);
 	else
@@ -111,6 +114,13 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
+	if (data->i <= acs_get_highest_finalized(ME_A)) {
+		// Learner already delivered this instance and it is finalized,
+		// so we will ignore this message altogether.
+		fbr_log_d(&mctx->fbr, "Ignoring prepare for instance %lu"
+				" as it's finalized", data->i);
+		return;
+	}
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		r->iid = data->i;
 		r->b = data->b;
@@ -124,7 +134,8 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 	r->b = data->b;
 	acs_store_record(ME_A_ r);
-	fbr_log_d(&mctx->fbr, "Promised not to accept ballots lower that %lu for instance %lu", data->b, data->i);
+	fbr_log_d(&mctx->fbr, "Promised not to accept ballots lower than %lu"
+			" for instance %lu", data->b, data->i);
 	send_promise(ME_A_ r, from);
 cleanup:
 	acs_free_record(ME_A_ r);
@@ -139,6 +150,13 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
+	if (data->i <= acs_get_highest_finalized(ME_A)) {
+		// Learner already delivered this instance and it is finalized,
+		// so we will ignore this message altogether.
+		fbr_log_d(&mctx->fbr, "Ignoring accept for instance %lu"
+				" as it's finalized", data->i);
+		return;
+	}
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		// We got an accept for an instance we know nothing about
 		// without prior prepare. Either we have not received the
@@ -217,7 +235,8 @@ static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
-static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
+static void do_delivered_value(ME_P_ uint64_t iid, uint64_t vb,
+		struct buffer *buffer)
 {
 	struct acc_instance_record *r = NULL;
 
@@ -225,9 +244,9 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 		r->iid = iid;
 		r->b = 0ULL;
 		r->v = sm_in_use(buffer);
-		r->vb = 0ULL;
-		fbr_log_d(&mctx->fbr, "writing value for missing instance #%ld",
-				iid);
+		r->vb = vb;
+		fbr_log_d(&mctx->fbr, "writing value for missing instance #%ld"
+				" ballot %ld", iid, vb);
 		acs_store_record(ME_A_ r);
 	} else {
 		if (NULL == r->v || 0 != buf_cmp(r->v, buffer)) {
@@ -236,10 +255,12 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 						" instance #%ld", iid);
 			} else {
 				fbr_log_d(&mctx->fbr, "writing missing value "
-						" for existing instance #%ld",
-						iid);
+						" for existing instance #%ld"
+						" ballot %ld", iid, vb);
 			}
+			r->b = 0ULL;
 			sm_free(r->v);
+			r->vb = vb;
 			r->v = sm_in_use(buffer);
 			acs_store_record(ME_A_ r);
 		}
@@ -309,10 +330,13 @@ static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
 	acs_batch_start(ME_A);
 	for (; i < count; i++) {
 		instance_info = &ptr[i];
-		do_delivered_value(ME_A_ instance_info->iid,
+		do_delivered_value(ME_A_ instance_info->iid, instance_info->vb,
 				instance_info->buffer);
 		sm_free(instance_info->buffer);
 		last_iid = instance_info->iid;
+		fbr_log_d(&mctx->fbr, "updating (async) finalized to #%ld",
+				last_iid);
+		acs_set_highest_finalized_async(ME_A_ last_iid);
 	}
 	fbr_log_d(&mctx->fbr, "updating finalized to #%ld", last_iid);
 	acs_set_highest_finalized(ME_A_ last_iid);

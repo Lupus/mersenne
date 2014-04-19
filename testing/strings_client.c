@@ -58,6 +58,7 @@ struct my_value {
 	int nsent;
 	ev_tstamp sent;
 	int value_id;
+	uint64_t last_iid;
 	UT_hash_handle hh;
 };
 
@@ -220,16 +221,19 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	if (value->nreceived > 0) {
 		cc->stats.duplicates++;
 		value->nreceived++;
+		if (value->nreceived > value->nsent) {
+			printf("Extra value received for #%d: %d > %d, "
+					"last iid was %ld, new is %ld\n",
+					value->value_id, value->nreceived,
+					value->nsent, value->last_iid, iid);
+			cc->stats.extra_values++;
+		}
+		value->last_iid = iid;
 		/*
 		printf("%f\treceived value #%d (+%d)\n", ev_now(cc->loop),
 				value->value_id,
 				value->nreceived - 1);
 		*/
-		if (value->nreceived > value->nsent) {
-			printf("Extra value #%ld received: %d > %d\n", iid,
-					value->nreceived, value->nsent);
-			cc->stats.extra_values++;
-		}
 		return;
 	}
 	/*
@@ -237,6 +241,7 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 			value->value_id);
 	*/
 	value->nreceived = 1;
+	value->last_iid = iid;
 	cc->stats.received++;
 	ev_now_update(cc->loop);
 	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
@@ -376,6 +381,8 @@ static int send_client_hello(struct client_context *cc)
 
 	me_msg.m_type = ME_CMT_CLIENT_HELLO;
 	me_msg.client_hello.starting_iid = cc->last_iid + 1;
+	printf("sending client hello, starting iid = %ld\n",
+			me_msg.client_hello.starting_iid);
 	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
 	retval = me_cli_msg_pack(&pk, &me_msg);
 	if (retval)

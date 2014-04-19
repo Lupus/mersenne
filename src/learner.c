@@ -121,6 +121,7 @@ static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = iid;
+	info->vb = b;
 	info->buffer = sm_in_use(v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
@@ -277,7 +278,18 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 				" discarding", data->i);
 		return;
 	}
+	instance->modified = ev_now(mctx->loop);
 	ack = instance->acks + from->acc_index;
+	if (1 == data->final) {
+		fbr_log_d(&mctx->fbr, "got final value for instance %lu",
+				data->i);
+		ack->b = data->b;
+		sm_free(ack->v);
+		assert(buf->size1 > 0);
+		ack->v = sm_in_use(buf);
+		maj_ack = ack;
+		goto close_instance;
+	}
 	if (NULL == ack->v) {
 		ack->b = data->b;
 		assert(buf->size1 > 0);
@@ -291,10 +303,10 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		}
 		ack->b = data->b;
 		sm_free(ack->v);
+		assert(buf->size1 > 0);
 		ack->v = sm_in_use(buf);
 		fbr_log_d(&mctx->fbr, "replacing an old value for this ack");
 	}
-	instance->modified = ev_now(mctx->loop);
 	num = count_acks(ME_A_ instance->acks);
 	if (!pxs_is_acc_majority(ME_A_ num)) {
 		fbr_log_d(&mctx->fbr, "instance %lu has less acks (%d) than"
@@ -309,6 +321,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 				" acks");
 		return;
 	}
+close_instance:
 	instance->closed = 1;
 	instance->chosen = maj_ack;
 	fbr_log_d(&mctx->fbr, "instance %lu is now closed", data->i);
@@ -538,14 +551,14 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
 
 	for (;;) {
-		highest_finalized = acs_get_highest_finalized(ME_A);
-		for (; i <= highest_finalized; i++) {
+		for (; i <= acs_get_highest_finalized(ME_A); i++) {
 			r = acs_find_record_ro(ME_A_ i);
 			assert(r);
 			fbr_log_d(&mctx->fbr, "delivering %ld from local state",
 					r->iid);
 			deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
 		}
+		highest_finalized = acs_get_highest_finalized(ME_A);
 		while (highest_finalized == acs_get_highest_finalized(ME_A)) {
 			fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
 			fbr_mutex_lock(&mctx->fbr, &mutex);

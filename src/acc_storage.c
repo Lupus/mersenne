@@ -1120,6 +1120,7 @@ const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid)
 void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	assert(record->iid > ctx->highest_finalized);
 	store_record(ME_A_ record);
 	if (!ctx->in_batch) {
 		wal_write_value(ME_A_ record);
