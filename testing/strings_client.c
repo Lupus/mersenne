@@ -74,6 +74,8 @@ struct client_stats {
 
 struct client_context {
 	int fd;
+	struct fbr_cond_var conn_init_cond;
+	int conn_initialized;
 	struct fbr_context fbr;
 	struct ev_loop *loop;
 	fbr_id_t mersenne_read;
@@ -89,6 +91,7 @@ struct client_context {
 	unsigned int peer_count;
 	uint64_t last_iid;
 	int last_value_id;
+	fbr_id_t reader;
 };
 
 static struct timespec diff(struct timespec start, struct timespec end)
@@ -115,12 +118,30 @@ static void randomize_buffer(struct buffer *buffer)
 	}
 }
 
+static void wait_conn_initialize(struct client_context *cc)
+{
+	struct fbr_mutex mutex;
+
+	if (cc->conn_initialized)
+		return;
+
+	fbr_mutex_init(&cc->fbr, &mutex);
+
+	while (!cc->conn_initialized) {
+		fbr_mutex_lock(&cc->fbr, &mutex);
+		fbr_cond_wait(&cc->fbr, &cc->conn_init_cond, &mutex);
+		fbr_mutex_unlock(&cc->fbr, &mutex);
+	}
+
+	fbr_mutex_destroy(&cc->fbr, &mutex);
+}
+
 static void submit_value(struct client_context *cc, struct my_value *value)
 {
 	msgpack_sbuffer *buf = msgpack_sbuffer_new();
 	msgpack_packer pk;
 	union me_cli_any me_msg;
-	int retval;
+	ssize_t retval;
 
 	me_msg.m_type = ME_CMT_NEW_VALUE;
 	me_msg.new_value.buf = value->buf->ptr;
@@ -131,14 +152,21 @@ static void submit_value(struct client_context *cc, struct my_value *value)
 	if (retval)
 		errx(EXIT_FAILURE, "failed to pack a message");
 
+	wait_conn_initialize(cc);
+
 	fbr_mutex_lock(&cc->fbr, cc->mutex);
 	assert(buf->size > 0);
+	fbr_log_d(&cc->fbr, "writing value #%d to the socket...",
+			value->value_id);
 	//printf("trying to write...\n");
 	value->nsent++;
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
-	if (retval < buf->size)
-		err(EXIT_FAILURE, "fbr_write_all");
-	//printf("done writing\n");
+	if (retval < (ssize_t)buf->size) {
+		warn("submit_value(): fbr_write_all() failed");
+		fbr_mutex_unlock(&cc->fbr, cc->mutex);
+		return;
+	}
+	fbr_log_d(&cc->fbr, "finished writing value to the socket");
 	fbr_mutex_unlock(&cc->fbr, cc->mutex);
 	msgpack_sbuffer_free(buf);
 	ev_now_update(cc->loop);
@@ -275,12 +303,18 @@ static void reconnect_to_any_online_l(struct client_context *cc, int lock)
 	int retval;
 	unsigned int i;
 	unsigned int retries = 0;
+	const char *saddr;
 
 	if (lock)
 		fbr_mutex_lock(&cc->fbr, cc->mutex);
 
+	if (0 == cc->peer_count)
+		errx(EXIT_FAILURE, "No peers to reconnect");
+
 retry:
 	for (i = 0; i < cc->peer_count; i++) {
+		cc->conn_initialized = 0;
+		shutdown(cc->fd, SHUT_RDWR);
 		close(cc->fd);
 
 		if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
@@ -289,17 +323,17 @@ retry:
 		if (fbr_fd_nonblock(&cc->fbr, cc->fd))
 			err(EXIT_FAILURE, "fbr_fd_nonblock");
 
+		saddr = inet_ntoa(cc->peers[i].sin_addr);
+		fbr_log_d(&cc->fbr, "connecting to %s...", saddr);
 		retval = fbr_connect(&cc->fbr, cc->fd, (void *)&cc->peers[i],
 				sizeof(cc->peers[i]));
 		if (-1 == retval) {
-			printf("reconnect to %s failed: %s\n",
-					inet_ntoa(cc->peers[i].sin_addr),
-					strerror(errno));
+			fbr_log_d(&cc->fbr, "connection to %s failed: %s",
+					saddr, strerror(errno));
 			continue;
 		}
+		fbr_log_d(&cc->fbr, "connected to %s", saddr);
 		tcp_nodelay(cc->fd);
-		printf("Reconnected to %s\n",
-				inet_ntoa(cc->peers[i].sin_addr));
 		fbr_mutex_unlock(&cc->fbr, cc->mutex);
 		return;
 	}
@@ -312,6 +346,7 @@ retry:
 
 static void reconnect_to_any_online(struct client_context *cc)
 {
+	cc->conn_initialized = 0;
 	reconnect_to_any_online_l(cc, 1);
 }
 
@@ -321,6 +356,8 @@ static void reconnect(struct client_context *cc, const char *ip)
 	struct sockaddr_in addr;
 
 	fbr_mutex_lock(&cc->fbr, cc->mutex);
+	cc->conn_initialized = 0;
+	shutdown(cc->fd, SHUT_RDWR);
 	close(cc->fd);
 
 	memset(&addr, 0, sizeof(addr));
@@ -338,8 +375,12 @@ static void reconnect(struct client_context *cc, const char *ip)
 	if (fbr_fd_nonblock(&cc->fbr, cc->fd))
 		err(EXIT_FAILURE, "fbr_fd_nonblock");
 
+	fbr_log_d(&cc->fbr, "connecting to %s...", inet_ntoa(addr.sin_addr));
 	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
 	if (-1 == retval) {
+		fbr_log_d(&cc->fbr, "connection to %s failed: %s",
+				inet_ntoa(addr.sin_addr),
+				strerror(errno));
 		fbr_sleep(&cc->fbr, 0.5);
 		reconnect_to_any_online_l(cc, 0);
 		return;
@@ -347,7 +388,7 @@ static void reconnect(struct client_context *cc, const char *ip)
 
 	tcp_nodelay(cc->fd);
 
-	printf("Reconnected to %s\n", ip);
+	fbr_log_d(&cc->fbr, "connected to %s", inet_ntoa(addr.sin_addr));
 	fbr_mutex_unlock(&cc->fbr, cc->mutex);
 }
 
@@ -360,9 +401,9 @@ static void load_peer_list(struct client_context *cc, union me_cli_any *u)
 		free(cc->peers);
 	cc->peers = calloc(server_hello->count, sizeof(struct sockaddr_in));
 	cc->peer_count = server_hello->count;
-	printf("Updated peers list:\n");
+	fbr_log_d(&cc->fbr, "updated peers list:");
 	for (i = 0; i < server_hello->count; i++) {
-		printf(" - %s\n", server_hello->peers[i]);
+		fbr_log_d(&cc->fbr, " - %s", server_hello->peers[i]);
 		retval = inet_aton(server_hello->peers[i],
 				&cc->peers[i].sin_addr);
 		if (0 == retval)
@@ -377,11 +418,11 @@ static int send_client_hello(struct client_context *cc)
 	msgpack_sbuffer *buf = msgpack_sbuffer_new();
 	msgpack_packer pk;
 	union me_cli_any me_msg;
-	int retval;
+	ssize_t retval;
 
 	me_msg.m_type = ME_CMT_CLIENT_HELLO;
 	me_msg.client_hello.starting_iid = cc->last_iid + 1;
-	printf("sending client hello, starting iid = %ld\n",
+	fbr_log_d(&cc->fbr, "sending client hello, starting iid = %ld",
 			me_msg.client_hello.starting_iid);
 	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
 	retval = me_cli_msg_pack(&pk, &me_msg);
@@ -389,10 +430,12 @@ static int send_client_hello(struct client_context *cc)
 		errx(EXIT_FAILURE, "failed to pack a message");
 
 	fbr_mutex_lock(&cc->fbr, cc->mutex);
+	fbr_log_d(&cc->fbr, "writing client hello to the socket...");
 	assert(buf->size > 0);
 	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
+	fbr_log_d(&cc->fbr, "finished writing client hello to the socket");
 	fbr_mutex_unlock(&cc->fbr, cc->mutex);
-	if (retval < buf->size) {
+	if (retval < (ssize_t)buf->size) {
 		msgpack_sbuffer_free(buf);
 		return -1;
 	}
@@ -446,6 +489,7 @@ on_redirect:
 				errx(EXIT_FAILURE, "me_cli_msg_unpack: %s",
 						error);
 
+			fbr_log_d(&cc->fbr, "got a message");
 			switch (u.m_type) {
 			case ME_CMT_ARRIVED_VALUE:
 				buffer.ptr = u.arrived_value.buf;
@@ -458,17 +502,31 @@ on_redirect:
 				next_value(cc, &buffer, u.arrived_value.iid);
 				break;
 			case ME_CMT_REDIRECT:
+				fbr_log_d(&cc->fbr, "got redirected to %s",
+						u.redirect.ip);
 				reconnect(cc, u.redirect.ip);
 				msgpack_unpacker_reset(&pac);
 				goto on_redirect;
 			case ME_CMT_SERVER_HELLO:
 				load_peer_list(cc, &u);
+				cc->conn_initialized = 1;
+				fbr_cond_broadcast(&cc->fbr,
+						&cc->conn_init_cond);
+				fbr_log_d(&cc->fbr, "initialized connection");
 				break;
 			default:
 				errx(EXIT_FAILURE, "unexpected message");
 			}
 		}
 	}
+}
+
+static void start_reader_fiber(struct client_context *cc)
+{
+	fbr_log_d(&cc->fbr, "starting socket reader fiber");
+	cc->reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader,
+			NULL, 0);
+	fbr_transfer(&cc->fbr, cc->reader);
 }
 
 void fiber_stats(struct fbr_context *fiber_context, void *_arg)
@@ -540,9 +598,12 @@ void set_up_socket(struct client_context *cc)
 
 	fbr_fd_nonblock(&cc->fbr, cc->fd);
 	tcp_nodelay(cc->fd);
+	fbr_log_d(&cc->fbr, "connecting to %s...", inet_ntoa(addr.sin_addr));
 	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
 	if (-1 == retval)
 		err(EXIT_FAILURE, "fbr_connect");
+	fbr_log_d(&cc->fbr, "connected to %s", inet_ntoa(addr.sin_addr));
+	start_reader_fiber(cc);
 }
 
 static void init_values(struct client_context *cc)
@@ -563,7 +624,7 @@ static void init_values(struct client_context *cc)
 void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
-	fbr_id_t reader, stats;
+	fbr_id_t stats;
 	struct fbr_buffer fb;
 	struct fbr_mutex mutex;
 	struct my_value *v;
@@ -578,8 +639,6 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 
 	fbr_mutex_init(&cc->fbr, &mutex);
 
-	reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader, NULL, 0);
-	fbr_transfer(&cc->fbr, reader);
 	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, NULL, 0);
 	fbr_transfer(&cc->fbr, stats);
 
@@ -617,6 +676,7 @@ int main(int argc, char *argv[]) {
 	memset(&cc, 0x00, sizeof(cc));
 	cc.loop = EV_DEFAULT;
 	fbr_init(&cc.fbr, cc.loop);
+	fbr_set_log_level(&cc.fbr, FBR_LOG_INFO);
 
 	ev_timer_init(&stop_timer, run_timeout_cb, atoi(argv[3]), 0.0);
 	stop_timer.data = &cc;
@@ -633,6 +693,7 @@ int main(int argc, char *argv[]) {
 	cc.last_iid = 0;
 	fbr_mutex_init(&cc.fbr, &mutex);
 	fbr_cond_init(&cc.fbr, &cc.timeouts_cond);
+	fbr_cond_init(&cc.fbr, &cc.conn_init_cond);
 	cc.mutex = &mutex;
 
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);

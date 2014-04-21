@@ -55,9 +55,6 @@ static inline uint64_t round_up(uint64_t n, uint64_t m) {
 	return (n + m - 1) / m;
 }
 
-uint64_t encode_ballot(ME_P_ uint64_t ballot);
-uint64_t decode_ballot(ME_P_ uint64_t ballot);
-
 struct perf_snap {
 	ev_tstamp start;
 	ev_tstamp total;
