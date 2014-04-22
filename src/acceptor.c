@@ -104,21 +104,7 @@ static void send_reject(ME_P_ struct acc_instance_record *r, struct me_peer *to)
 	data->me_paxos_msg_data_u.reject.i = r->iid;
 	data->me_paxos_msg_data_u.reject.b = r->b;
 	msg_send_to(ME_A_ &msg, to->index);
-	fbr_log_d(&mctx->fbr, "Sent reject for instance %lu at ballot %lu",
-			r->iid, r->b);
-}
-
-static void send_reject_for(ME_P_ uint64_t iid, uint64_t b, struct me_peer *to)
-{
-	struct me_message msg;
-	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
-	msg.super_type = ME_PAXOS;
-	data->type = ME_PAXOS_REJECT;
-	data->me_paxos_msg_data_u.reject.i = iid;
-	data->me_paxos_msg_data_u.reject.b = b;
-	msg_send_to(ME_A_ &msg, to->index);
-	fbr_log_d(&mctx->fbr, "Sent reject for instance %lu at ballot %lu",
-			iid, b);
+	fbr_log_d(&mctx->fbr, "Sent reject for instance %lu at ballot %lu", r->iid, r->b);
 }
 
 static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
@@ -160,7 +146,6 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 {
 	struct acc_instance_record *r = NULL;
 	struct me_paxos_accept_data *data;
-	int found;
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
@@ -171,64 +156,28 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 				" as it's finalized", data->i);
 		return;
 	}
-
-	found = acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE);
-	if (found && r->b > data->b) {
-		// We have the record and we reject an accept with the ballot
-		// number lower than (or equal to) the one in the record.
+	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
+		// We got an accept for an instance we know nothing about
+		// without prior prepare. Either we have not received the
+		// prepare, or proposer is trying to speed things up.
+		// Anyway, we have not promised anything to anyone, so we
+		// accept this.
+		r->iid = data->i;
+		r->b = data->b;
+		r->v = NULL;
+		r->vb = 0;
+	}
+	if (data->b < r->b) {
 		send_reject(ME_A_ r, from);
 		goto cleanup;
 	}
-
-	// Either we have not found the record, or we have a higher ballot
-	if (1 == data->short_circuit) {
-		// We got a short circuit accept, proposer skipped phase 1.
-		if (found) {
-			// If we do have a record for this instance, we send
-			// reject, forcing proposer to retry with phase 1 for
-			// this instance.
-			fbr_log_d(&mctx->fbr, "rejecting short circuit accept"
-					" for instance %lu at ballot %lu",
-					data->i, data->b);
-			send_reject_for(ME_A_ data->i, data->b, from);
-			goto cleanup;
-		}
-		fbr_log_d(&mctx->fbr, "allowing short circuit accept"
-				" for instance %lu at ballot %lu",
-				data->i, data->b);
-		r->iid = data->i;
-		r->b = data->b;
-		r->v = NULL;
-		r->vb = 0;
-	} else if (!found) {
-		// We got normal accept, proposer succeded with phase 1.
-		// But we happen to miss this record, so we create it.
-		fbr_log_d(&mctx->fbr, "got accept for a non-existent record"
-				" for instance %lu at ballot %lu, creating it",
-				data->i, data->b);
-		r->iid = data->i;
-		r->b = data->b;
-		r->v = NULL;
-		r->vb = 0;
-	}
-	if (r->b != data->b)
-		fbr_log_d(&mctx->fbr, "updating ballot to %lu, was %lu"
-				" for instance %lu",
-				data->b, r->b, r->iid);
 	r->b = data->b;
-	if (r->vb != data->b)
-		fbr_log_d(&mctx->fbr, "updating value ballot to %lu, was %lu"
-				" for instance %lu",
-				data->b, r->b, r->iid);
 	r->vb = data->b;
 	if (NULL == r->v) {
 		r->v = buf_sm_steal(data->v);
 		assert(r->v->size1 > 0);
-		fbr_log_d(&mctx->fbr, "assigning initial value to record"
-				" for instance %lu at ballot %lu",
-				data->i, data->b);
 	} else if (0 != buf_cmp(r->v, data->v)) {
-		fbr_log_d(&mctx->fbr, "replacing value for instance %lu"
+		fbr_log_d(&mctx->fbr, "Replacing value for instance %lu"
 				" ballot %lu", r->iid, r->b);
 		sm_free(r->v);
 		r->v = buf_sm_steal(data->v);
@@ -237,8 +186,6 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	if (r->iid > acs_get_highest_accepted(ME_A))
 		acs_set_highest_accepted(ME_A_ r->iid);
 	acs_store_record(ME_A_ r);
-	fbr_log_d(&mctx->fbr, "stored record, sending learns"
-				" for instance %lu", r->iid);
 	send_learn(ME_A_ r, NULL);
 cleanup:
 	acs_free_record(ME_A_ r);

@@ -59,7 +59,6 @@ struct pro_instance {
 	int client_value;
 	ev_timer timer;
 	int timed_out;
-	int short_circuit;
 	struct perf_snap state_snaps[IS_MAX];
 };
 
