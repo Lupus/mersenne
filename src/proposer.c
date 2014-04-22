@@ -272,11 +272,14 @@ static void send_accept(ME_P_ struct pro_instance *instance)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
+	struct me_paxos_accept_data *acc_data;
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_ACCEPT;
-	data->me_paxos_msg_data_u.accept.i = instance->iid;
-	data->me_paxos_msg_data_u.accept.b = instance->b;
-	data->me_paxos_msg_data_u.accept.v = instance->p2.v;
+	acc_data = &data->me_paxos_msg_data_u.accept;
+	acc_data->i = instance->iid;
+	acc_data->b = instance->b;
+	acc_data->v = instance->p2.v;
+	acc_data->short_circuit = instance->short_circuit;
 	assert(data->me_paxos_msg_data_u.accept.v->size1 > 0);
 	fbr_log_d(&mctx->fbr, "Sending accepts for instance #%lu at ballot "
 			"#%lu", instance->iid, instance->b);
@@ -306,6 +309,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					" instance %lu at first ballot to"
 					" phase 2 with no client value",
 					instance->iid);
+			instance->short_circuit = 1;
 			new_base.type = IE_R0;
 			switch_instance(ME_A_ instance,
 					IS_P1_READY_NO_VALUE,
@@ -366,7 +370,8 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	}
 }
 
-void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base *base)
+void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance,
+		struct ie_base *base)
 {
 	struct ie_base new_base;
 	struct ie_nv *nv;
@@ -434,6 +439,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	switch(base->type) {
 		case IE_E:
 			send_accept(ME_A_ instance);
+			instance->short_circuit = 0;
 			ev_timer_set(&instance->timer, 0., TO2);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -880,6 +886,7 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
+#if 1
 void pro_start(ME_P)
 {
 	if (!fbr_id_isnull(mctx->fiber_proposer))
@@ -896,3 +903,19 @@ void pro_stop(ME_P)
 		mctx->fiber_proposer = FBR_ID_NULL;
 	}
 }
+#else
+static int started;
+void pro_start(ME_P)
+{
+	if (started)
+		return;
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, NULL, 0);
+	assert(!fbr_id_isnull(mctx->fiber_proposer));
+	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
+	started = 1;
+}
+
+void pro_stop(ME_P)
+{
+}
+#endif

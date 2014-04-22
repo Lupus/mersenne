@@ -100,6 +100,7 @@ struct me_paxos_accept_data {
 	uint64_t i;
 	uint64_t b;
 	struct buffer *v;
+	int short_circuit;
 };
 
 struct me_paxos_reject_data {
