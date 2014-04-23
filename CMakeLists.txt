@@ -7,12 +7,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 option(USE_LTO "Use Link-Time Optimization" FALSE)
 option(USE_ASAN "Use AddressSanitizer" FALSE)
-option(LINK_ASAN_LIB "Link AddressSanitizer library (for gcc)" FALSE)
 option(PERFLOG "Write performance log to stdout" FALSE)
 if(USE_LTO)
 	set(WANT_LTO TRUE)
 endif()
 
+if(USE_ASAN)
+	set(WANT_ASAN TRUE)
+endif()
 add_subdirectory(evfibers)
 add_subdirectory(msgpack-proto-ragel)
 
@@ -43,12 +45,6 @@ if(USE_LTO)
 endif()
 if(USE_ASAN)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
-endif()
-
-if(LINK_ASAN_LIB)
-	set(ASAN_LIBS "asan")
-else()
-	set(ASAN_LIBS "")
 endif()
 
 set(MERSENNE_PROTO "src/acc.proto")
@@ -119,7 +115,6 @@ target_link_libraries(mersenne
 	${EVFIBERS_EMBED_LIBS}
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
-	${ASAN_LIBS}
 	crypto
 	z
 	uuid
