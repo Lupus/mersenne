@@ -108,15 +108,11 @@ static void print_window(ME_P_ struct learner_context *context)
 static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 		uint64_t b, struct buffer *v)
 {
-	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct lea_instance_info *info;
 
-	if (fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
-		snprintf(buf, v->size1 + 1, "%s", v->ptr);
-		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
-				"#%ld vith value ``%s'' size %d",
-				iid, b, buf, v->size1);
-	}
+	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
+			"#%ld vith value ``%.*s'' size %d",
+			iid, b, (unsigned)v->size1, v->ptr, v->size1);
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
