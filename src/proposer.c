@@ -302,14 +302,9 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			instance->p2.v = NULL;
 			instance->p1.vb = 0;
 			instance->client_value = 0;
-			fbr_log_d(&mctx->fbr, "Attemping to short-circuit"
-					" instance %lu at first ballot to"
-					" phase 2 with no client value",
-					instance->iid);
-			new_base.type = IE_R0;
-			switch_instance(ME_A_ instance,
-					IS_P1_READY_NO_VALUE,
-					&new_base);
+			send_prepare(ME_A_ instance);
+			ev_timer_set(&instance->timer, 0., TO1);
+			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);

@@ -158,10 +158,8 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	}
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		// We got an accept for an instance we know nothing about
-		// without prior prepare. Either we have not received the
-		// prepare, or proposer is trying to speed things up.
-		// Anyway, we have not promised anything to anyone, so we
-		// accept this.
+		// without prior prepare.
+		// Since we have not promised anything, we can just accept it.
 		r->iid = data->i;
 		r->b = data->b;
 		r->v = NULL;
