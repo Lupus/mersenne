@@ -391,7 +391,7 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	fbr_log_d(&mctx->fbr, "acceptor started");
 	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
-loop:
+
 	while (fbr_buffer_wait_read(&mctx->fbr, &fb, msg_size)) {
 		fbr_log_d(&mctx->fbr, "can read something");
 		acs_batch_start(ME_A);
@@ -405,9 +405,9 @@ loop:
 			do_acceptor_msg(ME_A_ &info);
 		}
 		acs_batch_finish(ME_A);
+		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
+			break;
 	}
-	if (!fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
-		goto loop;
 
 	acs_destroy(ME_A);
 	fbr_reclaim(&mctx->fbr, repeater);

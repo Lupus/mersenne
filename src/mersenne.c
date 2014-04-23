@@ -129,20 +129,6 @@ static void setup_logging(ME_P)
 	fbr_set_log_level(&mctx->fbr, log_level);
 }
 
-static void sigint_cb (EV_P_ ev_signal *w, int revents)
-{
-	ev_break (EV_A_ EVBREAK_ALL);
-}
-
-static void sigterm_cb (EV_P_ ev_signal *w, int revents)
-{
-	ev_break (EV_A_ EVBREAK_ALL);
-}
-
-static void sighup_cb (EV_P_ ev_signal *w, int revents)
-{
-}
-
 static void sigsegv_handler(int signum)
 {
 	const int bt_size = 32;
@@ -221,9 +207,9 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
-	ev_signal_init(&sigint_watcher, sigint_cb, SIGINT);
-	ev_signal_init(&sigterm_watcher, sigterm_cb, SIGTERM);
-	ev_signal_init(&sighup_watcher, sighup_cb, SIGHUP);
+	ev_signal_init(&sigint_watcher, NULL, SIGINT);
+	ev_signal_init(&sigterm_watcher, NULL, SIGTERM);
+	ev_signal_init(&sighup_watcher, NULL, SIGHUP);
 	fbr_ev_watcher_init(&mctx->fbr, &evw_sigint,
 			(struct ev_watcher *)&sigint_watcher);
 	fbr_ev_watcher_init(&mctx->fbr, &evw_sigterm,
@@ -259,7 +245,7 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		fbr_destructor_add(&mctx->fbr, &sigterm_dtor);
 		fbr_destructor_add(&mctx->fbr, &sighup_dtor);
 		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
-		assert(n_events > 0);
+		assert(n_events >= 0);
 		if (!n_events)
 			continue;
 		fbr_destructor_remove(&mctx->fbr, &sigint_dtor, 1 /* Call? */);

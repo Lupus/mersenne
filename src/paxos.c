@@ -148,6 +148,7 @@ void pxs_fiber_init(ME_P)
 void pxs_fiber_shutdown(ME_P)
 {
 	pro_stop(ME_A);
-	fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
+	fbr_log_d(&mctx->fbr, "stopping acceptor...");
 	fbr_reclaim(&mctx->fbr, mctx->fiber_acceptor);
+	fbr_log_d(&mctx->fbr, "acceptor stopped");
 }
