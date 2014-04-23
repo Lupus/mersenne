@@ -240,9 +240,9 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 
 	HASH_FIND_BUFFER(cc->values, buf, value);
 	if (NULL == value) {
-		/*
-		printf("next_value called, got some other value\n");
-		*/
+		printf("Other value received for #%d at iid %lu: ```%.*s'''\n",
+					value->value_id, iid,
+					(unsigned)buf->size, buf->ptr);
 		cc->stats.other++;
 		return;
 	}
