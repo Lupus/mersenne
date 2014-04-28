@@ -25,7 +25,6 @@
 #include <errno.h>
 #include <unistd.h>
 #include <ev.h>
-#include <uthash.h>
 #include <time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -36,6 +35,7 @@
 
 #include <evfibers/fiber.h>
 #include <mersenne/proto.h>
+#include <mersenne/md5.h>
 
 #define HASH_FIND_BUFFER(head,buffer,out) \
 	HASH_FIND(hh,head,(buffer)->ptr,(buffer)->size,out)
@@ -57,9 +57,8 @@ struct my_value {
 	int nreceived;
 	int nsent;
 	ev_tstamp sent;
-	int value_id;
+	unsigned value_id;
 	uint64_t last_iid;
-	UT_hash_handle hh;
 };
 
 struct client_stats {
@@ -81,7 +80,9 @@ struct client_context {
 	fbr_id_t mersenne_read;
 	fbr_id_t main;
 	struct fbr_cond_var timeouts_cond;
-	struct my_value *values;
+	struct my_value **values;
+	size_t values_size;
+	size_t values_alloc;
 	struct fbr_mutex *mutex;
 	int concurrency;
 	struct client_stats stats;
@@ -219,33 +220,89 @@ static void value_timeout_cb(EV_P_ ev_timer *w, int revents)
 	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
 }
 
+
 static struct my_value *new_value(struct client_context *cc)
 {
 	struct my_value *value;
+	MD5_CTX context;
+	uint8_t digest[16];
+	char valud_id_buf[11];
+	unsigned header_length;
+	unsigned l;
 	value = calloc(1, sizeof(struct my_value));
 	ev_timer_init(&value->timer, value_timeout_cb, VALUE_TO, VALUE_TO);
 	value->timer.data = cc;
 	value->buf = malloc(sizeof(struct buffer));
-	value->buf->ptr = malloc(VALUE_SIZE);
+	value->buf->ptr = calloc(1, VALUE_SIZE + 1);
 	value->buf->size = VALUE_SIZE;
 	value->value_id = cc->last_value_id++;
 	randomize_buffer(value->buf);
+
+	sprintf(valud_id_buf, "%010d", value->value_id);
+	header_length = 10 + 32 + 4;
+        MD5_Init(&context);
+        MD5_Update(&context, (uint8_t *)&value->value_id,
+			sizeof(value->value_id));
+        MD5_Update(&context, (uint8_t *)value->buf->ptr + header_length,
+			VALUE_SIZE - header_length);
+        MD5_Final(digest, &context);
+	l = sprintf(value->buf->ptr, "{%010d,%016lx%016lx}",
+			value->value_id,
+			*((int64_t *)digest), *((int64_t *)digest + 1));
+	value->buf->ptr[l] = ' ';
 	return value;
+}
+
+static void report_other(struct client_context *cc, struct buffer *buf,
+		uint64_t iid)
+{
+	printf("Other value received at iid %lu: ```%.*s'''\n", iid,
+					(unsigned)buf->size, buf->ptr);
+	cc->stats.other++;
+}
+
+static void record_value(struct client_context *cc, struct my_value *value)
+{
+	if (cc->values_size == cc->values_alloc) {
+		cc->values_alloc *= 2;
+		cc->values = realloc(cc->values,
+				cc->values_alloc * sizeof(void *));
+	}
+	cc->values[value->value_id] = value;
+	cc->values_size++;
 }
 
 static void next_value(struct client_context *cc, struct buffer *buf,
 		uint64_t iid)
 {
 	struct my_value *value = NULL;
+	MD5_CTX context;
+	uint8_t digest[16];
+	uint8_t test_digest[16];
+	unsigned header_length;
+	unsigned l;
+	unsigned value_id;
 
-	HASH_FIND_BUFFER(cc->values, buf, value);
-	if (NULL == value) {
-		printf("Other value received for #%d at iid %lu: ```%.*s'''\n",
-					value->value_id, iid,
-					(unsigned)buf->size, buf->ptr);
-		cc->stats.other++;
+	l = sscanf(buf->ptr, "{%010d,%016lx%016lx}",
+			&value_id,
+			(int64_t *)test_digest, (int64_t *)test_digest + 1);
+	if (3 != l) {
+		report_other(cc, buf, iid);
 		return;
 	}
+	header_length = 10 + 32 + 4;
+        MD5_Init(&context);
+        MD5_Update(&context, (uint8_t *)&value_id, sizeof(value_id));
+        MD5_Update(&context, (uint8_t *)buf->ptr + header_length,
+			buf->size - header_length);
+        MD5_Final(digest, &context);
+
+	if (0 != memcmp(digest, test_digest, sizeof(test_digest))) {
+		report_other(cc, buf, iid);
+		return;
+	}
+
+	value = cc->values[value_id];
 	if (value->nreceived > 0) {
 		cc->stats.duplicates++;
 		value->nreceived++;
@@ -275,9 +332,11 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
 	ev_timer_stop(cc->loop, &value->timer);
 	value->timed_out = 0;
+	free(value->buf->ptr);
+	free(value->buf);
 
 	value = new_value(cc);
-	HASH_ADD_BUFFER(cc->values, buf, value);
+	record_value(cc, value);
 	submit_value(cc, value);
 	ev_timer_start(cc->loop, &value->timer);
 }
@@ -609,15 +668,16 @@ void set_up_socket(struct client_context *cc)
 static void init_values(struct client_context *cc)
 {
 	int i;
-	struct my_value **values = calloc(sizeof(void*), cc->concurrency);
-	assert(values);
-	cc->values = NULL;
+	struct my_value *value;
+	cc->values_size = 0;
+	cc->values_alloc = 1024;
+	cc->values = calloc(cc->values_alloc, sizeof(void *));
 	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
 	for (i = 0; i < cc->concurrency; i++) {
-		values[i] = new_value(cc);
-		HASH_ADD_BUFFER(cc->values, buf, values[i]);
-		submit_value(cc, values[i]);
-		ev_timer_start(cc->loop, &(values[i]->timer));
+		value = new_value(cc);
+		record_value(cc, value);
+		submit_value(cc, value);
+		ev_timer_start(cc->loop, &value->timer);
 	}
 }
 
@@ -628,6 +688,7 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_buffer fb;
 	struct fbr_mutex mutex;
 	struct my_value *v;
+	unsigned i;
 
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 
@@ -647,7 +708,8 @@ void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		fbr_cond_wait(&cc->fbr, &cc->timeouts_cond, &mutex);
 		fbr_mutex_unlock(&cc->fbr, &mutex);
 
-		for (v = cc->values; v != NULL; v = v->hh.next) {
+		for (i = 0; i < cc->values_size; i++) {
+			v = cc->values[i];
 			if (0 == v->timed_out)
 				continue;
 			if (v->nreceived > 0)
@@ -691,6 +753,7 @@ int main(int argc, char *argv[]) {
 	cc.stats.extra_values = 0;
 	cc.stats.other = 0;
 	cc.last_iid = 0;
+	cc.conn_initialized = 0;
 	fbr_mutex_init(&cc.fbr, &mutex);
 	fbr_cond_init(&cc.fbr, &cc.timeouts_cond);
 	fbr_cond_init(&cc.fbr, &cc.conn_init_cond);

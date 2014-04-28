@@ -99,6 +99,9 @@ set(MERSENNE_GEN_SOURCES
 	"${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
 	)
 
+add_library(mersenne_md5 STATIC
+	"src/md5.c"
+	)
 add_library(mersenne_cli SHARED
 	${MERSENNE_CLI_SOURCES}
 	)
@@ -112,6 +115,7 @@ add_executable(mersenne
 	)
 target_link_libraries(mersenne
 	mersenne_cli
+	mersenne_md5
 	${EVFIBERS_EMBED_LIBS}
 	${PROTOBUFC_LIBRARIES}
 	${CMAKE_THREAD_LIBS_INIT}
