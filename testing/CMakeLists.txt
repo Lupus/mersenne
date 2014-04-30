@@ -9,3 +9,7 @@ target_link_libraries(strings_client
 	msgpack
 	uuid
 	rt)
+
+add_executable(disk_wal_test
+	disk_wal_test.c
+	)
