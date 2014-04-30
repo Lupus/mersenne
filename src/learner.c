@@ -430,14 +430,11 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 		free(instance->acks);
 	}
 	free(lcontext->instances);
-	free(lcontext);
 }
 
-static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
+static void init_context(ME_P_	struct learner_context *context,
+		struct lea_fiber_arg *arg)
 {
-	struct learner_context *context;
-
-	context = calloc(1, sizeof(struct learner_context));
 	context->first_non_delivered = arg->starting_iid;
 	context->mctx = mctx;
 	context->arg = arg;
@@ -453,8 +450,6 @@ static struct learner_context *init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->highest_seen = context->first_non_delivered;
 	fbr_log_d(&mctx->fbr, "highest_seen = %ld, first_non_delivered = %ld",
 			context->highest_seen, context->first_non_delivered);
-
-	return context;
 }
 
 static void init_window(ME_P_ struct learner_context *context)
@@ -480,27 +475,28 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct me_context *mctx;
 	struct me_paxos_message *pmsg;
 	struct buffer *buf;
-	struct learner_context *context;
 	struct fbr_buffer *fb;
 	struct msg_info info, *ptr;
 	fbr_id_t hole_checker;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 	struct lea_context_destructor_arg dtor_arg;
+	struct learner_context context;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	context = init_context(ME_A_ _arg);
+	memset(&context, 0x00, sizeof(context));
+	init_context(ME_A_ &context, _arg);
 	dtor_arg.mctx = mctx;
-	dtor_arg.lcontext = context;
+	dtor_arg.lcontext = &context;
 	dtor.func = lea_context_destructor;
 	dtor.arg = &dtor_arg;
 	fbr_destructor_add(&mctx->fbr, &dtor);
-	fb = &context->buffer;
+	fb = &context.buffer;
 
-	try_local_delivery(ME_A_ context);
-	init_window(ME_A_ context);
+	try_local_delivery(ME_A_ &context);
+	init_window(ME_A_ &context);
 
 	hole_checker = fbr_create(&mctx->fbr, "learner/hole_checker",
-			lea_hole_checker_fiber, context, 0);
+			lea_hole_checker_fiber, &context, 0);
 	fbr_transfer(&mctx->fbr, hole_checker);
 
 	for (;;) {
@@ -514,11 +510,11 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		case ME_PAXOS_LEARN:
 		case ME_PAXOS_RELEARN:
 			buf = info.buf;
-			do_learn(ME_A_ context, pmsg, buf, info.from);
+			do_learn(ME_A_ &context, pmsg, buf, info.from);
 			sm_free(info.buf);
 			break;
 		case ME_PAXOS_LAST_ACCEPTED:
-			do_last_accepted(ME_A_ context, pmsg, info.from);
+			do_last_accepted(ME_A_ &context, pmsg, info.from);
 			break;
 		default:
 			errx(EXIT_FAILURE,
