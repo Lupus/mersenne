@@ -973,7 +973,9 @@ void acs_batch_finish(ME_P)
 	wal_log_iov_collect(ME_A_ ctx->wal);
 	SLIST_FOREACH_SAFE(r, &ctx->dirty_instances, dirty_entries, x) {
 		if (!r->stored) {
-			acs_free_record(ME_A_ r);
+			if (record->v)
+				sm_free(record->v);
+			free(record);
 			continue;
 		}
 		if (wal_log_iov_need_flush(ME_A_ ctx->wal))
@@ -1122,10 +1124,7 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(record->iid > ctx->highest_finalized);
 	store_record(ME_A_ record);
-	if (!ctx->in_batch) {
-		wal_write_value(ME_A_ record);
-		return;
-	}
+	assert(1 == ctx->in_batch);
 	assert(0 == record->is_cow);
 	if (!record->dirty) {
 		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
@@ -1136,14 +1135,6 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 
 void acs_free_record(ME_P_ struct acc_instance_record *record)
 {
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	if (ctx->in_batch)
-		return;
-	if (!record->stored) {
-		if (record->v)
-			sm_free(record->v);
-		free(record);
-	}
 }
 
 void acs_destroy(ME_P)
