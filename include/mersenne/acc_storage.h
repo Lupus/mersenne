@@ -39,6 +39,8 @@ struct acc_instance_record {
 	int is_cow;
 	int stored;
 	int dirty;
+	struct me_message *msg;
+	int msg_to_index;
 	UT_hash_handle hh;
 	SLIST_ENTRY(acc_instance_record) entries;
 	SLIST_ENTRY(acc_instance_record) dirty_entries;

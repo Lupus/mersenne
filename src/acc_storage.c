@@ -31,6 +31,7 @@
 #include <mersenne/kvec.h>
 #include <mersenne/acc_storage.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/util.h>
 #include <mersenne/acc.pb-c.h>
@@ -973,9 +974,11 @@ void acs_batch_finish(ME_P)
 	wal_log_iov_collect(ME_A_ ctx->wal);
 	SLIST_FOREACH_SAFE(r, &ctx->dirty_instances, dirty_entries, x) {
 		if (!r->stored) {
-			if (record->v)
-				sm_free(record->v);
-			free(record);
+			SLIST_REMOVE(&ctx->dirty_instances, r,
+					acc_instance_record, dirty_entries);
+			if (r->v)
+				sm_free(r->v);
+			free(r);
 			continue;
 		}
 		if (wal_log_iov_need_flush(ME_A_ ctx->wal))
@@ -991,6 +994,20 @@ void acs_batch_finish(ME_P)
 	if (0 == ctx->writes_per_sync) {
 		fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 		return;
+	}
+	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
+		assert(r->stored);
+		if (r->msg) {
+			fbr_log_d(&mctx->fbr, "flushing pending message for"
+					" instance %ld", r->iid);
+			if (r->msg_to_index >= 0) {
+				msg_send_to(ME_A_ r->msg, r->msg_to_index);
+			} else {
+				msg_send_all(ME_A_ r->msg);
+			}
+			free(r->msg);
+			r->msg = NULL;
+		}
 	}
 	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
