@@ -283,6 +283,7 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	unsigned l;
 	unsigned value_id;
 
+	//printf("buf: '''%.*s'''\n", (unsigned)buf->size, buf->ptr);
 	l = sscanf(buf->ptr, "{%010d,%016lx%016lx}",
 			&value_id,
 			(int64_t *)test_digest, (int64_t *)test_digest + 1);
@@ -302,7 +303,13 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 		return;
 	}
 
+	if (value_id > cc->values_size) {
+		printf("Got value id from the future: %d > %zd (values size)\n",
+				value_id, cc->values_size);
+		exit(1);
+	}
 	value = cc->values[value_id];
+	assert(value);
 	if (value->nreceived > 0) {
 		cc->stats.duplicates++;
 		value->nreceived++;
