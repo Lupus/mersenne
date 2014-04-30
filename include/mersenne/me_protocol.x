@@ -115,6 +115,7 @@ struct me_paxos_learn_data {
 	uint64_t i;
 	uint64_t b;
 	struct buffer *v;
+	int final;
 };
 
 struct me_paxos_retransmit_data {

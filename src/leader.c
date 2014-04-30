@@ -129,6 +129,7 @@ struct me_peer *ldr_get_or_wait_for_leader(ME_P)
 {
 	struct fbr_mutex mutex;
 	if (-1 == mctx->ldr.leader) {
+		fbr_log_d(&mctx->fbr, "waiting for leader instance to appear");
 		fbr_mutex_init(&mctx->fbr, &mutex);
 		while (-1 == mctx->ldr.leader) {
 			fbr_mutex_lock(&mctx->fbr, &mutex);

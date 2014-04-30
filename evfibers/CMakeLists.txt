@@ -16,8 +16,8 @@ if(NOT CMAKE_BUILD_TYPE)
 endif(NOT CMAKE_BUILD_TYPE)
 
 set(VERSION_MAJOR 0)
-set(VERSION_MINOR 2)
-set(VERSION_PATCH 0)
+set(VERSION_MINOR 4)
+set(VERSION_PATCH 1)
 set(VERSION_STRING "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 include(CheckIncludeFiles)
@@ -32,6 +32,7 @@ aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/coro" CORO_SOURCES)
 
 find_package(LibEv REQUIRED)
 if(WANT_EIO)
+	find_package(Threads)
 	if(WANT_EMBEDDED_EIO)
 		include(ExternalProject)
 		ExternalProject_Add(
@@ -41,7 +42,7 @@ if(WANT_EIO)
 			CVS_MODULE libeio
 			CVS_TAG -r rel-4_19
 			UPDATE_COMMAND ""
-			CONFIGURE_COMMAND ./configure --prefix=${CMAKE_CURRENT_BINARY_DIR}/eio
+			CONFIGURE_COMMAND CFLAGS=-fpic ./configure --enable-static --disable-shared --prefix=${CMAKE_CURRENT_BINARY_DIR}/eio
 			BUILD_IN_SOURCE 1
 			)
 		ExternalProject_Add_Step(libeio autogen
@@ -57,16 +58,17 @@ if(WANT_EIO)
 			WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/eio/src/libeio"
 		)
 		set(LIBEIO_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/eio/include")
-		set(LIBEIO_LIBRARY "-L${CMAKE_CURRENT_BINARY_DIR}/eio/lib -leio")
+		set(LIBEIO_LIBRARY "-L${CMAKE_CURRENT_BINARY_DIR}/eio/lib -Wl,-whole-archive -leio -Wl,-no-whole-archive ${CMAKE_THREAD_LIBS_INIT}")
+		set(LIBEIO_FOUND TRUE)
 	else(WANT_EMBEDDED_EIO)
 		find_package(LibEio)
 	endif(WANT_EMBEDDED_EIO)
-	find_package(Threads)
 endif(WANT_EIO)
-check_include_files(ucontext.h HAVE_UCONTEXT_H)
-if(HAVE_UCONTEXT_H)
-	add_definitions("-DHAVE_UCONTEXT_H")
-endif(HAVE_UCONTEXT_H)
+
+if(WANT_ASAN)
+	# Force ucontext.h as libcoro backend so as to better interact with ASan
+	add_definitions(-DCORO_UCONTEXT)
+endif(WANT_ASAN)
 
 if(WANT_VALGRIND)
 	check_include_files(valgrind/valgrind.h HAVE_VALGRIND_H)
@@ -86,7 +88,10 @@ include_directories(
 if(WANT_LTO)
 	set(LTO_FLAGS "-flto")
 endif(WANT_LTO)
-set(CMAKE_C_FLAGS "-W -Wall -Werror -fno-strict-aliasing ${LTO_FLAGS} ${CMAKE_C_FLAGS}")
+if(WANT_ASAN)
+	set(ASAN_FLAGS "-fsanitize=address")
+endif(WANT_ASAN)
+set(CMAKE_C_FLAGS "-W -Wall -Werror -fno-strict-aliasing ${LTO_FLAGS} ${ASAN_FLAGS} ${CMAKE_C_FLAGS}")
 set(SOURCES ${EVFIBERS_SOURCES} ${CORO_SOURCES})
 
 add_library(evfibers SHARED ${SOURCES})
@@ -99,13 +104,16 @@ target_link_libraries(evfibers
 	${LIBEV_LIBRARY}
 	${LIBEIO_LIBRARY}
 	${CMAKE_THREAD_LIBS_INIT})
+if(WANT_EIO AND WANT_EMBEDDED_EIO)
+	add_dependencies(evfibers libeio)
+endif(WANT_EIO AND WANT_EMBEDDED_EIO)
 
 add_library(evfibers_static STATIC ${SOURCES})
 set_target_properties(evfibers_static  PROPERTIES
 	OUTPUT_NAME evfibers
 	COMPILE_FLAGS "-fPIC")
 
-if (EVFIBERS_EMBED)
+if(EVFIBERS_EMBED)
 	set(EVFIBERS_EMBED_LIBS evfibers_static
 		${LIBEV_LIBRARY}
 		${LIBEIO_LIBRARY}
@@ -115,6 +123,8 @@ endif(EVFIBERS_EMBED)
 
 add_executable(fiber_bench_buffer "${CMAKE_CURRENT_SOURCE_DIR}/bench/buffer.c")
 target_link_libraries(fiber_bench_buffer evfibers ${CMAKE_THREAD_LIBS_INIT})
+add_executable(fiber_bench_condvar "${CMAKE_CURRENT_SOURCE_DIR}/bench/condvar.c")
+target_link_libraries(fiber_bench_condvar evfibers ${CMAKE_THREAD_LIBS_INIT})
 
 # Variables for config.h
 if(WANT_EIO AND THREADS_FOUND AND LIBEIO_FOUND)

@@ -5,6 +5,7 @@ add_executable(strings_client
 target_link_libraries(strings_client
 	${EVFIBERS_EMBED_LIBS}
 	mersenne_cli
+	mersenne_md5
 	msgpack
 	uuid
 	rt)

@@ -21,7 +21,7 @@ case $1 in
 	gcc)
 		export LD=/usr/bin/gcc
 		export CC=/usr/bin/gcc
-		cmake -DCMAKE_BUILD_TYPE=Debug -DUSE_ASAN=TRUE -DLINK_ASAN_LIB=TRUE ..
+		cmake -DCMAKE_BUILD_TYPE=Debug ..
 		;;
 	gcc-release)
 		export LD=/usr/bin/gcc

@@ -77,7 +77,9 @@ struct acs_context {
 	struct acc_instance_record_slist dirty_instances;
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
+	struct fbr_cond_var highest_finalized_changed;
 	struct fbr_mutex snapshot_mutex;
+	struct fbr_mutex batch_mutex;
 	int dirty;
 };
 
@@ -121,7 +123,10 @@ uint64_t acs_get_highest_accepted(ME_P);
 void acs_set_highest_accepted(ME_P_ uint64_t iid);
 uint64_t acs_get_highest_finalized(ME_P);
 void acs_set_highest_finalized(ME_P_ uint64_t iid);
+void acs_set_highest_finalized_async(ME_P_ uint64_t iid);
 void acs_vacuum(ME_P);
+int acs_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
+		enum acs_find_mode mode);
 int acs_find_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
 		enum acs_find_mode mode);
 const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid);

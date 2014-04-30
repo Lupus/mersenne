@@ -138,7 +138,7 @@ void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_buffer_init(&mctx->fbr, &lea_buffer, 1);
 	lea_arg.buffer = &lea_buffer;
 	lea_arg.starting_iid = arg.starting_iid;
-	learner = fbr_create(&mctx->fbr, "informer/learner", lea_fiber,
+	learner = fbr_create(&mctx->fbr, "informer/learner", lea_local_fiber,
 			&lea_arg, 0);
 	retval = fbr_transfer(&mctx->fbr, learner);
 	assert(0 == retval);
@@ -242,7 +242,9 @@ static int send_server_hello(ME_P_ struct connection_fiber_arg *arg)
 		return retval;
 
 	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_log_d(&mctx->fbr, "writing server hello...");
 	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
+	fbr_log_d(&mctx->fbr, "finished writing server hello");
 	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
 	if (retval < buf->size) {
 		msgpack_sbuffer_free(buf);
@@ -281,6 +283,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		goto conn_finish;
 	}
 
+	fbr_log_i(&mctx->fbr, "Connection fiber has started");
+
 	retval = send_server_hello(ME_A_ &arg);
 	if (retval)
 		goto conn_finish;
@@ -295,6 +299,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 			 */
 			goto conn_finish;
 		/* We gained leadership */
+		fbr_log_d(&mctx->fbr, "proceeding with the client");
 	}
 
 	pro_buf = fbr_get_user_data(&mctx->fbr, mctx->fiber_proposer);
@@ -304,7 +309,6 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 			leadership_change_fiber, &arg, 0);
 	fbr_transfer(&mctx->fbr, leader_change);
 
-	fbr_log_i(&mctx->fbr, "Connection fiber has started");
 	for (;;) {
 		msgpack_unpacker_reserve_buffer(&pac,
 				MSGPACK_UNPACKER_RESERVE_SIZE);
@@ -330,6 +334,9 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 
 			switch(u.m_type) {
 			case ME_CMT_NEW_VALUE:
+				if (!ldr_is_leader(ME_A))
+					redirect_client(ME_A_ &arg);
+
 				retval = process_message(ME_A_ &u.new_value,
 						pro_buf);
 				if (retval)
@@ -384,6 +391,7 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed on tcp socket");
 		arg.fd = sockfd;
+		fbr_mutex_init(&mctx->fbr, arg.mutex);
 		fiber = fbr_create(&mctx->fbr, "tcp_client",
 				connection_fiber, &arg, 0);
 		fbr_transfer(&mctx->fbr, fiber);

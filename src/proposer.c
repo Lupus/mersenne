@@ -88,6 +88,17 @@ static void set_client_v2(struct pro_instance *instance, struct buffer *buffer)
 	instance->client_value = 1;
 }
 
+static uint64_t new_ballot(ME_P)
+{
+	uint64_t now;
+	do {
+		ev_now_update(mctx->loop);
+		now = ev_now(mctx->loop) * 1e6;
+	} while (now == mctx->pxs.pro.last_used_ballot);
+	mctx->pxs.pro.last_used_ballot = now;
+	return now * mctx->args_info.max_instances_arg + mctx->me->index;
+}
+
 static int pending_append(ME_P_ struct buffer *from)
 {
 	struct pending_value *pv;
@@ -121,7 +132,7 @@ static int pending_shift(ME_P_ struct buffer **pptr)
 	*pptr = pv->v;
 	mctx->pxs.pro.pending_size--;
 	free(pv);
-	fbr_log_i(&mctx->fbr, "Shifted pending value");
+	fbr_log_d(&mctx->fbr, "Shifted pending value");
 	return 1;
 }
 
@@ -281,25 +292,19 @@ void do_is_empty(ME_P_ struct pro_instance *instance, struct ie_base *base)
 
 void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
-	int b;
 	struct ie_p *p;
 	struct ie_base new_base;
 	int num;
 	switch(base->type) {
 		case IE_S:
-			instance->b = encode_ballot(ME_A_ 1);
+			instance->b = new_ballot(ME_A);
 			instance->p1.v = NULL;
 			instance->p2.v = NULL;
 			instance->p1.vb = 0;
 			instance->client_value = 0;
-			fbr_log_d(&mctx->fbr, "Attemping to short-circuit"
-					" instance %lu at first ballot to"
-					" phase 2 with no client value",
-					instance->iid);
-			new_base.type = IE_R0;
-			switch_instance(ME_A_ instance,
-					IS_P1_READY_NO_VALUE,
-					&new_base);
+			send_prepare(ME_A_ instance);
+			ev_timer_set(&instance->timer, 0., TO1);
+			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		case IE_P:
 			p = container_of(base, struct ie_p, b);
@@ -343,8 +348,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					"#%lu at ballot #%lu", instance->iid,
 					instance->b);
 			bm_clear_all(instance->p1.acks);
-			b = decode_ballot(ME_A_ instance->b);
-			instance->b = encode_ballot(ME_A_ ++b);
+			instance->b = new_ballot(ME_A);
 			send_prepare(ME_A_ instance);
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
@@ -840,7 +844,8 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	lea_arg.buffer = &lea_fb;
 	lea_arg.starting_iid = starting_iid;
-	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_fiber, &lea_arg, 0);
+	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_local_fiber,
+			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);
 	fb_events[0] = &ev_fb.ev_base;
 	fb_events[1] = &ev_lea_fb.ev_base;

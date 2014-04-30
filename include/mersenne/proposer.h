@@ -55,6 +55,7 @@ struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
 	uint64_t next_ready;
+	uint64_t last_used_ballot;
 	struct pending_value *pending;
 	int pending_size;
 	struct fbr_cond_var pending_cond;
@@ -66,6 +67,7 @@ struct pro_context {
 	.pending = NULL, \
 	.pending_size = 0, \
 	.next_ready = 0, \
+	.last_used_ballot = 0, \
 }
 
 void pro_fiber(struct fbr_context *fiber_context, void *_arg);

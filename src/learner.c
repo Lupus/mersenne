@@ -105,23 +105,19 @@ static void print_window(ME_P_ struct learner_context *context)
 }
 #endif
 
-static void deliver_v(ME_P_ struct learner_context *context, uint64_t iid,
+static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 		uint64_t b, struct buffer *v)
 {
-	char buf[ME_MAX_XDR_MESSAGE_LEN];
 	struct lea_instance_info *info;
-	struct fbr_buffer *buffer = context->arg->buffer;
 
-	if (fbr_need_log(&mctx->fbr, FBR_LOG_DEBUG)) {
-		snprintf(buf, v->size1 + 1, "%s", v->ptr);
-		fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
-				"#%ld vith value ``%s'' size %d",
-				iid, b, buf, v->size1);
-	}
+	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
+			"#%ld vith value ``%.*s'' size %d",
+			iid, b, (unsigned)v->size1, v->ptr, v->size1);
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = iid;
+	info->vb = b;
 	info->buffer = sm_in_use(v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
@@ -129,8 +125,8 @@ static void deliver_v(ME_P_ struct learner_context *context, uint64_t iid,
 static inline void do_deliver(ME_P_ struct learner_context *context,
 		struct lea_instance *instance)
 {
-	deliver_v(ME_A_ context, instance->iid, instance->chosen->b,
-			instance->chosen->v);
+	deliver_v(ME_A_ context->arg->buffer, instance->iid,
+			instance->chosen->b, instance->chosen->v);
 }
 
 static void send_retransmit(ME_P_ struct learner_context *context,
@@ -278,7 +274,18 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 				" discarding", data->i);
 		return;
 	}
+	instance->modified = ev_now(mctx->loop);
 	ack = instance->acks + from->acc_index;
+	if (1 == data->final) {
+		fbr_log_d(&mctx->fbr, "got final value for instance %lu",
+				data->i);
+		ack->b = data->b;
+		sm_free(ack->v);
+		assert(buf->size1 > 0);
+		ack->v = sm_in_use(buf);
+		maj_ack = ack;
+		goto close_instance;
+	}
 	if (NULL == ack->v) {
 		ack->b = data->b;
 		assert(buf->size1 > 0);
@@ -292,10 +299,10 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		}
 		ack->b = data->b;
 		sm_free(ack->v);
+		assert(buf->size1 > 0);
 		ack->v = sm_in_use(buf);
 		fbr_log_d(&mctx->fbr, "replacing an old value for this ack");
 	}
-	instance->modified = ev_now(mctx->loop);
 	num = count_acks(ME_A_ instance->acks);
 	if (!pxs_is_acc_majority(ME_A_ num)) {
 		fbr_log_d(&mctx->fbr, "instance %lu has less acks (%d) than"
@@ -310,6 +317,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 				" acks");
 		return;
 	}
+close_instance:
 	instance->closed = 1;
 	instance->chosen = maj_ack;
 	fbr_log_d(&mctx->fbr, "instance %lu is now closed", data->i);
@@ -394,7 +402,7 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 			break;
 		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
 				r->iid);
-		deliver_v(ME_A_ context, r->iid, r->vb, r->v);
+		deliver_v(ME_A_ context->arg->buffer, r->iid, r->vb, r->v);
 		context->first_non_delivered = i + 1;
 	}
 	context->highest_seen = context->first_non_delivered;
@@ -503,20 +511,55 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 
 		pmsg = &info.msg->me_message_u.paxos_message;
 		switch(pmsg->data.type) {
-			case ME_PAXOS_LEARN:
-			case ME_PAXOS_RELEARN:
-				buf = info.buf;
-				do_learn(ME_A_ context, pmsg, buf, info.from);
-				sm_free(info.buf);
-				break;
-			case ME_PAXOS_LAST_ACCEPTED:
-				do_last_accepted(ME_A_ context, pmsg, info.from);
-				break;
-			default:
-				errx(EXIT_FAILURE,
-						"wrong message type for learner: %s",
-						strval_me_paxos_message_type(pmsg->data.type));
+		case ME_PAXOS_LEARN:
+		case ME_PAXOS_RELEARN:
+			buf = info.buf;
+			do_learn(ME_A_ context, pmsg, buf, info.from);
+			sm_free(info.buf);
+			break;
+		case ME_PAXOS_LAST_ACCEPTED:
+			do_last_accepted(ME_A_ context, pmsg, info.from);
+			break;
+		default:
+			errx(EXIT_FAILURE,
+					"wrong message type for learner: %s",
+					strval_me_paxos_message_type(
+						pmsg->data.type));
 		}
 		sm_free(info.msg);
+	}
+}
+
+void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct lea_fiber_arg *arg = _arg;
+	const struct acc_instance_record *r;
+	uint64_t i = arg->starting_iid > 0 ? arg->starting_iid : 1;
+	uint64_t highest_finalized = 0;
+	struct fbr_mutex mutex;
+	struct fbr_cond_var *cond;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
+	fbr_mutex_init(&mctx->fbr, &mutex);
+
+	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
+
+	for (;;) {
+		for (; i <= acs_get_highest_finalized(ME_A); i++) {
+			r = acs_find_record_ro(ME_A_ i);
+			assert(r);
+			fbr_log_d(&mctx->fbr, "delivering %ld from local state",
+					r->iid);
+			deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
+		}
+		highest_finalized = acs_get_highest_finalized(ME_A);
+		while (highest_finalized == acs_get_highest_finalized(ME_A)) {
+			fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
+			fbr_mutex_lock(&mctx->fbr, &mutex);
+			fbr_cond_wait(&mctx->fbr, cond, &mutex);
+			fbr_mutex_unlock(&mctx->fbr, &mutex);
+		}
 	}
 }

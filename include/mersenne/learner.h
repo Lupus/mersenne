@@ -34,9 +34,11 @@ struct lea_fiber_arg {
 
 struct lea_instance_info {
 	uint64_t iid;
+	uint64_t vb;
 	struct buffer *buffer;
 };
 
 void lea_fiber(struct fbr_context *fiber_context, void *_arg);
+void lea_local_fiber(struct fbr_context *fiber_context, void *_arg);
 
 #endif
