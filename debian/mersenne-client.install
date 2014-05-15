@@ -1,0 +1,7 @@
+usr/lib/libmersenne_cli.so
+usr/lib/libmersenne_md5.a
+include/mersenne/proto.h usr/include/mersenne
+include/mersenne/md5.h usr/include/mersenne
+usr/bin/strings_client usr/share/mersenne-client
+testing/strings_client.c usr/share/mersenne-client
+testing/test_client.rb usr/share/mersenne-client

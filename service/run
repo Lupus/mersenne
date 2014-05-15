@@ -1,0 +1,6 @@
+#!/bin/bash
+NUM=${1:-0}
+WALDIR=${WALDIR:-/var/lib/mersenne}
+
+exec 2>&1
+exec envuidgid mersenne envdir ./env /usr/bin/mersenne -g -p $NUM --acceptor-wal-dir $WALDIR$NUM
