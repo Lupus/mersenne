@@ -126,3 +126,9 @@ target_link_libraries(mersenne
 	)
 
 subdirs(testing)
+
+INSTALL(TARGETS mersenne mersenne_cli mersenne_md5
+  RUNTIME DESTINATION bin
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
+)
