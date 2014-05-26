@@ -1,3 +1,9 @@
+mersenne (0.9-2) unstable; urgency=low
+
+  * fix missing dependencies
+
+ -- Mikhael Anisimov <manisimov@nvidia.com>  Mon, 26 May 2014 16:11:14 +0400
+
 mersenne (0.9-1) unstable; urgency=low
 
   * Initial package compilation

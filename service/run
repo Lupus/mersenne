@@ -1,5 +1,5 @@
 #!/bin/bash
-NUM=${1:-0}
+NUM=${NUM:-0}
 WALDIR=${WALDIR:-/var/lib/mersenne}
 
 exec 2>&1
