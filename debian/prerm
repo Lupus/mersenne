@@ -1,7 +1,4 @@
-#!/bin/sh
-# prerm script for mersenne
-#
-# see: dh_installdeb(1)
+#!/bin/bash
 
 set -e
 
@@ -13,21 +10,29 @@ set -e
 #        * <deconfigured's-prerm> `deconfigure' `in-favour'
 #          <package-being-installed> <version> `removing'
 #          <conflicting-package> <version>
-# for details, see http://www.debian.org/doc/debian-policy/ or
-# the debian-policy package
-
+# for details, see /usr/share/doc/packaging-manual/
 
 case "$1" in
-    remove|upgrade|deconfigure)
-    ;;
+	upgrade)
+		;;
+	remove|deconfigure)
 
-    failed-upgrade)
-    ;;
+		if [ -d /etc/service/mersenne ] ; then
+			pushd /etc/service/mersenne > /dev/null
+			rm /etc/service/mersenne
+			svc -dx . log
+			popd > /dev/null
+		fi
 
-    *)
-        echo "prerm called with unknown argument \`$1'" >&2
-        exit 1
-    ;;
+		id mersenne >/dev/null && /usr/sbin/userdel -f mersenne
+
+		;;
+	failed-upgrade)
+		;;
+	*)
+		echo "prerm called with unknown argument \`$1'" >&2
+		exit 0
+		;;
 esac
 
 # dh_installdeb will replace this with shell code automatically

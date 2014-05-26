@@ -2,7 +2,8 @@ Source: mersenne
 Section: net
 Priority: extra
 Maintainer: Mikhael Anisimov <manisimov@nvidia.com>
-Build-Depends: debhelper (>= 8.0.0), cmake, libev-dev, libeio-dev, libprotobuf-c0, libc-dev-bin, ragel, gengetopt, libmsgpack-dev, libuuid-dev
+Build-Depends: debhelper (>= 8.0.0), cmake, libev-dev, libeio-dev, libprotobuf-c0-dev, protobuf-c-compiler,
+ libc-dev-bin, ragel, gengetopt, libmsgpack-dev, uuid-dev, libssl-dev, uthash-dev, valgrind, check
 Standards-Version: 3.9.4
 Homepage: https://github.com/Lupus/mersenne
 Vcs-Git: https://github.com/Lupus/mersenne.git
