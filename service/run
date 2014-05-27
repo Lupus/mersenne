@@ -1,6 +1,13 @@
 #!/bin/bash
+set -e
+
+eval `env -i envdir ./env env`
+
 NUM=${NUM:-0}
 WALDIR=${WALDIR:-/var/lib/mersenne}
 
+mkdir -p $WALDIR$NUM
+chown -R mersenne $WALDIR$NUM
+
 exec 2>&1
-exec envuidgid mersenne envdir ./env /usr/bin/mersenne -g -p $NUM --acceptor-wal-dir $WALDIR$NUM
+exec envuidgid mersenne envdir ./env /usr/bin/mersenne -p $NUM --acceptor-wal-dir $WALDIR$NUM
