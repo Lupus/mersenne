@@ -115,8 +115,10 @@ int pro_push_value(ME_P_ struct buffer *value)
 {
 	int retval;
 	retval = pending_append(ME_A_ value);
-	if (retval)
+	if (retval) {
+		fbr_log_d(&mctx->fbr, "failed to append a value to the queue");
 		return retval;
+	}
 	fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	return 0;
 }
@@ -367,15 +369,10 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(NULL == instance->p2.v) {
-				if(!pending_shift(ME_A_ &instance->p2.v))
-					break;
-				instance->client_value = 1;
+			if(NULL == instance->p2.v)
+				fbr_cond_signal(&mctx->fbr,
+						&mctx->pxs.pro.pending_cond);
 
-			}
-			new_base.type = IE_A;
-			switch_instance(ME_A_ instance, IS_P1_READY_WITH_VALUE,
-					&new_base);
 			break;
 		case IE_NV:
 			nv = container_of(base, struct ie_nv, b);
