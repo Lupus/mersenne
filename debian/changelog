@@ -1,3 +1,9 @@
+mersenne (0.9-4) unstable; urgency=low
+
+  * fix daemontools run script
+
+ -- Mikhael Anisimov <manisimov@nvidia.com>  Wed, 28 May 2014 13:08:02 +0400
+
 mersenne (0.9-3) unstable; urgency=low
 
   * add mersenne-client to daemon dependencies
