@@ -285,6 +285,7 @@ int main(int argc, char *argv[])
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
+	mctx->sbuf = msgpack_sbuffer_new();
 
 	if (!RUNNING_ON_VALGRIND)
 		signal(SIGSEGV, sigsegv_handler);
@@ -332,6 +333,7 @@ int main(int argc, char *argv[])
 
 	cmdline_parser_free(&mctx->args_info);
 	free(params);
+	free(mctx->sbuf);
 
 	sm_report_leaked();
 

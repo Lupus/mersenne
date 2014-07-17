@@ -37,24 +37,23 @@
 
 	include mppr_common_decls "msgpack-proto-ragel/mppr_common.rl";
  
-#Add New validations
-#	action validate_value_length {
-#		#Compare the value length to what??
-#		if(ME_UDP_HEADER_SIZE =< mp_raw(fpc).len){
-#			elog("invalid value length: %d", mp_raw(fpc).length);
-#		}
-#	}
+	action validate_value_length {
+		if(0 >= mp_raw(fpc).size){
+			elog("empty value received");
+			fbreak;
+		}
+	}
 
 	action validate_iid_value {
-		if(0 > mp_uint(fpc)){
-			elog("iid is not greater than zero");
+		if(0 >= mp_uint(fpc)){
+			elog("iid not greater than zero");
 			fbreak;
 		}
 	}
 
 	action validate_b_value {
-		if(0 > mp_uint(fpc)){
-			elog("b is not greater than zero");
+		if(0 >= mp_uint(fpc)){
+			elog("b not greater than zero");
 			fbreak;
 		}
 	}
@@ -62,10 +61,8 @@
 	w_type = MOBJ_POS_INT;
 	iid = MOBJ_POS_INT @validate_iid_value;
 	b = MOBJ_POS_INT @validate_b_value;
-	content = MOBJ_RAW;
+	content = MOBJ_RAW @validate_value_length;
 	vb = b;
-	has_content = MOBJ_POS_INT;
-	has_vb = MOBJ_POS_INT;
 	highest_accepted = MOBJ_POS_INT;
 	highest_finalized = MOBJ_POS_INT;
 	arr_start = MOBJ_ARRAY;
@@ -83,12 +80,6 @@
 		} .
 		content @{
 			mp_raw_opt(fpc, r->value.content.data, r->value.content.len);
-		} .
-		has_content @{
-			r->value.vb = mp_uint(fpc);
-		} .
-		has_vb @{
-			r->value.has_vb = mp_uint(fpc);
 		}
 		@{ fret; };
 
@@ -135,7 +126,7 @@
 
 %% write data;
 
-int wal_msg_unpack(msgpack_object *obj, union WalRec *r, int alloc_mem, char **error_msg)
+int wal_msg_unpack(msgpack_object *obj, union wal_rec_any *r, int alloc_mem, char **error_msg)
 {
 	/* Ragel variables */
 	int cs = 0;
@@ -173,11 +164,11 @@ int wal_msg_unpack(msgpack_object *obj, union WalRec *r, int alloc_mem, char **e
 #undef mp_raw_ref
 #undef mp_raw_opt
 
-int wal_msg_pack(msgpack_packer *pk, union WalRec *u)
+int wal_msg_pack(msgpack_packer *pk, union wal_rec_any *u)
 {
-	struct WalValue *value;
-	struct WalPromise *promise;
-	struct WalState *state;
+	struct wal_value *value;
+	struct wal_promise *promise;
+	struct wal_state *state;
 	int retval;
 	#define rv(stmt) do {                  \
 			retval = (stmt);       \
@@ -196,14 +187,12 @@ int wal_msg_pack(msgpack_packer *pk, union WalRec *u)
 	switch (u->w_type) {
 	case WAL_REC_TYPE_VALUE:
 		value = &u->value;
-		mp_array(7);
+		mp_array(5);
 		mp_uint(u->w_type);
 		mp_uint(value->iid);
 		mp_uint(value->b);
 		mp_uint(value->vb);
 		mp_raw(value->content.data, value->content.len);
-		mp_uint(value->has_content);
-		mp_uint(value->has_vb);
 		break;
 	case WAL_REC_TYPE_PROMISE:
 		promise = &u->promise;
@@ -229,7 +218,7 @@ int wal_msg_pack(msgpack_packer *pk, union WalRec *u)
 	#undef rv
 }
 
-void wal_msg_free(union WalRec *u)
+void wal_msg_free(union wal_rec_any *u)
 {
 	switch (u->w_type) {
 	case WAL_REC_TYPE_VALUE:

@@ -594,11 +594,11 @@ void wal_log_sync(ME_P_ struct wal_log *log)
 		err(EXIT_FAILURE, "fdatasync failed");
 }
 
-static void wal_replay_state(ME_P_ struct WalState *wal_state)
+static void wal_replay_state(ME_P_ struct wal_state *w_state)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	ctx->highest_accepted = wal_state->highest_accepted;
-	ctx->highest_finalized = wal_state->highest_finalized;
+	ctx->highest_accepted = w_state->highest_accepted;
+	ctx->highest_finalized = w_state->highest_finalized;
 }
 
 static void store_record(ME_P_ struct acc_instance_record *record)
@@ -613,39 +613,41 @@ static void store_record(ME_P_ struct acc_instance_record *record)
 	}
 }
 
-static void wal_replay_value(ME_P_ struct WalValue *wal_value)
+static void wal_replay_value(ME_P_ struct wal_value *w_value)
 {
 	struct acc_instance_record *r;
-	acs_find_record(ME_A_ &r, wal_value->iid, ACS_FM_CREATE);
-	r->iid = wal_value->iid;
-	r->b = wal_value->b;
-	if (wal_value->has_content) {
-		if (NULL == r->v) {
-			r->v = buf_sm_copy(wal_value->content.data,
-					wal_value->content.len);
-		} else {
-			if (memcmp(r->v->ptr, wal_value->content.data,
-						r->v->size1)) {
-				sm_free(r->v);
-				r->v = buf_sm_copy(wal_value->content.data,
-						wal_value->content.len);
-			}
+
+	//Both return values of acs_find_record are okay in this context
+	acs_find_record(ME_A_ &r, w_value->iid, ACS_FM_CREATE);
+	r->iid = w_value->iid;
+	r->b = w_value->b;
+	if (NULL == r->v) {
+		r->v = buf_sm_copy(w_value->content.data,
+				w_value->content.len);
+	} else {
+		if (memcmp(r->v->ptr, w_value->content.data,
+					r->v->size1)) {
+			sm_free(r->v);
+			r->v = buf_sm_copy(w_value->content.data,
+					w_value->content.len);
 		}
-		r->vb = wal_value->vb;
 	}
+	r->vb = w_value->vb;
 	store_record(ME_A_ r);
 }
 
-static void wal_replay_promise(ME_P_ struct WalPromise *wal_promise)
+static void wal_replay_promise(ME_P_ struct wal_promise *w_promise)
 {
 	struct acc_instance_record *r;
-	acs_find_record(ME_A_ &r, wal_promise->iid, ACS_FM_CREATE);
-	r->iid = wal_promise->iid;
-	r->b = wal_promise->b;
+
+	//Both return values of acs_find_record are okay in this context
+	acs_find_record(ME_A_ &r, w_promise->iid, ACS_FM_CREATE);
+	r->iid = w_promise->iid;
+	r->b = w_promise->b;
 	store_record(ME_A_ r);
 }
 
-static void wal_replay_rec(ME_P_ union WalRec *wal_rec)
+static void wal_replay_rec(ME_P_ union wal_rec_any *wal_rec)
 {
 
 	switch (wal_rec->w_type) {
@@ -667,32 +669,25 @@ static void wal_replay_rec(ME_P_ union WalRec *wal_rec)
 static void replay_rec(ME_P_ void *ptr, size_t size)
 {
 	int retval;
-	msgpack_unpacker pac;
 	msgpack_unpacked result;
-	union WalRec wal_rec;
+	union wal_rec_any wal_rec;
 	char *error = NULL;
 
-	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
 
-	msgpack_unpacker_reserve_buffer(&pac, MSGPACK_UNPACKER_RESERVE_SIZE);
-
-	memcpy(msgpack_unpacker_buffer(&pac), ptr, msgpack_unpacker_buffer_capacity(&pac));
-
-	msgpack_unpacker_buffer_consumed(&pac, size);
-
-	while(msgpack_unpacker_next(&pac, &result)) {
+	if(msgpack_unpack_next(&result, ptr, size, 0)) {
 		retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
-
 		if(retval){
-			printf("wal_msg_unpack error: %s", error);
+			fbr_log_e(&mctx->fbr, "unable to unpack WAL record");
 			free(error);
-			exit(0);
+		}
+		else {
+			wal_replay_rec(ME_A_ &wal_rec);
+			wal_msg_free(&wal_rec);
 		}
 	}
 
-	wal_replay_rec(ME_A_ &wal_rec);
-	wal_msg_free(&wal_rec);
+	msgpack_unpacked_destroy(&result);
 }
 
 static void recover_wal(ME_P_ struct wal_log *log)
@@ -812,22 +807,22 @@ void wal_rotate(ME_P_ struct wal_log *log, struct acs_log_dir *dir)
 static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 		struct wal_log *log)
 {
-	msgpack_sbuffer *buf = msgpack_sbuffer_new();
 	msgpack_packer pk;
-	union WalRec wal_rec;
+	union wal_rec_any wal_rec;
 	int retval;
 
 	wal_rec.w_type = WAL_REC_TYPE_STATE;
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
 	wal_rec.state.highest_finalized = ctx->highest_finalized;
 
-	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	msgpack_sbuffer_init(mctx->sbuf);
+	msgpack_packer_init(&pk, mctx->sbuf, msgpack_sbuffer_write);
 	retval = wal_msg_pack(&pk, &wal_rec);
 	if(retval){
-		fbr_log_w(&mctx->fbr, "unable to pack wal_state");
+		free(mctx->sbuf);
+		errx(EXIT_FAILURE, "unable to pack wal_state");
 	}
-
-	wal_log_write(ME_A_ log, buf->data, buf->size);
+	wal_log_write(ME_A_ log, mctx->sbuf->data, mctx->sbuf->size);
 	ctx->writes_per_sync++;
 }
 
@@ -841,9 +836,8 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 		struct wal_log *log)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	msgpack_sbuffer *buf = msgpack_sbuffer_new();
 	msgpack_packer pk;
-	union WalRec wal_rec;
+	union wal_rec_any wal_rec;
 	int retval;
 
 	if (r->v) {
@@ -853,8 +847,6 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 		wal_rec.value.vb = r->vb;
 		wal_rec.value.content.data = (uint8_t *)r->v->ptr;
 		wal_rec.value.content.len = r->v->size1;
-		wal_rec.value.has_content = 1;
-		wal_rec.value.has_vb = 1;
 	}
 	else {
 		wal_rec.w_type = WAL_REC_TYPE_PROMISE;
@@ -862,14 +854,15 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 		wal_rec.promise.b = r->b;
 	}
 
-	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	msgpack_sbuffer_init(mctx->sbuf);
+	msgpack_packer_init(&pk, mctx->sbuf, msgpack_sbuffer_write);
 	retval = wal_msg_pack(&pk, &wal_rec);
 
 	if(retval){
-		fbr_log_w(&mctx->fbr, "unable to pack wal_value");
+		free(mctx->sbuf);
+		errx(EXIT_FAILURE, "unable to pack wal_value");
 	}
-
-	wal_log_write(ME_A_ log, buf->data, buf->size);
+	wal_log_write(ME_A_ log, mctx->sbuf->data, mctx->sbuf->size);
 	ctx->writes_per_sync++;
 }
 
