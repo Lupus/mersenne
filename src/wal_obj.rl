@@ -39,7 +39,7 @@
  
 	action validate_value_length {
 		if(0 >= mp_raw(fpc).size){
-			elog("empty value received");
+			elog("empty value encountered");
 			fbreak;
 		}
 	}

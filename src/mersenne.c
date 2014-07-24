@@ -285,7 +285,6 @@ int main(int argc, char *argv[])
 	struct me_context context = ME_CONTEXT_INITIALIZER;
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
-	mctx->sbuf = msgpack_sbuffer_new();
 
 	if (!RUNNING_ON_VALGRIND)
 		signal(SIGSEGV, sigsegv_handler);
@@ -331,9 +330,10 @@ int main(int argc, char *argv[])
 	fbr_cond_destroy(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	fbr_destroy(&mctx->fbr);
 
+	msgpack_sbuffer_release(mctx->pxs.acc.acs.sbuf);
+	msgpack_sbuffer_free(mctx->pxs.acc.acs.sbuf);
 	cmdline_parser_free(&mctx->args_info);
 	free(params);
-	free(mctx->sbuf);
 
 	sm_report_leaked();
 

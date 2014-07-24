@@ -60,7 +60,6 @@ struct me_context {
 	fbr_id_t fiber_proposer;
 	fbr_id_t fiber_tcp_client;
 	struct fiber_tailq learners;
-	msgpack_sbuffer *sbuf;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
