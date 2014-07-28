@@ -1,3 +1,9 @@
+mersenne (0.9-8) unstable; urgency=low
+
+  * Squashed 'evfibers/' changes from fbd1dcb..d17d37d
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Mon, 28 Jul 2014 16:57:24 +0400
+
 mersenne (0.9-7) unstable; urgency=low
 
   * Fixes for pbuilder
