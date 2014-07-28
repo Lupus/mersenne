@@ -16,6 +16,11 @@ export DH_VERBOSE=1
 # This has to be exported to make some magic below work.
 export DH_OPTIONS
 
+export CK_TIMEOUT_MULTIPLIER=25
+
+#pbuilder workaround: it does not mount tmpfs to /dev/shm
+export FBR_BUFFER_FILE_PATTERN=/tmp/pbuilder_fbr_buffer.XXXXXX
+
 
 %:
-	dh $@ 
+	dh $@
