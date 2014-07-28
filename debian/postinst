@@ -1,0 +1,21 @@
+#!/bin/bash
+
+set -e
+
+case "$1" in
+	configure)
+		id mersenne >/dev/null || /usr/sbin/useradd -s /bin/false -U -r mersenne
+
+		if [ ! -h /etc/service/mersenne ] ; then
+			ln -s /etc/mersenne /etc/service/mersenne
+		else
+			sleep $[ ( $RANDOM % 10 )  + 1 ]s
+			svc -t /etc/service/mersenne
+		fi
+		;;
+	*)
+		exit 0
+		;;
+esac
+
+exit 0

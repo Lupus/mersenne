@@ -1,0 +1,2 @@
+#!/bin/sh
+exec envuidgid mersenne multilog t s10485760 '!tai64nlocal' /var/log/mersenne

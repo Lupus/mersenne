@@ -1,0 +1,17 @@
+mersenne (0.9-3) unstable; urgency=low
+
+  * add mersenne-client to daemon dependencies
+
+ -- Mikhael Anisimov <manisimov@nvidia.com>  Tue, 27 May 2014 17:26:44 +0400
+
+mersenne (0.9-2) unstable; urgency=low
+
+  * fix missing dependencies
+
+ -- Mikhael Anisimov <manisimov@nvidia.com>  Mon, 26 May 2014 16:11:14 +0400
+
+mersenne (0.9-1) unstable; urgency=low
+
+  * Initial package compilation
+
+ -- Mikhael Anisimov <manisimov@nvidia.com>  Wed, 14 May 2014 20:03:07 +0400

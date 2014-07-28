@@ -1,0 +1,21 @@
+Source: mersenne
+Section: net
+Priority: extra
+Maintainer: Mikhael Anisimov <manisimov@nvidia.com>
+Build-Depends: debhelper (>= 8.0.0), cmake, libev-dev, libeio-dev, libprotobuf-c0-dev, protobuf-c-compiler,
+ libc-dev-bin, ragel, gengetopt, libmsgpack-dev, uuid-dev, libssl-dev, uthash-dev, valgrind, check
+Standards-Version: 3.9.4
+Homepage: https://github.com/Lupus/mersenne
+Vcs-Git: https://github.com/Lupus/mersenne.git
+
+Package: mersenne-client
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Client library for mersenne
+ Client library and example client implementation for mersenne daemon.
+
+Package: mersenne
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, daemontools, daemontools-run, mersenne-client
+Description: Distributed WAL using Paxos
+ Network service, providing distributed WAL.
