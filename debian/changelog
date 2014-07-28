@@ -1,3 +1,9 @@
+mersenne (0.9-6) unstable; urgency=low
+
+  * Merged pull requests
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Mon, 28 Jul 2014 16:44:56 +0400
+
 mersenne (0.9-5) unstable; urgency=low
 
   * fix daemontools run script
