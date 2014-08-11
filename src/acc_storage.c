@@ -675,17 +675,17 @@ static void replay_rec(ME_P_ void *ptr, size_t size)
 
 	msgpack_unpacked_init(&result);
 
-	if(msgpack_unpack_next(&result, ptr, size, NULL)) {
-		retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
-		if(retval){
-			fbr_log_e(&mctx->fbr, "unable to unpack WAL record: %s", error);
-			free(error);
-			exit(EXIT_FAILURE);
-		}
-		wal_replay_rec(ME_A_ &wal_rec);
-		wal_msg_free(&wal_rec);
+	retval = msgpack_unpack_next(&result, ptr, size, NULL);
+	if(!retval) {
+		errx(EXIT_FAILURE, "unable to deserialize WAL rec for replay");
 	}
 
+	retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
+	if(retval){
+		errx(EXIT_FAILURE, "unable to unpack WAL record for replay: %s", error);
+	}
+	wal_replay_rec(ME_A_ &wal_rec);
+	wal_msg_free(&wal_rec);
 	msgpack_unpacked_destroy(&result);
 }
 
@@ -809,19 +809,22 @@ static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 	msgpack_packer pk;
 	union wal_rec_any wal_rec;
 	int retval;
+	char *tmp_data;
+	size_t tmp_size;
+	msgpack_sbuffer *sbuf = msgpack_sbuffer_new();
 
 	wal_rec.w_type = WAL_REC_TYPE_STATE;
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
 	wal_rec.state.highest_finalized = ctx->highest_finalized;
 
-	msgpack_sbuffer_release(ctx->sbuf);
-	msgpack_packer_init(&pk, ctx->sbuf, msgpack_sbuffer_write);
+	msgpack_packer_init(&pk, sbuf, msgpack_sbuffer_write);
 	retval = wal_msg_pack(&pk, &wal_rec);
 	if(retval){
-		msgpack_sbuffer_free(ctx->sbuf);
 		errx(EXIT_FAILURE, "unable to pack wal_state");
 	}
-	wal_log_write(ME_A_ log, ctx->sbuf->data, ctx->sbuf->size);
+	tmp_size = sbuf->size;
+	tmp_data = msgpack_sbuffer_release(sbuf);
+	wal_log_write(ME_A_ log, tmp_data, tmp_size);
 	ctx->writes_per_sync++;
 }
 
@@ -838,6 +841,9 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 	msgpack_packer pk;
 	union wal_rec_any wal_rec;
 	int retval;
+	char *tmp_data;
+	size_t tmp_size;
+	msgpack_sbuffer *sbuf = msgpack_sbuffer_new();
 
 	if (r->v) {
 		wal_rec.w_type = WAL_REC_TYPE_VALUE;
@@ -853,15 +859,14 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 		wal_rec.promise.b = r->b;
 	}
 
-	msgpack_sbuffer_release(ctx->sbuf);
-	msgpack_packer_init(&pk, ctx->sbuf, msgpack_sbuffer_write);
+	msgpack_packer_init(&pk, sbuf, msgpack_sbuffer_write);
 	retval = wal_msg_pack(&pk, &wal_rec);
-
 	if(retval){
-		msgpack_sbuffer_free(ctx->sbuf);
 		errx(EXIT_FAILURE, "unable to pack wal_value");
 	}
-	wal_log_write(ME_A_ log, ctx->sbuf->data, ctx->sbuf->size);
+	tmp_size = sbuf->size;
+	tmp_data = msgpack_sbuffer_release(sbuf);
+	wal_log_write(ME_A_ log, tmp_data, tmp_size);
 	ctx->writes_per_sync++;
 }
 

@@ -330,8 +330,6 @@ int main(int argc, char *argv[])
 	fbr_cond_destroy(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	fbr_destroy(&mctx->fbr);
 
-	msgpack_sbuffer_release(mctx->pxs.acc.acs.sbuf);
-	msgpack_sbuffer_free(mctx->pxs.acc.acs.sbuf);
 	cmdline_parser_free(&mctx->args_info);
 	free(params);
 

@@ -25,7 +25,6 @@
 #include <sys/queue.h>
 #include <ev.h>
 
-#include <msgpack.h>
 #include <evfibers/fiber.h>
 #include <mersenne/leader.h>
 #include <mersenne/paxos.h>

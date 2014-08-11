@@ -27,7 +27,6 @@
 #include <uthash.h>
 #include <evfibers/fiber.h>
 
-#include <msgpack.h>
 #include <stdint.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
@@ -84,7 +83,6 @@ struct acs_context {
 	struct fbr_mutex snapshot_mutex;
 	struct fbr_mutex batch_mutex;
 	int dirty;
-	msgpack_sbuffer *sbuf;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
@@ -113,7 +111,6 @@ struct acs_context {
 	.highest_accepted = 0,         \
 	.highest_finalized = 0,        \
 	.dirty = 0,                    \
-	.sbuf = msgpack_sbuffer_new(), \
 }
 
 enum acs_find_mode {
