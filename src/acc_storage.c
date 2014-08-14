@@ -666,7 +666,7 @@ static void wal_replay_rec(ME_P_ union wal_rec_any *wal_rec)
 	}
 }
 
-static void replay_rec(ME_P_ void *ptr, size_t size)
+static void replay_rec(ME_P_ void *ptr, size_t size, int alloc)
 {
 	int retval;
 	msgpack_unpacked result;
@@ -680,12 +680,14 @@ static void replay_rec(ME_P_ void *ptr, size_t size)
 		errx(EXIT_FAILURE, "unable to deserialize WAL rec for replay");
 	}
 
-	retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
+	retval = wal_msg_unpack(&result.data, &wal_rec, alloc, &error);
 	if(retval){
 		errx(EXIT_FAILURE, "unable to unpack WAL record for replay: %s", error);
 	}
 	wal_replay_rec(ME_A_ &wal_rec);
-	wal_msg_free(&wal_rec);
+	if(alloc) {
+		wal_msg_free(&wal_rec);
+	}
 	msgpack_unpacked_destroy(&result);
 }
 
@@ -696,13 +698,14 @@ static void recover_wal(ME_P_ struct wal_log *log)
 	size_t buf_size = 0, size = 0;
 	uint64_t lsn;
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	int alloc_mem = 0;
 
 	wal_iter_open(ME_A_ &iter, log);
 	fbr_log_i(&mctx->fbr, "recovering %s", log->filename);
 
 	while ((size = wal_iter_read(ME_A_ &iter, &lsn, &ptr, &buf_size))) {
 		if (ALK_SNAP == log->dir->kind) {
-			replay_rec(ME_A_ ptr, size);
+			replay_rec(ME_A_ ptr, size, alloc_mem);
 			continue;
 		}
 		if (lsn > 0 && lsn <= ctx->confirmed_lsn) {
@@ -717,7 +720,7 @@ static void recover_wal(ME_P_ struct wal_log *log)
 					lsn, ctx->confirmed_lsn);
 			abort();
 		}
-		replay_rec(ME_A_ ptr, size);
+		replay_rec(ME_A_ ptr, size, alloc_mem);
 		ctx->confirmed_lsn = lsn;
 	}
 	wal_iter_close(ME_A_ &iter);

@@ -222,6 +222,7 @@ void wal_msg_free(union wal_rec_any *u)
 {
 	switch (u->w_type) {
 	case WAL_REC_TYPE_VALUE:
+		free(u->value.content.data);
 		break;
 	case WAL_REC_TYPE_PROMISE:
 		break;
