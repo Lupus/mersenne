@@ -47,18 +47,6 @@ if(USE_ASAN)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
 endif()
 
-set(MERSENNE_PROTO "src/acc.proto")
-add_custom_command(
-	OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
-	       "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne/acc.pb-c.h"
-	COMMAND mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne"
-	COMMAND mkdir -p "${CMAKE_CURRENT_BINARY_DIR}/src"
-	COMMAND protoc-c -I "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/${MERSENNE_PROTO}" --c_out "${CMAKE_CURRENT_BINARY_DIR}/src"
-	COMMAND cp "${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.h" "${CMAKE_CURRENT_BINARY_DIR}/include/mersenne/acc.pb-c.h"
-	DEPENDS ${MERSENNE_PROTO}
-	COMMENT "Generating Protobuf-C from ${MERSENNE_PROTO}"
-	)
-
 RPCGEN_CREATE_XDR("include/mersenne/me_protocol.x")
 set_source_files_properties("include/mersenne/me_protocol.c"
 	PROPERTIES COMPILE_FLAGS "-Wno-unused"
@@ -89,6 +77,7 @@ set(MERSENNE_SOURCES
 	)
 ragel_add_include("${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include")
 ragel_gen("src/proto.rl" RAGEL_CLI_GEN_SOURCES)
+ragel_gen("src/wal_obj.rl" RAGEL_WAL_GEN_SOURCES)
 set(MERSENNE_CLI_SOURCES
 	"src/proto.rl"
 	${RAGEL_CLI_GEN_SOURCES}
@@ -96,7 +85,7 @@ set(MERSENNE_CLI_SOURCES
 set(MERSENNE_GEN_SOURCES
 	"include/mersenne/me_protocol.h"
 	"include/mersenne/me_protocol.c"
-	"${CMAKE_CURRENT_BINARY_DIR}/src/acc.pb-c.c"
+	${RAGEL_WAL_GEN_SOURCES}
 	)
 
 add_library(mersenne_md5 STATIC
