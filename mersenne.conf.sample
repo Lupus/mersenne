@@ -1,0 +1,14 @@
+leader-delta 100
+leader-epsilon 25
+proposer-timeout-1 0.25
+proposer-timeout-2 0.25
+log-level info
+acceptor-wal-rotate 2000
+acceptor-wal-snap 5000
+proposer-instance-window 100
+learner-instance-window 1000
+max-instances 100
+#port-num 53
+acceptor-repeat-interval 2
+learner-retransmit-age 2
+acceptor-truncate 10000
