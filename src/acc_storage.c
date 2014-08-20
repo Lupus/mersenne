@@ -1173,6 +1173,10 @@ void acs_batch_finish(ME_P)
 		fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 		return;
 	}
+	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
+		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
+	else
+		wal_log_sync(ME_A_ ctx->wal);
 	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
 		assert(r->stored);
 		if (r->msg) {
@@ -1187,10 +1191,6 @@ void acs_batch_finish(ME_P)
 			r->msg = NULL;
 		}
 	}
-	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
-		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
-	else
-		wal_log_sync(ME_A_ ctx->wal);
 
 	acs_vacuum(ME_A);
 
