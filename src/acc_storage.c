@@ -56,6 +56,8 @@ struct wal_log {
 	int collecting_iov;
 	int iov_rows;
 	struct acs_context *write_context;
+	double flush_io;
+	struct acs_iov_stat stat;
 };
 
 struct wal_iter {
@@ -471,13 +473,27 @@ int wal_log_iov_need_flush(ME_P_ struct wal_log *log)
 	return kv_size(log->iov) > UIO_MAXIOV - 10;
 }
 
+static double now()
+{
+	struct timeval t;
+	int retval;
+	retval = gettimeofday(&t, NULL);
+	if (retval)
+		err(EXIT_FAILURE, "gettimeofday");
+	return t.tv_sec + t.tv_usec * 1e-6;
+}
+
 static eio_ssize_t log_flush_custom_cb(void *data)
 {
 	struct wal_log *log = data;
 	ssize_t rv;
+	double t1, t2;
+	t1 = now();
 	do {
 		rv = writev(log->fd, &kv_A(log->iov, 0), kv_size(log->iov));
 	} while (-1 == rv && EINTR == errno);
+	t2 = now();
+	log->flush_io = t2 - t1;
 	return rv;
 }
 
@@ -494,8 +510,14 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
 	if (retval < total)
 		err(EXIT_FAILURE, "writev failed");
+	log->stat.n_rows += log->iov_rows;
+	log->stat.n_buffers += kv_size(log->iov);
+	log->stat.n_bytes += total;
+	log->stat.n_useconds += (unsigned)(log->flush_io * 1e6);
+	log->stat.n_flushes++;
 	fbr_log_d(&mctx->fbr, "wrotev %d rows containing %zd buffers with %zd"
-			" bytes", log->iov_rows, kv_size(log->iov), total);
+			" bytes in %f", log->iov_rows, kv_size(log->iov),
+			total, log->flush_io);
 	log->rows += log->iov_rows;
 	for (i = 0; i < kv_size(log->iov); i++)
 		free(kv_A(log->iov, i).iov_base);
@@ -585,13 +607,30 @@ void wal_log_close(ME_P_ struct wal_log *log)
 		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
 }
 
+static eio_ssize_t log_sync_custom_cb(void *data)
+{
+	struct wal_log *log = data;
+	ssize_t rv;
+	double t1, t2;
+	t1 = now();
+	rv = fdatasync(log->fd);
+	t2 = now();
+	log->flush_io = t2 - t1;
+	return rv;
+}
+
 void wal_log_sync(ME_P_ struct wal_log *log)
 {
 	ssize_t retval;
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(WLM_RW == log->mode);
-	retval = fbr_eio_fdatasync(&mctx->fbr, log->fd, 0);
+	log->stat.n_rows += log->iov_rows;
+	retval = fbr_eio_custom(&mctx->fbr, log_sync_custom_cb, log, 0);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "fdatasync failed");
+	log->stat.n_sync_useconds = (unsigned)(log->flush_io * 1e6);
+	kv_push(struct acs_iov_stat, ctx->stats, log->stat);
+	memset(&log->stat, 0x00, sizeof(log->stat));
 }
 
 static void wal_replay_state(ME_P_ WalState *wal_state)
@@ -940,16 +979,155 @@ static void recover(ME_P)
 			ctx->highest_finalized);
 }
 
+struct stats_summary {
+	double min;
+	double p25;
+	double mean;
+	double p50;
+	double p75;
+	double p99;
+	double max;
+};
+
+struct stats_calc_arg {
+	struct acs_context *ctx;
+	struct stats_summary write_io;
+	struct stats_summary sync_io;
+	double write_speed;
+	double bytes_written;
+	unsigned count;
+};
+
+static int stat_useconds_cmp(const void *_a, const void *_b)
+{
+	const struct acs_iov_stat *a, *b;
+	a = *((struct acs_iov_stat **)_a);
+	b = *((struct acs_iov_stat **)_b);
+	return a->n_useconds - b->n_useconds;
+}
+
+static int stat_sync_useconds_cmp(const void *_a, const void *_b)
+{
+	const struct acs_iov_stat *a, *b;
+	a = *((struct acs_iov_stat **)_a);
+	b = *((struct acs_iov_stat **)_b);
+	return a->n_sync_useconds - b->n_sync_useconds;
+}
+
+static eio_ssize_t stats_calculate_cb(void *data)
+{
+	struct stats_calc_arg *arg = data;
+	struct acs_context *ctx = arg->ctx;
+	unsigned i;
+	double total_bytes = 0;
+	double total_io = 0;
+	double total_sync_io = 0;
+	const unsigned n = kv_size(ctx->stats2);
+	struct acs_iov_stat **ptr_arr;
+
+	assert(n > 0);
+	ptr_arr = calloc(n, sizeof(void *));
+	if (NULL == ptr_arr)
+		err(EXIT_FAILURE, "malloc");
+	for (i = 0; i < n; i++)
+		ptr_arr[i] = &kv_A(ctx->stats2, i);
+
+	qsort(ptr_arr, n, sizeof(void *), stat_useconds_cmp);
+	arg->write_io.min = ptr_arr[0]->n_useconds / 1e6;
+	arg->write_io.p25 = ptr_arr[(int)(0.25 * n)]->n_useconds / 1e6;
+	arg->write_io.p50 = ptr_arr[(int)(0.50 * n)]->n_useconds / 1e6;
+	arg->write_io.p75 = ptr_arr[(int)(0.75 * n)]->n_useconds / 1e6;
+	arg->write_io.p99 = ptr_arr[(int)(0.99 * n)]->n_useconds / 1e6;
+	arg->write_io.max = ptr_arr[n - 1]->n_useconds / 1e6;
+
+	qsort(ptr_arr, n, sizeof(void *), stat_sync_useconds_cmp);
+	arg->sync_io.min = ptr_arr[0]->n_sync_useconds / 1e6;
+	arg->sync_io.p25 = ptr_arr[(int)(0.25 * n)]->n_sync_useconds / 1e6;
+	arg->sync_io.p50 = ptr_arr[(int)(0.50 * n)]->n_sync_useconds / 1e6;
+	arg->sync_io.p75 = ptr_arr[(int)(0.75 * n)]->n_sync_useconds / 1e6;
+	arg->sync_io.p99 = ptr_arr[(int)(0.99 * n)]->n_sync_useconds / 1e6;
+	arg->sync_io.max = ptr_arr[n - 1]->n_sync_useconds / 1e6;
+
+	for (i = 0; i < n; i++) {
+		total_bytes += kv_A(ctx->stats2, i).n_bytes;
+		total_io += kv_A(ctx->stats2, i).n_useconds / 1e6;
+		total_sync_io += kv_A(ctx->stats2, i).n_sync_useconds / 1e6;
+	}
+	arg->write_io.mean = total_io / n;
+	arg->sync_io.mean = total_sync_io / n;
+	arg->bytes_written = total_bytes;
+	arg->write_speed = total_bytes / (total_io + total_sync_io);
+	arg->count = n;
+	free(ptr_arr);
+	return 0;
+}
+
+static inline void report_stats(ME_P_ struct stats_calc_arg *arg)
+{
+	fbr_log_d(&mctx->fbr, "collected %d data points", arg->count);
+	fbr_log_i(&mctx->fbr, "base io min=%f p25=%f mean=%f p50=%f"
+			" p75=%f p99=%f max=%f",
+			arg->write_io.min, arg->write_io.p25,
+			arg->write_io.mean, arg->write_io.p50,
+			arg->write_io.p75, arg->write_io.p99,
+			arg->write_io.max);
+	fbr_log_i(&mctx->fbr, "sync io min=%f p25=%f mean=%f p50=%f"
+			" p75=%f p99=%f max=%f",
+			arg->sync_io.min, arg->sync_io.p25,
+			arg->sync_io.mean, arg->sync_io.p50,
+			arg->sync_io.p75, arg->sync_io.p99,
+			arg->sync_io.max);
+	fbr_log_i(&mctx->fbr, "sync write speed %f MB/s",
+			arg->write_speed / 1e6);
+}
+
+static void stats_fiber(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	struct acs_context *ctx;
+	ssize_t retval;
+	kvec_t(struct acs_iov_stat) stats_tmp;
+	struct stats_calc_arg arg;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ctx = &mctx->pxs.acc.acs;
+
+	arg.ctx = ctx;
+	for (;;) {
+		fbr_sleep(&mctx->fbr, 60);
+		memcpy(&stats_tmp, &ctx->stats, sizeof(stats_tmp));
+		memcpy(&ctx->stats, &ctx->stats2, sizeof(stats_tmp));
+		memcpy(&ctx->stats2, &stats_tmp, sizeof(stats_tmp));
+		if (0 == kv_size(ctx->stats2))
+			goto skip;
+		retval = fbr_eio_custom(&mctx->fbr, stats_calculate_cb, &arg,
+				0);
+		if (retval)
+			err(EXIT_FAILURE, "stats failed");
+		report_stats(ME_A_ &arg);
+skip:
+		kv_size(ctx->stats2) = 0;
+	}
+}
+
 void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	fbr_id_t stats_fiber_id;
 	fbr_mutex_init(&mctx->fbr, &ctx->snapshot_mutex);
 	fbr_mutex_init(&mctx->fbr, &ctx->batch_mutex);
 	fbr_cond_init(&mctx->fbr, &ctx->highest_finalized_changed);
 	ctx->wal = malloc(sizeof(*ctx->wal));
 	if (NULL == ctx->wal)
 		err(EXIT_FAILURE, "malloc");
+	kv_init(ctx->stats);
+	kv_resize(struct acs_iov_stat, ctx->stats, 1024);
+	kv_init(ctx->stats2);
+	kv_resize(struct acs_iov_stat, ctx->stats2, 1024);
 	recover(ME_A);
+	stats_fiber_id = fbr_create(&mctx->fbr, "acceptor/stats",
+			stats_fiber, NULL, 0);
+	fbr_transfer(&mctx->fbr, stats_fiber_id);
 }
 
 

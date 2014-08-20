@@ -28,6 +28,7 @@
 #include <evfibers/fiber.h>
 
 #include <stdint.h>
+#include <mersenne/kvec.h>
 #include <mersenne/context_fwd.h>
 #include <mersenne/buffer.h>
 
@@ -65,6 +66,15 @@ struct acs_log_dir {
 
 struct wal_log;
 
+struct acs_iov_stat {
+	unsigned n_rows;
+	unsigned n_buffers;
+	unsigned n_bytes;
+	unsigned n_useconds;
+	unsigned n_flushes;
+	unsigned n_sync_useconds;
+};
+
 struct acs_context {
 	struct acs_log_dir wal_dir;
 	struct acs_log_dir snap_dir;
@@ -83,6 +93,8 @@ struct acs_context {
 	struct fbr_mutex snapshot_mutex;
 	struct fbr_mutex batch_mutex;
 	int dirty;
+	kvec_t(struct acs_iov_stat) stats;
+	kvec_t(struct acs_iov_stat) stats2;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
