@@ -876,7 +876,12 @@ void pro_start(ME_P)
 {
 	if (!fbr_id_isnull(mctx->fiber_proposer))
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
-	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber, NULL, 0);
+	if (0 == mctx->pxs.pro.last_used_ballot) {
+		ev_now_update(mctx->loop);
+		mctx->pxs.pro.last_used_ballot = ev_now(mctx->loop) * 1e6;
+	}
+	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber,
+			NULL, 0);
 	assert(!fbr_id_isnull(mctx->fiber_proposer));
 	fbr_transfer(&mctx->fbr, mctx->fiber_proposer);
 }
