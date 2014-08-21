@@ -1174,7 +1174,6 @@ void acs_initialize(ME_P)
 	fbr_transfer(&mctx->fbr, stats_fiber_id);
 }
 
-
 void acs_batch_start(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
@@ -1362,6 +1361,7 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(record->iid > ctx->highest_finalized);
+	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);
 	assert(0 == record->is_cow);

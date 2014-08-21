@@ -255,7 +255,7 @@ static void do_delivered_value(ME_P_ uint64_t iid, uint64_t vb,
 
 	if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_CREATE)) {
 		r->iid = iid;
-		r->b = 0ULL;
+		r->b = vb;
 		r->v = sm_in_use(buffer);
 		r->vb = vb;
 		fbr_log_d(&mctx->fbr, "writing value for missing instance #%ld"
@@ -271,7 +271,7 @@ static void do_delivered_value(ME_P_ uint64_t iid, uint64_t vb,
 						" for existing instance #%ld"
 						" ballot %ld", iid, vb);
 			}
-			r->b = 0ULL;
+			r->b = vb;
 			sm_free(r->v);
 			r->vb = vb;
 			r->v = sm_in_use(buffer);
