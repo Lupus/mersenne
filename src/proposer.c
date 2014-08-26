@@ -314,12 +314,20 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					"from peer #%d", p->data->i,
 					p->data->vb, p->from->index);
 			if (p->data->v && p->data->vb > instance->p1.vb) {
-				if(instance->p1.v) sm_free(instance->p1.v);
+				if (instance->p1.v)
+					sm_free(instance->p1.v);
+				fbr_log_d(&mctx->fbr, "Found vb %lu greater"
+						" than current vb %lu for"
+						" instalce %lu, new value is"
+						" ``%.*s'' size %d",
+						p->data->vb,
+						instance->p1.vb,
+						instance->iid,
+						(unsigned)p->data->v->size1,
+						p->data->v->ptr,
+						p->data->v->size1);
 				instance->p1.v = buf_sm_steal(p->data->v);
 				instance->p1.vb = p->data->vb;
-				fbr_log_d(&mctx->fbr, "Found safe value for instance "
-						"%lu at vb %lu", p->data->i,
-						p->data->vb);
 			}
 			bm_set_bit(instance->p1.acks, p->from->index, 1);
 			num = bm_hweight(instance->p1.acks);
@@ -328,8 +336,9 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 				if (NULL != instance->p1.v) {
 					fbr_log_d(&mctx->fbr, "Collected %d"
 							" responses, safe"
-							" value has been found",
-							num);
+							" value has been found"
+							" for instance %lu",
+							num, p->data->i);
 					new_base.type = IE_R1;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_WITH_VALUE,
@@ -337,7 +346,9 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 				} else {
 					fbr_log_d(&mctx->fbr, "Collected %d"
 							" responses, no safe"
-							" value found", num);
+							" value found for"
+							" instance %lu", num,
+							p->data->i);
 					new_base.type = IE_R0;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_NO_VALUE,
@@ -350,6 +361,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					"#%lu at ballot #%lu", instance->iid,
 					instance->b);
 			bm_clear_all(instance->p1.acks);
+			instance->p1.vb = 0;
 			instance->b = new_ballot(ME_A);
 			send_prepare(ME_A_ instance);
 			ev_timer_set(&instance->timer, 0., TO1);

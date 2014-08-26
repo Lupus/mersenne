@@ -290,18 +290,21 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		ack->b = data->b;
 		assert(buf->size1 > 0);
 		ack->v = sm_in_use(buf);
-		fbr_log_d(&mctx->fbr, "assigning initial value for this ack");
+		fbr_log_d(&mctx->fbr, "assigning initial value for this ack in"
+				" instance %lu", instance->iid);
 	} else {
 		if (data->b <= ack->b) {
 			fbr_log_d(&mctx->fbr, "data->b (%lu) is <= ack->b"
-					" (%lu), discarding", data->b, ack->b);
+					" (%lu) in instance %lu, discarding",
+					data->b, ack->b, instance->iid);
 			return;
 		}
 		ack->b = data->b;
 		sm_free(ack->v);
 		assert(buf->size1 > 0);
 		ack->v = sm_in_use(buf);
-		fbr_log_d(&mctx->fbr, "replacing an old value for this ack");
+		fbr_log_d(&mctx->fbr, "replacing an old value for this ack in"
+				" instance %lu", instance->iid);
 	}
 	num = count_acks(ME_A_ instance->acks);
 	if (!pxs_is_acc_majority(ME_A_ num)) {
@@ -314,13 +317,17 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 			sizeof(struct lea_ack), ack_eq);
 	if (NULL == maj_ack) {
 		fbr_log_d(&mctx->fbr, "unable to find majority element among"
-				" acks");
+				" acks for instance %lu", instance->iid);
 		return;
 	}
 close_instance:
 	instance->closed = 1;
 	instance->chosen = maj_ack;
-	fbr_log_d(&mctx->fbr, "instance %lu is now closed", data->i);
+	fbr_log_d(&mctx->fbr, "instance %lu is now closed at ballot %lu with"
+			" value ``%.*s'' size %d", instance->iid,
+			instance->chosen->b,
+			(unsigned)instance->chosen->v->size1,
+			instance->chosen->v->ptr, instance->chosen->v->size1);
 	try_deliver(ME_A_ context);
 }
 

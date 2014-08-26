@@ -199,9 +199,15 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	} else if (0 != buf_cmp(r->v, data->v)) {
 		fbr_log_d(&mctx->fbr, "Replacing value for instance %lu"
 				" ballot %lu", r->iid, r->b);
+		fbr_log_d(&mctx->fbr, "old value for instance %lu"
+				" was ``%.*s'', size %d", r->iid,
+				(unsigned)r->v->size1, r->v->ptr, r->v->size1);
 		sm_free(r->v);
 		r->v = buf_sm_steal(data->v);
 		assert(r->v->size1 > 0);
+		fbr_log_d(&mctx->fbr, "new value for instance %lu"
+				" is ``%.*s'', size %d", r->iid,
+				(unsigned)r->v->size1, r->v->ptr, r->v->size1);
 	}
 	if (r->iid > acs_get_highest_accepted(ME_A))
 		acs_set_highest_accepted(ME_A_ r->iid);
