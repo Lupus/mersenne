@@ -35,6 +35,7 @@ struct connection_fiber_arg {
 	int fd;
 	struct fbr_mutex *mutex;
 	uint64_t starting_iid;
+	struct sockaddr_in addr;
 };
 
 static int tcp_cork(ME_P_ int fd)
@@ -309,9 +310,13 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 	if (0 == arg->starting_iid) {
 		fbr_log_i(&mctx->fbr, "requested start from recent instance");
 		arg->starting_iid = acs_get_highest_finalized(ME_A) + 1;
+		fbr_log_i(&mctx->fbr, "picked latest iid %lu",
+				arg->starting_iid);
 	}
 	if (arg->starting_iid < acs_get_lowest_available(ME_A)) {
 		fbr_log_i(&mctx->fbr, "requested instance is unavailable");
+		fbr_log_i(&mctx->fbr, "lowest available is %lu",
+				acs_get_lowest_available(ME_A));
 		retval = send_error(ME_A_ arg, ME_CME_IID_UNAVAILABLE);
 		if (retval)
 			fbr_log_w(&mctx->fbr, "failed to send error message to"
@@ -340,7 +345,9 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_id_t leader_change;
 	int informer_started = 0;
 	char *error = NULL;
+	char client_ip_str[INET_ADDRSTRLEN] = {0};
 
+	inet_ntop(AF_INET, &arg.addr.sin_addr, client_ip_str, INET_ADDRSTRLEN);
        	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
@@ -352,7 +359,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		goto conn_finish;
 	}
 
-	fbr_log_i(&mctx->fbr, "Connection fiber has started");
+	fbr_log_i(&mctx->fbr, "Connection fiber has started, client %s",
+			client_ip_str);
 
 	retval = send_server_hello(ME_A_ &arg);
 	if (retval)
@@ -425,7 +433,8 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 conn_finish:
 	msgpack_unpacker_destroy(&pac);
-	fbr_log_i(&mctx->fbr, "Connection fiber has finished");
+	fbr_log_i(&mctx->fbr, "Connection fiber has finished, client %s",
+			client_ip_str);
 	close(fd);
 }
 
@@ -433,10 +442,9 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	int sockfd;
-	struct sockaddr_in addr;
-	socklen_t addrlen = sizeof(addr);
 	fbr_id_t fiber;
 	struct connection_fiber_arg arg;
+	socklen_t addrlen = sizeof(arg.addr);
 	struct fbr_mutex fd_mutex;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -445,7 +453,7 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	for (;;) {
 		sockfd = fbr_accept(&mctx->fbr, mctx->client_tcp_fd,
-				(struct	sockaddr *)&addr, &addrlen);
+				(struct	sockaddr *)&arg.addr, &addrlen);
 		if (-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed on tcp socket");
 		arg.fd = sockfd;
