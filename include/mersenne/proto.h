@@ -7,6 +7,7 @@ enum me_cli_message_type {
 	ME_CMT_REDIRECT = 2,
 	ME_CMT_SERVER_HELLO = 1000,
 	ME_CMT_CLIENT_HELLO = 1001,
+	ME_CMT_ERROR = 1002,
 };
 
 struct me_cli_new_value {
@@ -41,6 +42,16 @@ struct me_cli_client_hello {
 	uint64_t starting_iid;
 };
 
+enum me_cli_error_code {
+	ME_CME_SUCCESS = 0,
+	ME_CME_IID_UNAVAILABLE,
+};
+
+struct me_cli_error {
+	enum me_cli_message_type m_type;
+	enum me_cli_error_code code;
+};
+
 union me_cli_any {
 	enum me_cli_message_type m_type;
 	struct me_cli_new_value new_value;
@@ -48,6 +59,7 @@ union me_cli_any {
 	struct me_cli_redirect redirect;
 	struct me_cli_server_hello server_hello;
 	struct me_cli_client_hello client_hello;
+	struct me_cli_error error;
 };
 
 int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *msg);

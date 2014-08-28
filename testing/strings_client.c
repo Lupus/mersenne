@@ -487,7 +487,10 @@ static int send_client_hello(struct client_context *cc)
 	ssize_t retval;
 
 	me_msg.m_type = ME_CMT_CLIENT_HELLO;
-	me_msg.client_hello.starting_iid = cc->last_iid + 1;
+	if (0 == cc->last_iid)
+		me_msg.client_hello.starting_iid = 0;
+	else
+		me_msg.client_hello.starting_iid = cc->last_iid + 1;
 	fbr_log_d(&cc->fbr, "sending client hello, starting iid = %ld",
 			me_msg.client_hello.starting_iid);
 	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
@@ -579,6 +582,13 @@ on_redirect:
 				fbr_cond_broadcast(&cc->fbr,
 						&cc->conn_init_cond);
 				fbr_log_d(&cc->fbr, "initialized connection");
+				break;
+			case ME_CMT_ERROR:
+				fbr_log_e(&cc->fbr, "error code %d received",
+						u.error.code);
+				shutdown(cc->fd, SHUT_RDWR);
+				close(cc->fd);
+				exit(EXIT_FAILURE);
 				break;
 			default:
 				errx(EXIT_FAILURE, "unexpected message");

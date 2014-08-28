@@ -117,6 +117,12 @@
 		}
 		@{ fret; };
 
+	m_error :=
+		MOBJ_POS_INT @{
+			r->error.code = mp_uint(fpc);
+		}
+		@{ fret; };
+
 
 	action dispatch_m_type {
 		r->m_type = mp_uint(fpc);
@@ -135,6 +141,9 @@
 			break;
 		case ME_CMT_CLIENT_HELLO:
 			fcall m_client_hello;
+			break;
+		case ME_CMT_ERROR:
+			fcall m_error;
 			break;
 		default:
 			elog("invalid message type: %ld", mp_uint(fpc));
@@ -196,6 +205,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 	struct me_cli_redirect  *redirect;
 	struct me_cli_server_hello *server_hello;
 	struct me_cli_client_hello *client_hello;
+	struct me_cli_error *error;
 	int retval;
 	unsigned int i;
 	#define rv(stmt) do {                  \
@@ -249,6 +259,12 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 		mp_uint(u->m_type);
 		mp_uint(client_hello->starting_iid);
 		break;
+	case ME_CMT_ERROR:
+		error = &u->error;
+		mp_array(2);
+		mp_uint(u->m_type);
+		mp_uint(error->code);
+		break;
 	}
 	return 0;
 	#undef mp_array
@@ -283,6 +299,8 @@ void me_cli_msg_free(union me_cli_any *u)
 		free(server_hello->peers);
 		break;
 	case ME_CMT_CLIENT_HELLO:
+		break;
+	case ME_CMT_ERROR:
 		break;
 	}
 }

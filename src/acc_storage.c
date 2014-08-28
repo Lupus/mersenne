@@ -654,6 +654,7 @@ static void store_record(ME_P_ struct acc_instance_record *record)
 
 static void wal_replay_value(ME_P_ struct wal_value *w_value)
 {
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r;
 
 	//Both return values of acs_find_record are okay in this context
@@ -673,6 +674,8 @@ static void wal_replay_value(ME_P_ struct wal_value *w_value)
 	}
 	r->vb = w_value->vb;
 	store_record(ME_A_ r);
+	if (0 == ctx->lowest_available)
+		ctx->lowest_available = r->iid;
 }
 
 static void wal_replay_promise(ME_P_ struct wal_promise *w_promise)
@@ -947,6 +950,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 
 	/* Write the snapshot */
+	fbr_log_i(&mctx->fbr, "started writing snapshot for %lu", lsn);
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
 	if (-1 == retval)
 		errx(EXIT_FAILURE, "unable to create a new snashot");
@@ -970,6 +974,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	wal_log_close(ME_A_ &snap);
 	ctx->snap_dir.max_lsn = lsn;
 	ctx->snapshot_fiber = FBR_ID_NULL;
+	fbr_log_i(&mctx->fbr, "finished writing snapshot for %lu", lsn);
 }
 
 static void create_snapshot(ME_P)
@@ -1019,8 +1024,9 @@ static void recover(ME_P)
 	recover_snapshot(ME_A);
 	recover_remaining_wals(ME_A);
 	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepter = %zd,"
-			" highest finalized = %zd", ctx->highest_accepted,
-			ctx->highest_finalized);
+			" highest finalized = %zd, lowest available = %zd",
+			ctx->highest_accepted, ctx->highest_finalized,
+			ctx->lowest_available);
 }
 
 struct stats_summary {
@@ -1262,6 +1268,12 @@ uint64_t acs_get_highest_finalized(ME_P)
 	return mctx->pxs.acc.acs.highest_finalized;
 }
 
+uint64_t acs_get_lowest_available(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	return ctx->lowest_available ?: 1;
+}
+
 void acs_set_highest_finalized(ME_P_ uint64_t iid)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
@@ -1283,6 +1295,8 @@ void acs_vacuum(ME_P)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r, *x;
 	int trunc, threshold;
+	uint64_t max_truncated = 0;
+	unsigned n_truncated = 0;
 	trunc = mctx->args_info.acceptor_truncate_arg;
 	threshold = trunc * (1 + mctx->args_info.acceptor_truncate_margin_arg);
 
@@ -1297,11 +1311,20 @@ void acs_vacuum(ME_P)
 			continue;
 		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
 		HASH_DEL(ctx->instances, r);
+		if (r->iid > max_truncated)
+			max_truncated = r->iid;
 		if (!r->is_cow) {
 			sm_free(r->v);
 			free(r);
 		}
+		n_truncated++;
 	}
+	if (!n_truncated)
+		return;
+	ctx->lowest_available = max_truncated + 1;
+	fbr_log_i(&mctx->fbr, "vacuumed the state up to instance %ld",
+			ctx->lowest_available);
+	fbr_log_i(&mctx->fbr, "%d instances disposed", n_truncated);
 }
 
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,

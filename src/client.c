@@ -256,6 +256,76 @@ static int send_server_hello(ME_P_ struct connection_fiber_arg *arg)
 	return 0;
 }
 
+static int conn_new_value(ME_P_ struct connection_fiber_arg *arg,
+		struct fbr_buffer *pro_buf, union me_cli_any *u)
+{
+	ssize_t retval;
+	if (!ldr_is_leader(ME_A))
+		redirect_client(ME_A_ arg);
+
+	retval = process_message(ME_A_ &u->new_value, pro_buf);
+	if (retval)
+		return -1;
+	return 0;
+}
+
+static int send_error(ME_P_ struct connection_fiber_arg *arg,
+		enum me_cli_error_code code)
+{
+	msgpack_sbuffer *buf = msgpack_sbuffer_new();
+	msgpack_packer pk;
+	union me_cli_any me_msg;
+	ssize_t retval;
+
+	me_msg.m_type = ME_CMT_ERROR;
+	me_msg.error.code = code;
+	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
+	retval = me_cli_msg_pack(&pk, &me_msg);
+	if (retval)
+		return retval;
+
+	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_log_d(&mctx->fbr, "writing error message to the client, code %d",
+			code);
+	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
+	fbr_log_d(&mctx->fbr, "finished writing error message");
+	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	if (retval < buf->size) {
+		msgpack_sbuffer_free(buf);
+		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
+				strerror(errno));
+		return -1;
+	}
+	msgpack_sbuffer_free(buf);
+	return 0;
+}
+
+static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
+		union me_cli_any *u)
+{
+	fbr_id_t informer;
+	arg->starting_iid = u->client_hello.starting_iid;
+	int retval;
+	if (0 == arg->starting_iid) {
+		fbr_log_i(&mctx->fbr, "requested start from recent instance");
+		arg->starting_iid = acs_get_highest_finalized(ME_A) + 1;
+	}
+	if (arg->starting_iid < acs_get_lowest_available(ME_A)) {
+		fbr_log_i(&mctx->fbr, "requested instance is unavailable");
+		retval = send_error(ME_A_ arg, ME_CME_IID_UNAVAILABLE);
+		if (retval)
+			fbr_log_w(&mctx->fbr, "failed to send error message to"
+					" the client");
+		return -1;
+	}
+	fbr_log_i(&mctx->fbr, "starting informer fiber at instance %ld",
+			arg->starting_iid);
+	informer = fbr_create(&mctx->fbr, "client/informer",
+			client_informer_fiber, arg, 0);
+	fbr_transfer(&mctx->fbr, informer);
+	return 0;
+}
+
 static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
@@ -267,7 +337,6 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	union me_cli_any u;
 	ssize_t retval;
 	struct fbr_buffer *pro_buf;
-	fbr_id_t informer;
 	fbr_id_t leader_change;
 	int informer_started = 0;
 	char *error = NULL;
@@ -334,28 +403,17 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 
 			switch(u.m_type) {
 			case ME_CMT_NEW_VALUE:
-				if (!ldr_is_leader(ME_A))
-					redirect_client(ME_A_ &arg);
-
-				retval = process_message(ME_A_ &u.new_value,
-						pro_buf);
+				retval = conn_new_value(ME_A_ &arg, pro_buf,
+						&u);
 				if (retval)
 					goto conn_finish;
 				break;
 			case ME_CMT_CLIENT_HELLO:
 				if (informer_started)
 					continue;
-				arg.starting_iid = u.client_hello.starting_iid;
-				if (0 == arg.starting_iid)
-					arg.starting_iid = 1;
-				fbr_log_d(&mctx->fbr, "starting informer fiber"
-						" at instance %ld",
-						arg.starting_iid);
-				informer = fbr_create(&mctx->fbr,
-						"client/informer",
-						client_informer_fiber, &arg, 0);
-				fbr_transfer(&mctx->fbr, informer);
-
+				retval = conn_client_hello(ME_A_ &arg, &u);
+				if (retval)
+					goto conn_finish;
 				informer_started = 1;
 				break;
 			default:
