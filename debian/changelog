@@ -1,3 +1,17 @@
+mersenne (0.9-9) unstable; urgency=low
+
+  * Fixed inconsistencies amongst the replicas
+  * Merge pull request #2 from Jay-sun/master --- MessagePack in WAL records
+  * Moved log sync before message queue flushing
+  * Fixed zero ballot numbers
+  * Fixed first ballot picked by proposer to not be zero
+  * Added simple script to test wal corruption
+  * Collection & log dump of some acceptor storage stats
+  * Introduced lowest available instance
+  * Added client ip to the log
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Mon, 01 Sep 2014 11:28:48 +0400
+
 mersenne (0.9-8) unstable; urgency=low
 
   * Squashed 'evfibers/' changes from fbd1dcb..d17d37d
