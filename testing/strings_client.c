@@ -30,6 +30,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <execinfo.h>
 #include <sys/un.h>
 #include <uuid/uuid.h>
 
@@ -37,13 +38,16 @@
 #include <mersenne/proto.h>
 #include <mersenne/md5.h>
 
+#include <cmdline.h>
+#include "paxos.h"
+
 #define HASH_FIND_BUFFER(head,buffer,out) \
 	HASH_FIND(hh,head,(buffer)->ptr,(buffer)->size,out)
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size,add)
 
 #define VALUE_TO 1.0
-#define VALUE_SIZE 1400
+#define VALUE_SIZE 1350
 
 struct buffer {
 	char *ptr;
@@ -52,7 +56,6 @@ struct buffer {
 
 struct my_value {
 	struct buffer *buf;
-	struct ev_timer timer;
 	int timed_out;
 	int nreceived;
 	int nsent;
@@ -93,7 +96,11 @@ struct client_context {
 	uint64_t last_iid;
 	int last_value_id;
 	fbr_id_t reader;
+	struct gengetopt_args_info args_info;
+	struct me_cli_connection *conn;
 };
+
+static int wait_for_debugger;
 
 static struct timespec diff(struct timespec start, struct timespec end)
 {
@@ -117,69 +124,6 @@ static void randomize_buffer(struct buffer *buffer)
 		/* ASCII characters 33 to 126 */
 		buffer->ptr[i] = rand() % (126 - 33 + 1) + 33;
 	}
-}
-
-static void wait_conn_initialize(struct client_context *cc)
-{
-	struct fbr_mutex mutex;
-
-	if (cc->conn_initialized)
-		return;
-
-	fbr_mutex_init(&cc->fbr, &mutex);
-
-	while (!cc->conn_initialized) {
-		fbr_mutex_lock(&cc->fbr, &mutex);
-		fbr_cond_wait(&cc->fbr, &cc->conn_init_cond, &mutex);
-		fbr_mutex_unlock(&cc->fbr, &mutex);
-	}
-
-	fbr_mutex_destroy(&cc->fbr, &mutex);
-}
-
-static void submit_value(struct client_context *cc, struct my_value *value)
-{
-	msgpack_sbuffer *buf = msgpack_sbuffer_new();
-	msgpack_packer pk;
-	union me_cli_any me_msg;
-	ssize_t retval;
-
-	me_msg.m_type = ME_CMT_NEW_VALUE;
-	me_msg.new_value.buf = value->buf->ptr;
-	me_msg.new_value.size = value->buf->size;
-	uuid_generate_time(me_msg.new_value.request_id);
-	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
-	retval = me_cli_msg_pack(&pk, &me_msg);
-	if (retval)
-		errx(EXIT_FAILURE, "failed to pack a message");
-
-	wait_conn_initialize(cc);
-
-	fbr_mutex_lock(&cc->fbr, cc->mutex);
-	assert(buf->size > 0);
-	fbr_log_d(&cc->fbr, "writing value #%d to the socket...",
-			value->value_id);
-	//printf("trying to write...\n");
-	value->nsent++;
-	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
-	if (retval < (ssize_t)buf->size) {
-		warn("submit_value(): fbr_write_all() failed");
-		fbr_mutex_unlock(&cc->fbr, cc->mutex);
-		return;
-	}
-	fbr_log_d(&cc->fbr, "finished writing value to the socket");
-	fbr_mutex_unlock(&cc->fbr, cc->mutex);
-	msgpack_sbuffer_free(buf);
-	ev_now_update(cc->loop);
-	value->sent = ev_now(cc->loop);
-	/*
-	if (1 == value->nsent)
-		printf("%f\tsubmitted value #%d\n", ev_now(cc->loop),
-				value->value_id);
-	else
-		printf("%f\tsubmitted value #%d (+%d)\n", ev_now(cc->loop),
-				value->value_id, value->nsent - 1);
-	*/
 }
 
 static void client_finished(struct client_context *cc)
@@ -211,16 +155,6 @@ static void client_finished(struct client_context *cc)
 	printf("==========================================\n");
 }
 
-static void value_timeout_cb(EV_P_ ev_timer *w, int revents)
-{
-	struct client_context *cc = (struct client_context *)w->data;
-	struct my_value *value;
-	value = fbr_container_of(w, struct my_value, timer);
-	value->timed_out = 1;
-	fbr_cond_signal(&cc->fbr, &cc->timeouts_cond);
-}
-
-
 static struct my_value *new_value(struct client_context *cc)
 {
 	struct my_value *value;
@@ -230,8 +164,6 @@ static struct my_value *new_value(struct client_context *cc)
 	unsigned header_length;
 	unsigned l;
 	value = calloc(1, sizeof(struct my_value));
-	ev_timer_init(&value->timer, value_timeout_cb, VALUE_TO, VALUE_TO);
-	value->timer.data = cc;
 	value->buf = malloc(sizeof(struct buffer));
 	value->buf->ptr = calloc(1, VALUE_SIZE + 1);
 	value->buf->size = VALUE_SIZE;
@@ -256,8 +188,8 @@ static struct my_value *new_value(struct client_context *cc)
 static void report_other(struct client_context *cc, struct buffer *buf,
 		uint64_t iid)
 {
-	printf("Other value received at iid %lu: ```%.*s'''\n", iid,
-					(unsigned)buf->size, buf->ptr);
+	fbr_log_d(&cc->fbr, "Other value received at iid %lu: ```%.*s'''\n",
+			iid, (unsigned)buf->size, buf->ptr);
 	cc->stats.other++;
 }
 
@@ -314,8 +246,8 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 		cc->stats.duplicates++;
 		value->nreceived++;
 		if (value->nreceived > value->nsent) {
-			printf("Extra value received for #%d: %d > %d, "
-					"last iid was %ld, new is %ld\n",
+			fbr_log_n(&cc->fbr, "Extra value received for #%d: %d >"
+					" %d, last iid was %ld, new is %ld\n",
 					value->value_id, value->nreceived,
 					value->nsent, value->last_iid, iid);
 			cc->stats.extra_values++;
@@ -337,15 +269,9 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	cc->stats.received++;
 	ev_now_update(cc->loop);
 	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
-	ev_timer_stop(cc->loop, &value->timer);
 	value->timed_out = 0;
 	free(value->buf->ptr);
 	free(value->buf);
-
-	value = new_value(cc);
-	record_value(cc, value);
-	submit_value(cc, value);
-	ev_timer_start(cc->loop, &value->timer);
 }
 
 static void run_timeout_cb(EV_P_ ev_timer *w, int revents)
@@ -353,256 +279,6 @@ static void run_timeout_cb(EV_P_ ev_timer *w, int revents)
 	struct client_context *cc = (struct client_context *)w->data;
 	client_finished(cc);
 	ev_break(cc->loop, EVBREAK_ALL);
-}
-
-static void tcp_nodelay(int fd)
-{
-	static int yes = 1;
-	int retval;
-	retval = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
-	if (retval)
-		err(EXIT_FAILURE, "setsockopt(TCP_NODELAY)");
-}
-
-static void reconnect_to_any_online_l(struct client_context *cc, int lock)
-{
-	int retval;
-	unsigned int i;
-	unsigned int retries = 0;
-	const char *saddr;
-
-	if (lock)
-		fbr_mutex_lock(&cc->fbr, cc->mutex);
-
-	if (0 == cc->peer_count)
-		errx(EXIT_FAILURE, "No peers to reconnect");
-
-retry:
-	for (i = 0; i < cc->peer_count; i++) {
-		cc->conn_initialized = 0;
-		shutdown(cc->fd, SHUT_RDWR);
-		close(cc->fd);
-
-		if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-			err(EXIT_FAILURE, "failed to create a client socket");
-
-		if (fbr_fd_nonblock(&cc->fbr, cc->fd))
-			err(EXIT_FAILURE, "fbr_fd_nonblock");
-
-		saddr = inet_ntoa(cc->peers[i].sin_addr);
-		fbr_log_d(&cc->fbr, "connecting to %s...", saddr);
-		retval = fbr_connect(&cc->fbr, cc->fd, (void *)&cc->peers[i],
-				sizeof(cc->peers[i]));
-		if (-1 == retval) {
-			fbr_log_d(&cc->fbr, "connection to %s failed: %s",
-					saddr, strerror(errno));
-			continue;
-		}
-		fbr_log_d(&cc->fbr, "connected to %s", saddr);
-		tcp_nodelay(cc->fd);
-		fbr_mutex_unlock(&cc->fbr, cc->mutex);
-		return;
-	}
-	retries++;
-	if (retries > 5)
-		errx(EXIT_FAILURE, "unable to reconnect to any online instance");
-	fbr_sleep(&cc->fbr, 1.0);
-	goto retry;
-}
-
-static void reconnect_to_any_online(struct client_context *cc)
-{
-	cc->conn_initialized = 0;
-	reconnect_to_any_online_l(cc, 1);
-}
-
-static void reconnect(struct client_context *cc, const char *ip)
-{
-	int retval;
-	struct sockaddr_in addr;
-
-	fbr_mutex_lock(&cc->fbr, cc->mutex);
-	cc->conn_initialized = 0;
-	shutdown(cc->fd, SHUT_RDWR);
-	close(cc->fd);
-
-	memset(&addr, 0, sizeof(addr));
-	addr.sin_family = AF_INET;
-
-	retval = inet_aton(ip, &addr.sin_addr);
-	if (0 == retval)
-		errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
-
-	addr.sin_port = cc->initial_port;
-
-	if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-		err(EXIT_FAILURE, "failed to create a client socket");
-
-	if (fbr_fd_nonblock(&cc->fbr, cc->fd))
-		err(EXIT_FAILURE, "fbr_fd_nonblock");
-
-	fbr_log_d(&cc->fbr, "connecting to %s...", inet_ntoa(addr.sin_addr));
-	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
-	if (-1 == retval) {
-		fbr_log_d(&cc->fbr, "connection to %s failed: %s",
-				inet_ntoa(addr.sin_addr),
-				strerror(errno));
-		fbr_sleep(&cc->fbr, 0.5);
-		reconnect_to_any_online_l(cc, 0);
-		return;
-	}
-
-	tcp_nodelay(cc->fd);
-
-	fbr_log_d(&cc->fbr, "connected to %s", inet_ntoa(addr.sin_addr));
-	fbr_mutex_unlock(&cc->fbr, cc->mutex);
-}
-
-static void load_peer_list(struct client_context *cc, union me_cli_any *u)
-{
-	int retval;
-	unsigned int i;
-	struct me_cli_server_hello *server_hello = &u->server_hello;
-	if (NULL != cc->peers)
-		free(cc->peers);
-	cc->peers = calloc(server_hello->count, sizeof(struct sockaddr_in));
-	cc->peer_count = server_hello->count;
-	fbr_log_d(&cc->fbr, "updated peers list:");
-	for (i = 0; i < server_hello->count; i++) {
-		fbr_log_d(&cc->fbr, " - %s", server_hello->peers[i]);
-		retval = inet_aton(server_hello->peers[i],
-				&cc->peers[i].sin_addr);
-		if (0 == retval)
-			errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
-		cc->peers[i].sin_family = AF_INET;
-		cc->peers[i].sin_port = cc->initial_port;
-	}
-}
-
-static int send_client_hello(struct client_context *cc)
-{
-	msgpack_sbuffer *buf = msgpack_sbuffer_new();
-	msgpack_packer pk;
-	union me_cli_any me_msg;
-	ssize_t retval;
-
-	me_msg.m_type = ME_CMT_CLIENT_HELLO;
-	if (0 == cc->last_iid)
-		me_msg.client_hello.starting_iid = 0;
-	else
-		me_msg.client_hello.starting_iid = cc->last_iid + 1;
-	fbr_log_d(&cc->fbr, "sending client hello, starting iid = %ld",
-			me_msg.client_hello.starting_iid);
-	msgpack_packer_init(&pk, buf, msgpack_sbuffer_write);
-	retval = me_cli_msg_pack(&pk, &me_msg);
-	if (retval)
-		errx(EXIT_FAILURE, "failed to pack a message");
-
-	fbr_mutex_lock(&cc->fbr, cc->mutex);
-	fbr_log_d(&cc->fbr, "writing client hello to the socket...");
-	assert(buf->size > 0);
-	retval = fbr_write_all(&cc->fbr, cc->fd, buf->data, buf->size);
-	fbr_log_d(&cc->fbr, "finished writing client hello to the socket");
-	fbr_mutex_unlock(&cc->fbr, cc->mutex);
-	if (retval < (ssize_t)buf->size) {
-		msgpack_sbuffer_free(buf);
-		return -1;
-	}
-	msgpack_sbuffer_free(buf);
-	return 0;
-}
-
-void fiber_reader(struct fbr_context *fiber_context, void *_arg)
-{
-	struct client_context *cc;
-	struct buffer buffer;
-	msgpack_unpacker pac;
-	msgpack_unpacked result;
-	union me_cli_any u;
-	ssize_t retval;
-	char *error = NULL;
-
-	cc = fbr_container_of(fiber_context, struct client_context, fbr);
-
-on_redirect:
-	retval = send_client_hello(cc);
-	if (retval) {
-		warn("send_client_hello");
-		reconnect_to_any_online(cc);
-		goto on_redirect;
-	}
-	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
-	msgpack_unpacked_init(&result);
-
-	for (;;) {
-		msgpack_unpacker_reserve_buffer(&pac,
-				MSGPACK_UNPACKER_RESERVE_SIZE);
-		retval = fbr_read(&cc->fbr, cc->fd,
-				msgpack_unpacker_buffer(&pac),
-				msgpack_unpacker_buffer_capacity(&pac));
-		if (-1 == retval) {
-			warn("fbr_read");
-			reconnect_to_any_online(cc);
-			goto on_redirect;
-		}
-		if (0 == retval) {
-			warnx("disconnected from mersenne");
-			reconnect_to_any_online(cc);
-			goto on_redirect;
-		}
-		msgpack_unpacker_buffer_consumed(&pac, retval);
-		while (msgpack_unpacker_next(&pac, &result)) {
-			retval = me_cli_msg_unpack(&result.data, &u,
-					0 /* don't alloc memory */, &error);
-			if (retval)
-				errx(EXIT_FAILURE, "me_cli_msg_unpack: %s",
-						error);
-
-			fbr_log_d(&cc->fbr, "got a message");
-			switch (u.m_type) {
-			case ME_CMT_ARRIVED_VALUE:
-				buffer.ptr = u.arrived_value.buf;
-				buffer.size = u.arrived_value.size;
-				cc->last_iid = u.arrived_value.iid;
-				/*
-				printf("Instance #%ld has arrived\n",
-						u.arrived_value.iid);
-				*/
-				next_value(cc, &buffer, u.arrived_value.iid);
-				break;
-			case ME_CMT_REDIRECT:
-				fbr_log_d(&cc->fbr, "got redirected to %s",
-						u.redirect.ip);
-				reconnect(cc, u.redirect.ip);
-				msgpack_unpacker_reset(&pac);
-				goto on_redirect;
-			case ME_CMT_SERVER_HELLO:
-				load_peer_list(cc, &u);
-				cc->conn_initialized = 1;
-				fbr_cond_broadcast(&cc->fbr,
-						&cc->conn_init_cond);
-				fbr_log_d(&cc->fbr, "initialized connection");
-				break;
-			case ME_CMT_ERROR:
-				fbr_log_e(&cc->fbr, "error code %d received",
-						u.error.code);
-				shutdown(cc->fd, SHUT_RDWR);
-				close(cc->fd);
-				exit(EXIT_FAILURE);
-				break;
-			default:
-				errx(EXIT_FAILURE, "unexpected message");
-			}
-		}
-	}
-}
-
-static void start_reader_fiber(struct client_context *cc)
-{
-	fbr_log_d(&cc->fbr, "starting socket reader fiber");
-	cc->reader = fbr_create(&cc->fbr, "mersenne_read", fiber_reader,
-			NULL, 0);
-	fbr_transfer(&cc->fbr, cc->reader);
 }
 
 void fiber_stats(struct fbr_context *fiber_context, void *_arg)
@@ -634,135 +310,176 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
-static void parse_ipp(const char *ipp_buf, struct sockaddr_in *addr)
+static void foreign_cb(struct fbr_context *fctx, const uint8_t *data,
+		unsigned data_len, uint64_t iid, int was_self, void *arg)
 {
-	int port;
-	int retval;
-	char *colon = strchr(ipp_buf, ':');
-
-	if (colon == NULL)
-		errx(EXIT_FAILURE, "Endpoint spec should be in format"
-					" xxx.xxx.xxx.xxx:yyyyy");
-	*colon = 0;
-
-	memset(addr, 0, sizeof(*addr));
-	addr->sin_family = AF_INET;
-
-	if (strcmp(ipp_buf, "0.0.0.0") != 0) {
-		retval = inet_aton(ipp_buf, &addr->sin_addr);
-		if (0 == retval)
-			errx(EXIT_FAILURE, "inet_aton: %s", strerror(errno));
-	} else {
-		addr->sin_addr.s_addr = INADDR_ANY;
-	}
-
-	port = atoi(colon + 1); /* port is next after ':' */
-	if (port <= 0 || port >= 0xffff)
-		errx(EXIT_FAILURE, "bad port: %s", colon + 1);
-
-	addr->sin_port = htons(port);
+	struct client_context *cc = arg;
+	struct buffer buffer;
+	assert(data);
+	buffer.ptr = (char *)data;
+	buffer.size = data_len;
+	cc->last_iid = iid;
+	if (was_self)
+		next_value(cc, &buffer, iid);
+	else
+		report_other(cc, &buffer, iid);
 }
 
-void set_up_socket(struct client_context *cc)
+void fiber_value(struct fbr_context *fiber_context, void *_arg)
 {
-	int retval;
-	struct sockaddr_in addr;
-	parse_ipp(cc->initial_ipp, &addr);
-	cc->initial_port = addr.sin_port;
-	if ((cc->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-		err(EXIT_FAILURE, "failed to create a client socket");
-
-	fbr_fd_nonblock(&cc->fbr, cc->fd);
-	tcp_nodelay(cc->fd);
-	fbr_log_d(&cc->fbr, "connecting to %s...", inet_ntoa(addr.sin_addr));
-	retval = fbr_connect(&cc->fbr, cc->fd, (void *)&addr, sizeof(addr));
-	if (-1 == retval)
-		err(EXIT_FAILURE, "fbr_connect");
-	fbr_log_d(&cc->fbr, "connected to %s", inet_ntoa(addr.sin_addr));
-	start_reader_fiber(cc);
-}
-
-static void init_values(struct client_context *cc)
-{
-	int i;
+	struct client_context *cc;
 	struct my_value *value;
-	cc->values_size = 0;
-	cc->values_alloc = 1024;
-	cc->values = calloc(cc->values_alloc, sizeof(void *));
-	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
-	for (i = 0; i < cc->concurrency; i++) {
+	struct me_cli_value *mv;
+	int retval;
+	cc = fbr_container_of(fiber_context, struct client_context, fbr);
+	for (;;) {
 		value = new_value(cc);
 		record_value(cc, value);
-		submit_value(cc, value);
-		ev_timer_start(cc->loop, &value->timer);
+		assert(value->buf);
+		assert(value->buf->ptr);
+		for (;;) {
+			if (value->nsent > 0)
+				break;
+			mv = me_cli_value_new(cc->conn);
+			mv->data = (uint8_t *)value->buf->ptr;
+			mv->data_len = value->buf->size;
+			value->nsent++;
+			retval = me_cli_value_submit(mv,
+					cc->args_info.instance_timeout_arg);
+			if (0 == retval) {
+				value->sent = mv->time_submitted;
+				cc->last_iid = mv->iid;
+				assert(value->buf);
+				assert(value->buf->ptr);
+				next_value(cc, value->buf, mv->iid);
+				me_cli_value_processed(mv);
+				me_cli_value_dispose(mv);
+				break;
+			}
+			me_cli_value_processed(mv);
+			me_cli_value_dispose(mv);
+			cc->stats.timeouts++;
+			assert(value->buf);
+			assert(value->buf->ptr);
+		}
 	}
 }
 
 void fiber_main(struct fbr_context *fiber_context, void *_arg)
 {
 	struct client_context *cc;
-	fbr_id_t stats;
+	fbr_id_t id, stats;
 	struct fbr_buffer fb;
-	struct fbr_mutex mutex;
-	struct my_value *v;
 	unsigned i;
+	char buf[32];
 
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 
 	fbr_buffer_init(&cc->fbr, &fb, 0);
 	fbr_set_user_data(&cc->fbr, fbr_self(&cc->fbr), &fb);
 
-	set_up_socket(cc);
-	init_values(cc);
-
-	fbr_mutex_init(&cc->fbr, &mutex);
+	cc->values_size = 0;
+	cc->values_alloc = 1024;
+	cc->values = calloc(cc->values_alloc, sizeof(void *));
+	clock_gettime(CLOCK_MONOTONIC, &cc->stats.started);
+	for (i = 0; i < cc->concurrency; i++) {
+		snprintf(buf, sizeof(buf), "value_feed(% 2d)", i);
+		id = fbr_create(&cc->fbr, buf, fiber_value, cc, 0);
+		fbr_transfer(&cc->fbr, id);
+	}
 
 	stats = fbr_create(&cc->fbr, "client_stats", fiber_stats, NULL, 0);
 	fbr_transfer(&cc->fbr, stats);
 
-	for (;;) {
-		fbr_mutex_lock(&cc->fbr, &mutex);
-		fbr_cond_wait(&cc->fbr, &cc->timeouts_cond, &mutex);
-		fbr_mutex_unlock(&cc->fbr, &mutex);
+	for (;;)
+		fbr_sleep(&cc->fbr, 1000);
+}
 
-		for (i = 0; i < cc->values_size; i++) {
-			v = cc->values[i];
-			if (0 == v->timed_out)
-				continue;
-			if (v->nreceived > 0)
-				continue;
-			/*
-			printf("%f\ttimed out value #%d, total %d\n",
-					ev_now(cc->loop),
-					v->value_id, cc->stats.timeouts + 1);
-			*/
-			cc->stats.timeouts++;
-			submit_value(cc, v);
-			ev_timer_again(cc->loop, &v->timer);
-			v->timed_out = 0;
-		}
+static void sigsegv_handler(int signum)
+{
+	const int bt_size = 32;
+	void *array[bt_size];
+	size_t size;
+	volatile int set_me_to_zero = 1;
+
+	size = backtrace(array, bt_size);
+	fprintf(stderr, "--------------------------------------------------------------\n");
+	fprintf(stderr, "Program received signal SIGSEGV, Segmentation fault.\n");
+	backtrace_symbols_fd(array, size, STDERR_FILENO);
+	fprintf(stderr, "--------------------------------------------------------------\n");
+	if(wait_for_debugger) {
+		fprintf(stderr, "Pid is %d, waiting for a debugger...\n", getpid());
+		while (set_me_to_zero)
+			sleep(100);
+	} else
+		exit(EXIT_FAILURE);
+}
+
+static void setup_logging(struct client_context *cc)
+{
+	enum fbr_log_level log_level = FBR_LOG_INFO;
+	switch(cc->args_info.log_level_arg) {
+		case log_level_arg_error:
+			log_level = FBR_LOG_ERROR;
+			break;
+		case log_level_arg_warning:
+			log_level = FBR_LOG_WARNING;
+			break;
+		case log_level_arg_notice:
+			log_level = FBR_LOG_NOTICE;
+			break;
+		case log_level_arg_info:
+			log_level = FBR_LOG_INFO;
+			break;
+		case log_level_arg_debug:
+			log_level = FBR_LOG_DEBUG;
+			break;
+		case log_level__NULL:
+			errx(EXIT_FAILURE, "invalid log level");
 	}
+	fbr_set_log_level(&cc->fbr, log_level);
 }
 
 int main(int argc, char *argv[]) {
 	struct client_context cc;
 	struct fbr_mutex mutex;
 	ev_timer stop_timer;
+	struct cmdline_parser_params *params;
+	struct me_cli_config config;
 
 	signal(SIGPIPE, SIG_IGN);
+	signal(SIGSEGV, sigsegv_handler);
 
 	srand((unsigned int) time(NULL));
 	memset(&cc, 0x00, sizeof(cc));
+
+	params = cmdline_parser_params_create();
+
+	params->initialize = 1;
+	params->print_errors = 1;
+	params->check_required = 0;
+
+	if (0 == access("strings-client.conf", R_OK)) {
+		if(0 != cmdline_parser_config_file("strings-client.conf",
+					&cc.args_info, params))
+			exit(EXIT_FAILURE + 1);
+		params->initialize = 0;
+	}
+	params->check_required = 1;
+	if(0 != cmdline_parser_ext(argc, argv, &cc.args_info, params))
+		exit(EXIT_FAILURE + 1);
+
+	cmdline_parser_dump(stdout, &cc.args_info);
+	wait_for_debugger = cc.args_info.wait_for_debugger_flag;
 	cc.loop = EV_DEFAULT;
 	fbr_init(&cc.fbr, cc.loop);
-	fbr_set_log_level(&cc.fbr, FBR_LOG_INFO);
+	setup_logging(&cc);
 
-	ev_timer_init(&stop_timer, run_timeout_cb, atoi(argv[3]), 0.0);
+	ev_timer_init(&stop_timer, run_timeout_cb,
+			cc.args_info.run_time_arg, 0.0);
 	stop_timer.data = &cc;
 	ev_timer_start(cc.loop, &stop_timer);
-	assert(4 == argc);
-	cc.initial_ipp = argv[1];
-	cc.concurrency = atoi(argv[2]);
+	cc.concurrency = cc.args_info.concurrency_arg;
 	cc.last_value_id = 0;
 	cc.stats.received = 0;
 	cc.stats.timeouts = 0;
@@ -776,12 +493,24 @@ int main(int argc, char *argv[]) {
 	fbr_cond_init(&cc.fbr, &cc.conn_init_cond);
 	cc.mutex = &mutex;
 
+	config.fctx = &cc.fbr;
+	config.loop = cc.loop;
+	config.peers = cc.args_info.mersenne_ip_arg;
+	config.peers_size = cc.args_info.mersenne_ip_given;
+	config.port = cc.args_info.port_arg;
+	config.starting_iid = 0;
+	config.foreign_func = foreign_cb;
+	config.foreign_func_arg = &cc;
+	cc.conn = me_cli_open(&config);
+
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);
 	fbr_transfer(&cc.fbr, cc.main);
 
 	ev_loop(cc.loop, 0);
 
+	me_cli_close(cc.conn);
 	fbr_destroy(&cc.fbr);
+	free(params);
 
 	return 0;
 }
