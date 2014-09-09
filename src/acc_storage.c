@@ -619,10 +619,16 @@ static eio_ssize_t log_sync_custom_cb(void *data)
 	return rv;
 }
 
-void wal_log_sync(ME_P_ struct wal_log *log)
+static void sync_fiber(struct fbr_context *fiber_context, void *_arg)
 {
+	struct me_context *mctx;
+	struct acs_context *ctx;
+	struct wal_log *log = _arg;
 	ssize_t retval;
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ctx = &mctx->pxs.acc.acs;
+	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 	assert(WLM_RW == log->mode);
 	log->stat.n_rows += log->iov_rows;
 	retval = fbr_eio_custom(&mctx->fbr, log_sync_custom_cb, log, 0);
@@ -631,6 +637,16 @@ void wal_log_sync(ME_P_ struct wal_log *log)
 	log->stat.n_sync_useconds = (unsigned)(log->flush_io * 1e6);
 	kv_push(struct acs_iov_stat, ctx->stats, log->stat);
 	memset(&log->stat, 0x00, sizeof(log->stat));
+	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
+}
+
+void wal_log_sync(ME_P_ struct wal_log *log)
+{
+	fbr_id_t id;
+	id = fbr_create(&mctx->fbr, "acceptor/sync_log", sync_fiber, log, 0);
+	fbr_transfer(&mctx->fbr, id);
+	acs_vacuum(ME_A);
+	fbr_reclaim(&mctx->fbr, id);
 }
 
 static void wal_replay_state(ME_P_ struct wal_state *w_state)
@@ -950,6 +966,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 
 	/* Write the snapshot */
+	fbr_sleep(&mctx->fbr, rand() % 60);
 	fbr_log_i(&mctx->fbr, "started writing snapshot for %lu", lsn);
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
 	if (-1 == retval)
@@ -982,7 +999,7 @@ static void create_snapshot(ME_P)
 	struct acs_context* ctx = &mctx->pxs.acc.acs;
 	if (!fbr_id_isnull(ctx->snapshot_fiber))
 		return;
-	ctx->snapshot_fiber = fbr_create(&mctx->fbr, "acceptor/take_snapshot",
+	ctx->snapshot_fiber = fbr_create(&mctx->fbr, "acceptor/snap",
 			snapshot_fiber, NULL, 0);
 	fbr_transfer(&mctx->fbr, ctx->snapshot_fiber);
 }
@@ -1023,7 +1040,7 @@ static void recover(ME_P)
 	scan_log_dir(ME_A_ &ctx->wal_dir);
 	recover_snapshot(ME_A);
 	recover_remaining_wals(ME_A);
-	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepter = %zd,"
+	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepted = %zd,"
 			" highest finalized = %zd, lowest available = %zd",
 			ctx->highest_accepted, ctx->highest_finalized,
 			ctx->lowest_available);
@@ -1127,8 +1144,8 @@ static inline void report_stats(ME_P_ struct stats_calc_arg *arg)
 			arg->sync_io.mean, arg->sync_io.p50,
 			arg->sync_io.p75, arg->sync_io.p99,
 			arg->sync_io.max);
-	fbr_log_i(&mctx->fbr, "sync write speed %f MB/s",
-			arg->write_speed / 1e6);
+	fbr_log_i(&mctx->fbr, "sync write speed %f MB/s, %zd bytes written",
+			arg->write_speed / 1e6, arg->bytes_written);
 }
 
 static void stats_fiber(struct fbr_context *fiber_context, void *_arg)
@@ -1155,6 +1172,10 @@ static void stats_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (retval)
 			err(EXIT_FAILURE, "stats failed");
 		report_stats(ME_A_ &arg);
+		fbr_log_i(&mctx->fbr, "acceptor state: highest accepted = %zd,"
+			" highest finalized = %zd, lowest available = %zd",
+			ctx->highest_accepted, ctx->highest_finalized,
+			ctx->lowest_available);
 skip:
 		kv_size(ctx->stats2) = 0;
 	}
@@ -1241,8 +1262,6 @@ void acs_batch_finish(ME_P)
 		}
 	}
 
-	acs_vacuum(ME_A);
-
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
 	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
@@ -1290,43 +1309,6 @@ void acs_set_highest_finalized_async(ME_P_ uint64_t iid)
 	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 
-void acs_vacuum(ME_P)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct acc_instance_record *r, *x;
-	int trunc, threshold;
-	uint64_t max_truncated = 0;
-	unsigned n_truncated = 0;
-	trunc = mctx->args_info.acceptor_truncate_arg;
-	threshold = trunc * (1 + mctx->args_info.acceptor_truncate_margin_arg);
-
-	/*
-	printf("%ld <= %d == %d\n", ctx->highest_finalized, trunc,
-			ctx->highest_finalized <= trunc);
-			*/
-	if (HASH_COUNT(ctx->instances) <= threshold)
-			return;
-	HASH_ITER(hh, ctx->instances, r, x) {
-		if (r->iid >= ctx->highest_finalized - trunc)
-			continue;
-		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
-		HASH_DEL(ctx->instances, r);
-		if (r->iid > max_truncated)
-			max_truncated = r->iid;
-		if (!r->is_cow) {
-			sm_free(r->v);
-			free(r);
-		}
-		n_truncated++;
-	}
-	if (!n_truncated)
-		return;
-	ctx->lowest_available = max_truncated + 1;
-	fbr_log_i(&mctx->fbr, "vacuumed the state up to instance %ld",
-			ctx->lowest_available);
-	fbr_log_i(&mctx->fbr, "%d instances disposed", n_truncated);
-}
-
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {
@@ -1344,6 +1326,53 @@ int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	}
 	*rptr = w;
 	return found;
+}
+
+void acs_vacuum(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	struct acc_instance_record *r;
+	int trunc;
+	uint64_t max_truncated = ctx->lowest_available;
+	unsigned n_truncated = 0;
+	uint64_t i;
+	int found;
+	trunc = mctx->args_info.acceptor_truncate_arg;
+	ev_tstamp t1, t2;
+
+	if (ctx->highest_finalized > 1)
+		assert(ctx->highest_finalized > ctx->lowest_available);
+
+	if (ctx->highest_finalized < trunc)
+		return;
+	if (0 == max_truncated)
+		max_truncated = 1;
+	ev_now_update(mctx->loop);
+	t1 = ev_now(mctx->loop);
+	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
+		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
+		assert(found);
+		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
+		HASH_DEL(ctx->instances, r);
+		if (!r->is_cow) {
+			sm_free(r->v);
+			free(r);
+		}
+		n_truncated++;
+	}
+	if (0 == n_truncated)
+		return;
+	ctx->lowest_available = i;
+	if (ctx->highest_finalized > 1)
+		assert(ctx->highest_finalized > ctx->lowest_available);
+	ev_now_update(mctx->loop);
+	t2 = ev_now(mctx->loop);
+	fbr_log_d(&mctx->fbr, "vacuumed the state: highest accepted = %zd,"
+			" highest finalized = %zd, lowest available = %zd",
+			ctx->highest_accepted, ctx->highest_finalized,
+			ctx->lowest_available);
+	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
+	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
 }
 
 int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,

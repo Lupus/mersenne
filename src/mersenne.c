@@ -290,6 +290,8 @@ int main(int argc, char *argv[])
 		signal(SIGSEGV, sigsegv_handler);
 	signal(SIGPIPE, SIG_IGN);
 
+	srand(time(NULL) ^ getpid());
+
 	params = cmdline_parser_params_create();
 
 	params->initialize = 1;

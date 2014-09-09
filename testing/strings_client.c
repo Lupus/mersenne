@@ -344,6 +344,7 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 			mv->data = (uint8_t *)value->buf->ptr;
 			mv->data_len = value->buf->size;
 			value->nsent++;
+			ev_now_update(cc->loop);
 			retval = me_cli_value_submit(mv,
 					cc->args_info.instance_timeout_arg);
 			if (0 == retval) {
