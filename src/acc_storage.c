@@ -1061,7 +1061,7 @@ struct stats_calc_arg {
 	struct stats_summary write_io;
 	struct stats_summary sync_io;
 	double write_speed;
-	double bytes_written;
+	unsigned bytes_written;
 	unsigned count;
 };
 
@@ -1086,7 +1086,7 @@ static eio_ssize_t stats_calculate_cb(void *data)
 	struct stats_calc_arg *arg = data;
 	struct acs_context *ctx = arg->ctx;
 	unsigned i;
-	double total_bytes = 0;
+	unsigned total_bytes = 0;
 	double total_io = 0;
 	double total_sync_io = 0;
 	const unsigned n = kv_size(ctx->stats2);
@@ -1144,7 +1144,7 @@ static inline void report_stats(ME_P_ struct stats_calc_arg *arg)
 			arg->sync_io.mean, arg->sync_io.p50,
 			arg->sync_io.p75, arg->sync_io.p99,
 			arg->sync_io.max);
-	fbr_log_i(&mctx->fbr, "sync write speed %f MB/s, %zd bytes written",
+	fbr_log_i(&mctx->fbr, "sync write speed %f MB/s, %d bytes written",
 			arg->write_speed / 1e6, arg->bytes_written);
 }
 
