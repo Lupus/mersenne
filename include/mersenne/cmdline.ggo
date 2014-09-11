@@ -20,5 +20,4 @@ option "acceptor-wal-dir" - "Directory, containing acceptor WAL files" string de
 option "acceptor-wal-rotate" - "Number of records per WAL" int default="10000" optional
 option "acceptor-wal-snap" - "Number of records per snapshot" int default="50000" optional
 option "acceptor-truncate" T "Maximum number of records to store" int default="100000" optional
-option "acceptor-truncate-margin" - "Excess threshold after which trancation is performed" double default="0.25" optional
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
