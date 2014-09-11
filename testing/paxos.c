@@ -143,9 +143,9 @@ static void submit_value(struct me_cli_connection *conn,
 
 	assert(buf->size > 0);
 	wait_conn_initialize(conn);
+retry:
 	fbr_log_d(conn->fctx, "aquiering connection lock");
 	fbr_mutex_lock(conn->fctx, &conn->mutex);
-retry:
 	fbr_log_d(conn->fctx, "writing %zd bytes to paxos socket", buf->size);
 	retval = fbr_write_all(conn->fctx, conn->fd, buf->data, buf->size);
 	if (retval < (ssize_t)buf->size) {
