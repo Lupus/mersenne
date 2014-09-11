@@ -33,7 +33,7 @@
 
 struct connection_fiber_arg {
 	int fd;
-	struct fbr_mutex *mutex;
+	struct fbr_mutex mutex;
 	uint64_t starting_iid;
 	struct sockaddr_in addr;
 };
@@ -67,9 +67,9 @@ static int inform_client(ME_P_ struct connection_fiber_arg *arg, uint64_t iid,
 	if (retval)
 		return retval;
 
-	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_mutex_lock(&mctx->fbr, &arg->mutex);
 	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
-	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	fbr_mutex_unlock(&mctx->fbr, &arg->mutex);
 	if (retval < buf->size) {
 		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
 				strerror(errno));
@@ -168,9 +168,9 @@ static int redirect_client(ME_P_ struct connection_fiber_arg *arg)
 	if (retval)
 		return retval;
 
-	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_mutex_lock(&mctx->fbr, &arg->mutex);
 	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
-	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	fbr_mutex_unlock(&mctx->fbr, &arg->mutex);
 	if (retval < buf->size) {
 		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
 				strerror(errno));
@@ -242,11 +242,11 @@ static int send_server_hello(ME_P_ struct connection_fiber_arg *arg)
 	if (retval)
 		return retval;
 
-	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_mutex_lock(&mctx->fbr, &arg->mutex);
 	fbr_log_d(&mctx->fbr, "writing server hello...");
 	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
 	fbr_log_d(&mctx->fbr, "finished writing server hello");
-	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	fbr_mutex_unlock(&mctx->fbr, &arg->mutex);
 	if (retval < buf->size) {
 		msgpack_sbuffer_free(buf);
 		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
@@ -285,12 +285,12 @@ static int send_error(ME_P_ struct connection_fiber_arg *arg,
 	if (retval)
 		return retval;
 
-	fbr_mutex_lock(&mctx->fbr, arg->mutex);
+	fbr_mutex_lock(&mctx->fbr, &arg->mutex);
 	fbr_log_d(&mctx->fbr, "writing error message to the client, code %d",
 			code);
 	retval = fbr_write_all(&mctx->fbr, arg->fd, buf->data, buf->size);
 	fbr_log_d(&mctx->fbr, "finished writing error message");
-	fbr_mutex_unlock(&mctx->fbr, arg->mutex);
+	fbr_mutex_unlock(&mctx->fbr, &arg->mutex);
 	if (retval < buf->size) {
 		msgpack_sbuffer_free(buf);
 		fbr_log_w(&mctx->fbr, "fbr_write_all: %s",
@@ -347,6 +347,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	char *error = NULL;
 	char client_ip_str[INET_ADDRSTRLEN] = {0};
 
+	fbr_mutex_init(&mctx->fbr, &arg.mutex);
 	inet_ntop(AF_INET, &arg.addr.sin_addr, client_ip_str, INET_ADDRSTRLEN);
        	mctx = container_of(fiber_context, struct me_context, fbr);
 
@@ -445,11 +446,8 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_id_t fiber;
 	struct connection_fiber_arg arg;
 	socklen_t addrlen = sizeof(arg.addr);
-	struct fbr_mutex fd_mutex;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	fbr_mutex_init(&mctx->fbr, &fd_mutex);
-	arg.mutex = &fd_mutex;
 
 	for (;;) {
 		sockfd = fbr_accept(&mctx->fbr, mctx->client_tcp_fd,
@@ -457,7 +455,6 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed on tcp socket");
 		arg.fd = sockfd;
-		fbr_mutex_init(&mctx->fbr, arg.mutex);
 		fiber = fbr_create(&mctx->fbr, "tcp_client",
 				connection_fiber, &arg, 0);
 		fbr_transfer(&mctx->fbr, fiber);
