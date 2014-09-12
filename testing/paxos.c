@@ -144,10 +144,15 @@ static void submit_value(struct me_cli_connection *conn,
 	assert(buf->size > 0);
 	wait_conn_initialize(conn);
 retry:
+	fbr_set_noreclaim(conn->fctx, fbr_self(conn->fctx));
 	fbr_log_d(conn->fctx, "aquiering connection lock");
 	fbr_mutex_lock(conn->fctx, &conn->mutex);
+	fbr_log_d(conn->fctx, "aquiered connection lock");
 	fbr_log_d(conn->fctx, "writing %zd bytes to paxos socket", buf->size);
 	retval = fbr_write_all(conn->fctx, conn->fd, buf->data, buf->size);
+	fbr_set_reclaim(conn->fctx, fbr_self(conn->fctx));
+	if (fbr_want_reclaim(conn->fctx, fbr_self(conn->fctx)))
+		return;
 	if (retval < (ssize_t)buf->size) {
 		fbr_log_w(conn->fctx, "failed to submit a value to paxos: %s",
 				strerror(errno));
@@ -292,7 +297,6 @@ static void reconnect_to_any_online_l(struct me_cli_connection *conn, int lock)
 
 	fbr_log_d(conn->fctx, "reconnecting to any online instance");
 retry:
-	if (lock)
 	if (retries > 0)
 		fbr_log_n(conn->fctx, "connecting to paxos: retry #%d",
 				retries);
