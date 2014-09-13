@@ -347,9 +347,11 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 	char *error = NULL;
 	char client_ip_str[INET_ADDRSTRLEN] = {0};
 
+	mctx = container_of(fiber_context, struct me_context, fbr);
 	fbr_mutex_init(&mctx->fbr, &arg.mutex);
 	inet_ntop(AF_INET, &arg.addr.sin_addr, client_ip_str, INET_ADDRSTRLEN);
-       	mctx = container_of(fiber_context, struct me_context, fbr);
+	fbr_log_i(&mctx->fbr, "Connection fiber has started, client %s",
+			client_ip_str);
 
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
@@ -360,8 +362,7 @@ static void connection_fiber(struct fbr_context *fiber_context, void *_arg)
 		goto conn_finish;
 	}
 
-	fbr_log_i(&mctx->fbr, "Connection fiber has started, client %s",
-			client_ip_str);
+	fbr_log_d(&mctx->fbr, "sending server hello");
 
 	retval = send_server_hello(ME_A_ &arg);
 	if (retval)
@@ -455,6 +456,7 @@ void clt_tcp_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (-1 == sockfd)
 			err(EXIT_FAILURE, "fbr_accept failed on tcp socket");
 		arg.fd = sockfd;
+		fbr_log_d(&mctx->fbr, "accepted client socket %d", sockfd);
 		fiber = fbr_create(&mctx->fbr, "tcp_client",
 				connection_fiber, &arg, 0);
 		fbr_transfer(&mctx->fbr, fiber);
