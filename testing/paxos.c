@@ -149,16 +149,22 @@ retry:
 	fbr_mutex_lock(conn->fctx, &conn->mutex);
 	fbr_log_d(conn->fctx, "aquiered connection lock");
 	fbr_log_d(conn->fctx, "writing %zd bytes to paxos socket", buf->size);
-	retval = fbr_write_all(conn->fctx, conn->fd, buf->data, buf->size);
+	retval = fbr_write_wto(conn->fctx, conn->fd, buf->data, buf->size,
+			0.1);
 	fbr_set_reclaim(conn->fctx, fbr_self(conn->fctx));
 	if (fbr_want_reclaim(conn->fctx, fbr_self(conn->fctx)))
 		return;
 	if (retval < (ssize_t)buf->size) {
 		fbr_log_w(conn->fctx, "failed to submit a value to paxos: %s",
 				strerror(errno));
-		fbr_log_w(conn->fctx, "waiting for reconnect");
 		fbr_mutex_unlock(conn->fctx, &conn->mutex);
 		fbr_log_d(conn->fctx, "released connection lock");
+		retval = shutdown(conn->fd, SHUT_RDWR);
+		if (retval)
+			fbr_log_d(conn->fctx, "shutdown() failed: %s",
+					strerror(errno));
+		conn->conn_initialized = 0;
+		fbr_log_w(conn->fctx, "waiting for reconnect");
 		wait_conn_initialize(conn);
 		goto retry;
 	}
@@ -302,8 +308,14 @@ retry:
 				retries);
 	for (i = 0; i < conn->peer_count; i++) {
 		conn->conn_initialized = 0;
-		shutdown(conn->fd, SHUT_RDWR);
-		close(conn->fd);
+		retval = shutdown(conn->fd, SHUT_RDWR);
+		if (retval)
+			fbr_log_d(conn->fctx, "shutdown() failed: %s",
+					strerror(errno));
+		retval = close(conn->fd);
+		if (retval)
+			fbr_log_d(conn->fctx, "close() failed: %s",
+					strerror(errno));
 
 		retval = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (retval < 0)
@@ -349,8 +361,14 @@ static void reconnect(struct me_cli_connection *conn, const char *ip)
 	fbr_log_d(conn->fctx, "aquiering connection lock");
 	fbr_mutex_lock(conn->fctx, &conn->mutex);
 	conn->conn_initialized = 0;
-	shutdown(conn->fd, SHUT_RDWR);
-	close(conn->fd);
+	retval = shutdown(conn->fd, SHUT_RDWR);
+	if (retval)
+		fbr_log_d(conn->fctx, "shutdown() failed: %s",
+				strerror(errno));
+	retval = close(conn->fd);
+	if (retval)
+		fbr_log_d(conn->fctx, "close() failed: %s",
+				strerror(errno));
 
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
@@ -422,10 +440,13 @@ static int send_client_hello(struct me_cli_connection *conn)
 	if (retval)
 		errx(EXIT_FAILURE, "failed to pack a message");
 
+	fbr_log_d(conn->fctx, "aquiering connection lock");
 	fbr_mutex_lock(conn->fctx, &conn->mutex);
+	fbr_log_d(conn->fctx, "aquiered connection lock");
 	assert(buf->size > 0);
-	retval = fbr_write_all(conn->fctx, conn->fd, buf->data, buf->size);
+	retval = fbr_write(conn->fctx, conn->fd, buf->data, buf->size);
 	fbr_mutex_unlock(conn->fctx, &conn->mutex);
+	fbr_log_d(conn->fctx, "released connection lock");
 	if (retval < (ssize_t)buf->size) {
 		msgpack_sbuffer_free(buf);
 		return -1;
@@ -487,6 +508,7 @@ static void replay_fiber_func(struct fbr_context *fctx, void *_arg)
 	reconnect_to_any_online(conn);
 
 on_redirect:
+	fbr_log_d(conn->fctx, "sending client hello");
 	retval = send_client_hello(conn);
 	if (retval) {
 		fbr_log_w(conn->fctx, "send_client_hello failed: %s",
@@ -494,15 +516,31 @@ on_redirect:
 		reconnect_to_any_online(conn);
 		goto on_redirect;
 	}
+	fbr_log_d(conn->fctx, "sent client hello!");
 	msgpack_unpacker_init(&pac, MSGPACK_UNPACKER_INIT_BUFFER_SIZE);
 	msgpack_unpacked_init(&result);
 
 	for (;;) {
 		msgpack_unpacker_reserve_buffer(&pac,
 				MSGPACK_UNPACKER_RESERVE_SIZE);
-		retval = fbr_read(conn->fctx, conn->fd,
-				msgpack_unpacker_buffer(&pac),
-				msgpack_unpacker_buffer_capacity(&pac));
+		fbr_log_d(conn->fctx, "reading mersenne message");
+		if (0 == conn->conn_initialized) {
+			retval = fbr_read_wto(conn->fctx, conn->fd,
+					msgpack_unpacker_buffer(&pac),
+					msgpack_unpacker_buffer_capacity(&pac),
+					1.0
+					);
+			if (-1 == retval && ETIMEDOUT == errno) {
+				fbr_log_d(conn->fctx, "server hello timed out");
+				reconnect_to_any_online(conn);
+				goto on_redirect;
+			}
+		} else {
+			retval = fbr_read(conn->fctx, conn->fd,
+					msgpack_unpacker_buffer(&pac),
+					msgpack_unpacker_buffer_capacity(&pac));
+		}
+		fbr_log_d(conn->fctx, "read mersenne message: %zd", retval);
 		if (-1 == retval) {
 			fbr_log_w(conn->fctx, "fbr_read failed: %s",
 					strerror(errno));
@@ -529,6 +567,8 @@ on_redirect:
 
 			switch (u.m_type) {
 			case ME_CMT_ARRIVED_VALUE:
+				fbr_log_d(conn->fctx,
+						"<< ME_CMT_ARRIVED_VALUE");
 				/* Synchronously apply the value here */
 				fbr_log_d(conn->fctx, "replay_value start");
 				replay_value(conn, u.arrived_value.buf,
@@ -538,10 +578,12 @@ on_redirect:
 				conn->last_iid = u.arrived_value.iid;
 				break;
 			case ME_CMT_REDIRECT:
+				fbr_log_d(conn->fctx, "<< ME_CMT_REDIRECT");
 				reconnect(conn, u.redirect.ip);
 				msgpack_unpacker_reset(&pac);
 				goto on_redirect;
 			case ME_CMT_SERVER_HELLO:
+				fbr_log_d(conn->fctx, "<< ME_CMT_SERVER_HELLO");
 				load_peer_list(conn, &u);
 				conn->conn_initialized = 1;
 				fbr_cond_broadcast(conn->fctx,
