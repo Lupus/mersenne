@@ -59,7 +59,7 @@ struct my_value {
 	int timed_out;
 	int nreceived;
 	int nsent;
-	ev_tstamp sent;
+	ev_tstamp latency;
 	unsigned value_id;
 	uint64_t last_iid;
 };
@@ -267,8 +267,7 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	value->nreceived = 1;
 	value->last_iid = iid;
 	cc->stats.received++;
-	ev_now_update(cc->loop);
-	cc->stats.turnaround += ev_now(cc->loop) - value->sent;
+	cc->stats.turnaround += value->latency;
 	value->timed_out = 0;
 	free(value->buf->ptr);
 	free(value->buf);
@@ -348,7 +347,7 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 			retval = me_cli_value_submit(mv,
 					cc->args_info.instance_timeout_arg);
 			if (0 == retval) {
-				value->sent = mv->time_submitted;
+				value->latency = mv->latency;
 				cc->last_iid = mv->iid;
 				assert(value->buf);
 				assert(value->buf->ptr);

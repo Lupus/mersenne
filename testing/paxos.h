@@ -24,6 +24,7 @@ struct me_cli_value {
 	uint64_t value_id;
 	uint64_t iid;
 	ev_tstamp time_submitted;
+	ev_tstamp latency;
 	struct me_cli_connection *conn;
 	unsigned ref;
 };

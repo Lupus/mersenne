@@ -241,8 +241,8 @@ int me_cli_value_submit(struct me_cli_value *value, ev_tstamp timeout)
 	retval = value_wait_for_state(conn, value, ME_CLI_PVS_ARRIVED, timeout);
 	if (retval)
 		return retval;
-	fbr_log_d(conn->fctx, "paxos value latency: %f",
-			ev_now(conn->loop) - value->time_submitted);
+	value->latency = ev_now(conn->loop) - value->time_submitted;
+	fbr_log_d(conn->fctx, "paxos value latency: %f", value->latency);
 	return 0;
 }
 
