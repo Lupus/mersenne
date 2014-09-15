@@ -210,7 +210,6 @@ function wrap(str, limit, indent, indent1)
 			end)
 end
 
-
 local function dump_current_record(env)
 	if not env.optarg["a"] then
 		if "value" ~= env.current_rec.pxs_type then
