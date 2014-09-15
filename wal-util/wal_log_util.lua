@@ -287,7 +287,7 @@ local function decode_value_content(env, content)
 	env.current_rec.header.service_id = tonumber(value_header.service_id)
 	env.current_rec.header.best_before_iid =
 			tonumber(value_header.best_before_iid)
-	env.current_rec.payload = content:sub(ffi.sizeof(value_header_t))
+	env.current_rec.payload = content:sub(ffi.sizeof(value_header_t) + 1)
 end
 
 local function process_value(env, val)
