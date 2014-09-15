@@ -53,7 +53,7 @@ typedef unsigned long uLong;
 typedef unsigned int uInt;
 uLong crc32 (uLong crc, const Bytef *buf, uInt len);
 
-typedef unsigned char uuid_t[17];
+typedef unsigned char uuid_t[16];
 void uuid_unparse(const uuid_t uu, char *out);
 ]]
 
