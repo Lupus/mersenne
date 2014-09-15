@@ -68,6 +68,7 @@ struct client_stats {
 	int received;
 	int timeouts;
 	int other;
+	int late_arrived;
 	int duplicates;
 	int extra_values;
 	ev_tstamp turnaround;
@@ -144,6 +145,7 @@ static void client_finished(struct client_context *cc)
 	printf("Value concurrency: %d\n", cc->concurrency);
 	printf("Values received: %d\n", cc->stats.received);
 	printf("Values timed out: %d\n", cc->stats.timeouts);
+	printf("Values arrived late: %d\n", cc->stats.late_arrived);
 	printf("Duplicate values received: %d\n", cc->stats.duplicates);
 	printf("Average turnaround time: %f\n", turnaround);
 	printf("Other values received: %d\n", cc->stats.other);
@@ -204,10 +206,9 @@ static void record_value(struct client_context *cc, struct my_value *value)
 	cc->values_size++;
 }
 
-static void next_value(struct client_context *cc, struct buffer *buf,
+static void next_value(struct client_context *cc, struct my_value *value,
 		uint64_t iid)
 {
-	struct my_value *value = NULL;
 	MD5_CTX context;
 	uint8_t digest[16];
 	uint8_t test_digest[16];
@@ -215,33 +216,6 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 	unsigned l;
 	unsigned value_id;
 
-	//printf("buf: '''%.*s'''\n", (unsigned)buf->size, buf->ptr);
-	l = sscanf(buf->ptr, "{%010d,%016lx%016lx}",
-			&value_id,
-			(int64_t *)test_digest, (int64_t *)test_digest + 1);
-	if (3 != l) {
-		report_other(cc, buf, iid);
-		return;
-	}
-	header_length = 10 + 32 + 4;
-        MD5_Init(&context);
-        MD5_Update(&context, (uint8_t *)&value_id, sizeof(value_id));
-        MD5_Update(&context, (uint8_t *)buf->ptr + header_length,
-			buf->size - header_length);
-        MD5_Final(digest, &context);
-
-	if (0 != memcmp(digest, test_digest, sizeof(test_digest))) {
-		report_other(cc, buf, iid);
-		return;
-	}
-
-	if (value_id > cc->values_size) {
-		printf("Got value id from the future: %d > %zd (values size)\n",
-				value_id, cc->values_size);
-		exit(1);
-	}
-	value = cc->values[value_id];
-	assert(value);
 	if (value->nreceived > 0) {
 		cc->stats.duplicates++;
 		value->nreceived++;
@@ -260,6 +234,33 @@ static void next_value(struct client_context *cc, struct buffer *buf,
 		*/
 		return;
 	}
+
+	//printf("buf: '''%.*s'''\n", (unsigned)buf->size, buf->ptr);
+	l = sscanf(value->buf->ptr, "{%010d,%016lx%016lx}",
+			&value_id,
+			(int64_t *)test_digest, (int64_t *)test_digest + 1);
+	if (3 != l) {
+		report_other(cc, value->buf, iid);
+		return;
+	}
+	header_length = 10 + 32 + 4;
+        MD5_Init(&context);
+        MD5_Update(&context, (uint8_t *)&value_id, sizeof(value_id));
+        MD5_Update(&context, (uint8_t *)value->buf->ptr + header_length,
+			value->buf->size - header_length);
+        MD5_Final(digest, &context);
+
+	if (0 != memcmp(digest, test_digest, sizeof(test_digest))) {
+		report_other(cc, value->buf, iid);
+		return;
+	}
+
+	if (value_id > cc->values_size) {
+		printf("Got value id from the future: %d > %zd (values size)\n",
+				value_id, cc->values_size);
+		exit(1);
+	}
+	assert(value == cc->values[value_id]);
 	/*
 	printf("%f\treceived value #%d\n", ev_now(cc->loop),
 			value->value_id);
@@ -298,15 +299,63 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 		//printf("[STATS] Last = %d\n", last);
 		tx_per_second = (current - last) / interval;
 		printf("[STATS] %.3f transactions per second, values received:"
-				" %d, timed out: %d, duplicates: %d, extra: %d, other: %d\n",
+				" %d, timed out: %d, late: %d, duplicates: %d,"
+				" extra: %d, other: %d\n",
 				tx_per_second,
 				cc->stats.received,
 				cc->stats.timeouts,
+				cc->stats.late_arrived,
 				cc->stats.duplicates,
 				cc->stats.extra_values,
 				cc->stats.other);
 		last_stats = cc->stats;
 	}
+}
+
+static void next_value_by_buf(struct client_context *cc, struct buffer *buf,
+		uint64_t iid)
+{
+	MD5_CTX context;
+	uint8_t digest[16];
+	uint8_t test_digest[16];
+	unsigned header_length;
+	unsigned l;
+	unsigned value_id;
+	struct my_value *value;
+
+	//printf("buf: '''%.*s'''\n", (unsigned)buf->size, buf->ptr);
+	l = sscanf(buf->ptr, "{%010d,%016lx%016lx}",
+			&value_id,
+			(int64_t *)test_digest, (int64_t *)test_digest + 1);
+	if (3 != l) {
+		report_other(cc, buf, iid);
+		return;
+	}
+	header_length = 10 + 32 + 4;
+        MD5_Init(&context);
+        MD5_Update(&context, (uint8_t *)&value_id, sizeof(value_id));
+        MD5_Update(&context, (uint8_t *)buf->ptr + header_length,
+			buf->size - header_length);
+        MD5_Final(digest, &context);
+
+	if (0 != memcmp(digest, test_digest, sizeof(test_digest))) {
+		report_other(cc, buf, iid);
+		return;
+	}
+
+	if (value_id > cc->values_size) {
+		printf("Got value id from the future: %d > %zd (values size)\n",
+				value_id, cc->values_size);
+		exit(1);
+	}
+	value = cc->values[value_id];
+	assert(value);
+	/*
+	printf("%f\treceived value #%d\n", ev_now(cc->loop),
+			value->value_id);
+	*/
+	cc->stats.late_arrived++;
+	cc->stats.turnaround += value->latency;
 }
 
 static void foreign_cb(struct fbr_context *fctx, const uint8_t *data,
@@ -319,7 +368,7 @@ static void foreign_cb(struct fbr_context *fctx, const uint8_t *data,
 	buffer.size = data_len;
 	cc->last_iid = iid;
 	if (was_self)
-		next_value(cc, &buffer, iid);
+		next_value_by_buf(cc, &buffer, iid);
 	else
 		report_other(cc, &buffer, iid);
 }
@@ -337,7 +386,7 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 		assert(value->buf);
 		assert(value->buf->ptr);
 		for (;;) {
-			if (value->nsent > 0)
+			if (value->nreceived > 0)
 				break;
 			mv = me_cli_value_new(cc->conn);
 			mv->data = (uint8_t *)value->buf->ptr;
@@ -349,9 +398,9 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 			if (0 == retval) {
 				value->latency = mv->latency;
 				cc->last_iid = mv->iid;
-				assert(value->buf);
-				assert(value->buf->ptr);
-				next_value(cc, value->buf, mv->iid);
+				if (value->nreceived > 0)
+				break;
+				next_value(cc, value, mv->iid);
 				me_cli_value_processed(mv);
 				me_cli_value_dispose(mv);
 				break;
