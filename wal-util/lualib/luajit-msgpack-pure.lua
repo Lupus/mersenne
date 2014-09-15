@@ -368,11 +368,19 @@ local unpack_number
 if LITTLE_ENDIAN then
   unpack_number = function(buf,offset,ntype,nlen)
     rcopy(t_buf,buf.data+offset+1,nlen)
-    return tonumber(ffi.cast(ntype,t_buf)[0])
+    if "uint64_t *" == ntype or "int64_t *" == ntype then
+      return ffi.cast(ntype,t_buf)[0]
+    else
+      return tonumber(ffi.cast(ntype,t_buf)[0])
+    end
   end
 else
   unpack_number = function(buf,offset,ntype,nlen)
-    return tonumber(ffi.cast(ntype,buf.data+offset+1)[0])
+    if "uint64_t *" == ntype or "int64_t *" == ntype then
+      return ffi.cast(ntype,t_buf)[0]
+    else
+      return tonumber(ffi.cast(ntype,t_buf)[0])
+    end
   end
 end
 

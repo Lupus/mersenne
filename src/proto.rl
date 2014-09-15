@@ -215,6 +215,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 		} while (0)
 	#define mp_array(sz) rv(msgpack_pack_array(pk, (sz)))
 	#define mp_uint(uint) rv(msgpack_pack_unsigned_int(pk, (uint)))
+	#define mp_uint64(uint) rv(msgpack_pack_uint64(pk, (uint)))
 	#define mp_raw(ptr, size) do {                                 \
 			size_t _sz_tmp = (size);                       \
 			rv(msgpack_pack_raw(pk, _sz_tmp));             \
@@ -235,7 +236,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 		mp_array(3);
 		mp_uint(u->m_type);
 		mp_raw(arrived_value->buf, arrived_value->size);
-		mp_uint(arrived_value->iid);
+		mp_uint64(arrived_value->iid);
 		break;
 	case ME_CMT_REDIRECT:
 		redirect = &u->redirect;
@@ -257,7 +258,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 		client_hello = &u->client_hello;
 		mp_array(2);
 		mp_uint(u->m_type);
-		mp_uint(client_hello->starting_iid);
+		mp_uint64(client_hello->starting_iid);
 		break;
 	case ME_CMT_ERROR:
 		error = &u->error;
@@ -269,6 +270,7 @@ int me_cli_msg_pack(msgpack_packer *pk, union me_cli_any *u)
 	return 0;
 	#undef mp_array
 	#undef mp_uint
+	#undef mp_uint64
 	#undef mp_raw
 	#undef mp_raw_sizeof
 	#undef rv

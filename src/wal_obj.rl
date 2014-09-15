@@ -177,6 +177,7 @@ int wal_msg_pack(msgpack_packer *pk, union wal_rec_any *u)
 		} while (0)
 	#define mp_array(sz) rv(msgpack_pack_array(pk, (sz)))
 	#define mp_uint(uint) rv(msgpack_pack_unsigned_int(pk, (uint)))
+	#define mp_uint64(uint) rv(msgpack_pack_uint64(pk, (uint)))
 	#define mp_raw(ptr, size) do {                                 \
 			size_t _sz_tmp = (size);                       \
 			rv(msgpack_pack_raw(pk, _sz_tmp));             \
@@ -189,30 +190,31 @@ int wal_msg_pack(msgpack_packer *pk, union wal_rec_any *u)
 		value = &u->value;
 		mp_array(5);
 		mp_uint(u->w_type);
-		mp_uint(value->iid);
-		mp_uint(value->b);
-		mp_uint(value->vb);
+		mp_uint64(value->iid);
+		mp_uint64(value->b);
+		mp_uint64(value->vb);
 		mp_raw(value->content.data, value->content.len);
 		break;
 	case WAL_REC_TYPE_PROMISE:
 		promise = &u->promise;
 		mp_array(3);
 		mp_uint(u->w_type);
-		mp_uint(promise->iid);
-		mp_uint(promise->b);
+		mp_uint64(promise->iid);
+		mp_uint64(promise->b);
 		break;
 	case WAL_REC_TYPE_STATE:
 		state = &u->state;
 		mp_array(3);
 		mp_uint(u->w_type);
-		mp_uint(state->highest_accepted);
-		mp_uint(state->highest_finalized);
+		mp_uint64(state->highest_accepted);
+		mp_uint64(state->highest_finalized);
 		break;
 	}
 
 	return 0;
 	#undef mp_array
 	#undef mp_uint
+	#undef mp_uint64
 	#undef mp_raw
 	#undef mp_raw_sizeof
 	#undef rv
