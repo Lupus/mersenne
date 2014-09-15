@@ -690,8 +690,9 @@ static void wal_replay_value(ME_P_ struct wal_value *w_value)
 	}
 	r->vb = w_value->vb;
 	store_record(ME_A_ r);
-	if (0 == ctx->lowest_available)
+	if (r->iid < ctx->lowest_available || 0 == ctx->lowest_available) {
 		ctx->lowest_available = r->iid;
+	}
 }
 
 static void wal_replay_promise(ME_P_ struct wal_promise *w_promise)
