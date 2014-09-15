@@ -9,3 +9,4 @@ option "run-time" r "Run time (in seconds)"int default="60" optional
 option "instance-timeout" t "Single instance timeout time" double default="1.0" optional
 option "log-level" l "Log level" values="error","warning","notice","info","debug" enum default="info" optional
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
+option "service-id" s "Use specified service id in value header" int default="0"

@@ -550,6 +550,7 @@ int main(int argc, char *argv[]) {
 	config.starting_iid = 0;
 	config.foreign_func = foreign_cb;
 	config.foreign_func_arg = &cc;
+	config.service_id = cc.args_info.service_id_arg;
 	cc.conn = me_cli_open(&config);
 
 	cc.main = fbr_create(&cc.fbr, "main", fiber_main, NULL, 0);

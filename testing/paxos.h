@@ -42,6 +42,7 @@ struct me_cli_config {
 	uint64_t starting_iid;
 	me_cli_foreign_func_t foreign_func;
 	void *foreign_func_arg;
+	uint16_t service_id;
 };
 
 static inline

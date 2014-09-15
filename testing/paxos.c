@@ -29,12 +29,15 @@ struct me_cli_connection {
 	uint64_t starting_iid;
 	me_cli_foreign_func_t foreign_func;
 	void *foreign_func_arg;
+	uint16_t service_id;
 };
 
 struct value_header {
 	uint8_t version;
 	uuid_t server_id;
 	uint64_t value_id;
+	uint16_t service_id;
+	uint64_t best_before_iid;
 } __attribute__((packed));
 
 void me_cli_value_dispose(struct me_cli_value *value)
@@ -128,6 +131,8 @@ static void submit_value(struct me_cli_connection *conn,
 	hdr->version = 1;
 	memcpy(hdr->server_id, conn->server_id, sizeof(uuid_t));
 	hdr->value_id = value->value_id;
+	hdr->service_id = conn->service_id;
+	hdr->best_before_iid = 0;
 	memcpy(hdr + 1, value->data, value->data_len);
 
 	me_msg.m_type = ME_CMT_NEW_VALUE;
@@ -462,6 +467,9 @@ static void replay_value(struct me_cli_connection *conn, void *ptr, size_t size,
 	struct value_header *hdr = ptr;
 	ptr = hdr + 1;
 
+	if (hdr->service_id != conn->service_id)
+		return;
+
 	if (0 != uuid_compare(hdr->server_id, conn->server_id)) {
 		fbr_log_d(conn->fctx, "received foreign paxos value");
 		if (conn->foreign_func)
@@ -610,6 +618,7 @@ struct me_cli_connection *me_cli_open(struct me_cli_config *config)
 	conn->starting_iid = config->starting_iid;
 	conn->foreign_func = config->foreign_func;
 	conn->foreign_func_arg = config->foreign_func_arg;
+	conn->service_id = config->service_id;
 	fbr_mutex_init(conn->fctx, &conn->mutex);
 	uuid_generate_time(conn->server_id);
 	conn->conn_initialized = 0;

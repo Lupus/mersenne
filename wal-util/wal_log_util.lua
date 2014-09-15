@@ -86,6 +86,8 @@ struct value_header {
 	uint8_t version;
 	uuid_t server_id;
 	uint64_t value_id;
+	uint16_t service_id;
+	uint64_t best_before_iid;
 } __attribute__((packed));
 ]]
 local wal_rec_header_t = ffi.typeof("struct wal_rec_header")
@@ -242,6 +244,10 @@ local function dump_current_record(env)
 			io.write(env.current_rec.header.server_id)
 			io.write(", value_id=")
 			io.write(env.current_rec.header.value_id)
+			io.write(", service_id=")
+			io.write(env.current_rec.header.service_id)
+			io.write(", best_before_iid=")
+			io.write(env.current_rec.header.best_before_iid)
 			io.write("\n")
 		end
 		io.write("\n")
@@ -278,6 +284,9 @@ local function decode_value_content(env, content)
 	env.current_rec.header.version = tonumber(value_header.version)
 	env.current_rec.header.server_id = buf
 	env.current_rec.header.value_id = tonumber(value_header.value_id)
+	env.current_rec.header.service_id = tonumber(value_header.service_id)
+	env.current_rec.header.best_before_iid =
+			tonumber(value_header.best_before_iid)
 	env.current_rec.payload = content:sub(ffi.sizeof(value_header_t))
 end
 
