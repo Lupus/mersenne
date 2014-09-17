@@ -1,3 +1,18 @@
+mersenne (0.9-10) unstable; urgency=low
+
+  * Added new paxos client connector for fiber clients
+  * Fixed vacuum/snapshot performance issues
+  * Added bytes written to stats logging
+  * Squashed 'evfibers/' changes from d17d37d..1ff4825
+  * Dropped acceptor truncate margin option
+  * Fixed mutex usage in client fiber
+  * Fixed undefined mctx in client
+  * Added an utility to dump the WAL/snapshot file
+  * Fixed ballot numbers to be actually 64bit in WAL
+  * Fixed calculation of lowest available upon restore
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Wed, 17 Sep 2014 11:30:16 +0400
+
 mersenne (0.9-9) unstable; urgency=low
 
   * Fixed inconsistencies amongst the replicas
