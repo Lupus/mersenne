@@ -1,3 +1,9 @@
+mersenne (0.9-12) unstable; urgency=low
+
+  * Added more metrics
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Thu, 18 Sep 2014 23:47:36 +0400
+
 mersenne (0.9-11.1) unstable; urgency=low
 
   * Fixed the build
