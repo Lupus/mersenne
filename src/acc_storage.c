@@ -977,7 +977,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	ev_now_update(mctx->loop);
 	t2 = ev_now(mctx->loop);
-	statd_send_timer(ME_A_ "acc_storage.snapshot.take_time",
+	statd_send_keyval(ME_A_ "acc_storage.snapshot.take_time",
 			t2 - t1);
 
 	/* Write the snapshot */

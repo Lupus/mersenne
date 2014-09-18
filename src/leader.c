@@ -33,6 +33,7 @@
 #include <mersenne/strenum.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/peers.h>
+#include <mersenne/statd.h>
 
 #define TIME_DELTA mctx->args_info.leader_delta_arg
 #define TIME_EPSILON mctx->args_info.leader_epsilon_arg
@@ -122,6 +123,7 @@ void lost_leadership(ME_P)
 void gained_leadership(ME_P)
 {
 	fbr_log_i(&mctx->fbr, "Gained Leadership :)");
+	statd_send_counter(ME_A_ "leader.changes", 1);
 	pro_start(ME_A);
 }
 

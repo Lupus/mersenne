@@ -36,6 +36,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/bitmask.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/statd.h>
 
 //#define WINDOW_DUMP
 
@@ -117,8 +118,10 @@ int pro_push_value(ME_P_ struct buffer *value)
 	retval = pending_append(ME_A_ value);
 	if (retval) {
 		fbr_log_d(&mctx->fbr, "failed to append a value to the queue");
+		mctx->delayed_stats.proposer_queue_dropped++;
 		return retval;
 	}
+	mctx->delayed_stats.proposer_queue_accepted++;
 	fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	return 0;
 }
@@ -477,6 +480,7 @@ void do_is_delivered(ME_P_ struct pro_instance *instance, struct ie_base *base)
 				if(v2_eql_to(instance, d->buffer)) {
 					//TODO: Client value delivered,
 					//TODO: inform it about this
+					mctx->delayed_stats.proposer_values_delivered++;
 				} else
 					pending_unshift(ME_A_ instance->p2.v);
 			}

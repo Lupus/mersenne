@@ -70,6 +70,9 @@ struct me_context {
 		unsigned proposer_p1_timeouts;
 		unsigned proposer_p2_execs;
 		unsigned proposer_p2_timeouts;
+		unsigned proposer_queue_accepted;
+		unsigned proposer_queue_dropped;
+		unsigned proposer_values_delivered;
 		unsigned learner_retransmits;
 		unsigned acceptor_lea_fast_path_failures;
 	} delayed_stats ;

@@ -179,6 +179,15 @@ static void stats_report(ME_P)
 	statd_send_counter(ME_A_ "proposer.p2.timeouts",
 			mctx->delayed_stats.proposer_p2_timeouts);
 	mctx->delayed_stats.proposer_p2_timeouts = 0;
+	statd_send_counter(ME_A_ "proposer.queue.accepted",
+			mctx->delayed_stats.proposer_queue_accepted);
+	mctx->delayed_stats.proposer_queue_accepted = 0;
+	statd_send_counter(ME_A_ "proposer.queue.dropped",
+			mctx->delayed_stats.proposer_queue_dropped);
+	mctx->delayed_stats.proposer_queue_dropped = 0;
+	statd_send_counter(ME_A_ "proposer.values_delivered",
+			mctx->delayed_stats.proposer_values_delivered);
+	mctx->delayed_stats.proposer_values_delivered = 0;
 
 	statd_send_counter(ME_A_ "learner.retransmits",
 			mctx->delayed_stats.learner_retransmits);
