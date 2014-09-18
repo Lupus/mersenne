@@ -74,6 +74,7 @@ const char *strval_instance_event_type(enum instance_event_type val)
 		case IE_I: return "IE_I";
 		case IE_S: return "IE_S";
 		case IE_TO: return "IE_TO";
+		case IE_TO21: return "IE_TO21";
 		case IE_P: return "IE_P";
 		case IE_R0: return "IE_R0";
 		case IE_R1: return "IE_R1";

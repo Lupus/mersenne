@@ -178,6 +178,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 				" as it's finalized", data->i);
 		return;
 	}
+	assert(data->i > acs_get_highest_finalized(ME_A));
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		// We got an accept for an instance we know nothing about
 		// without prior prepare.
@@ -187,6 +188,7 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 		r->v = NULL;
 		r->vb = 0;
 	}
+	assert(r->iid == data->i);
 	if (data->b < r->b) {
 		send_reject(ME_A_ r, from);
 		goto cleanup;
@@ -209,9 +211,9 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 				" is ``%.*s'', size %d", r->iid,
 				(unsigned)r->v->size1, r->v->ptr, r->v->size1);
 	}
+	acs_store_record(ME_A_ r);
 	if (r->iid > acs_get_highest_accepted(ME_A))
 		acs_set_highest_accepted(ME_A_ r->iid);
-	acs_store_record(ME_A_ r);
 	record_send_learn(ME_A_ r, NULL);
 cleanup:
 	acs_free_record(ME_A_ r);
@@ -344,6 +346,7 @@ static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
 	}
 	if (!batch_required)
 		return;
+	mctx->delayed_stats.acceptor_lea_fast_path_failures++;
 	fbr_log_d(&mctx->fbr, "fast path failed for learner updates on #%ld",
 			instance_info->iid);
 	acs_batch_start(ME_A);

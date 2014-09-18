@@ -34,6 +34,7 @@
 #include <mersenne/message.h>
 #include <mersenne/context.h>
 #include <mersenne/util.h>
+#include <mersenne/statd.h>
 #include <mersenne/wal_obj.h>
 
 static const uint32_t WAL_MAGIC = 0xcf52754d;
@@ -510,9 +511,13 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
 	if (retval < total)
 		err(EXIT_FAILURE, "writev failed");
+	statd_send_counter(ME_A_ "acc_storage.rows", log->iov_rows);
 	log->stat.n_rows += log->iov_rows;
+	statd_send_counter(ME_A_ "acc_storage.buffers", kv_size(log->iov));
 	log->stat.n_buffers += kv_size(log->iov);
+	statd_send_counter(ME_A_ "acc_storage.bytes", total);
 	log->stat.n_bytes += total;
+	statd_send_timer(ME_A_ "acc_storage.flush_time", log->flush_io);
 	log->stat.n_useconds += (unsigned)(log->flush_io * 1e6);
 	log->stat.n_flushes++;
 	fbr_log_d(&mctx->fbr, "wrotev %d rows containing %zd buffers with %zd"
@@ -634,6 +639,8 @@ static void sync_fiber(struct fbr_context *fiber_context, void *_arg)
 	retval = fbr_eio_custom(&mctx->fbr, log_sync_custom_cb, log, 0);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "fdatasync failed");
+
+	statd_send_timer(ME_A_ "acc_storage.sync_time", log->flush_io);
 	log->stat.n_sync_useconds = (unsigned)(log->flush_io * 1e6);
 	kv_push(struct acs_iov_stat, ctx->stats, log->stat);
 	memset(&log->stat, 0x00, sizeof(log->stat));
@@ -951,11 +958,14 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct wal_log snap;
 	ssize_t retval;
 	struct acs_context snap_acs_ctx;
+	ev_tstamp t1, t2;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	ctx = &mctx->pxs.acc.acs;
 	lsn = ctx->confirmed_lsn - 1;
 
+	ev_now_update(mctx->loop);
+	t1 = ev_now(mctx->loop);
 	/* Take the snapshot */
 	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	SLIST_INIT(&ctx->snap_instances);
@@ -965,9 +975,14 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
+	ev_now_update(mctx->loop);
+	t2 = ev_now(mctx->loop);
+	statd_send_timer(ME_A_ "acc_storage.snapshot.take_time",
+			t2 - t1);
 
 	/* Write the snapshot */
 	fbr_sleep(&mctx->fbr, rand() % 60);
+	t1 = ev_now(mctx->loop);
 	fbr_log_i(&mctx->fbr, "started writing snapshot for %lu", lsn);
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
 	if (-1 == retval)
@@ -993,6 +1008,8 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	ctx->snap_dir.max_lsn = lsn;
 	ctx->snapshot_fiber = FBR_ID_NULL;
 	fbr_log_i(&mctx->fbr, "finished writing snapshot for %lu", lsn);
+	t2 = ev_now(mctx->loop);
+	statd_send_keyval(ME_A_ "acc_storage.snapshot.write_time", t2 - t1);
 }
 
 static void create_snapshot(ME_P)
@@ -1374,6 +1391,9 @@ void acs_vacuum(ME_P)
 			ctx->lowest_available);
 	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
 	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
+	statd_send_timer(ME_A_ "acc_storage.vacuum_time", t2 - t1);
+	statd_send_gauge(ME_A_ "acc_storage.lowest_available",
+			ctx->lowest_available);
 }
 
 int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,

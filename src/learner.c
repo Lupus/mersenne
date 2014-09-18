@@ -145,6 +145,7 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 		instance = get_instance(context, i);
 		instance->modified = ev_now(mctx->loop);
 	}
+	mctx->delayed_stats.learner_retransmits += i - 1;
 	fbr_log_d(&mctx->fbr, "requested retransmits from %ld to %ld",
 			from, to);
 }

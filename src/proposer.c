@@ -305,6 +305,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			instance->p1.vb = 0;
 			instance->client_value = 0;
 			send_prepare(ME_A_ instance);
+			mctx->delayed_stats.proposer_p1_execs++;
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -357,13 +358,17 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			}
 			break;
 		case IE_TO:
+		case IE_TO21:
 			fbr_log_d(&mctx->fbr, "Phase 1 timeout for instance "
 					"#%lu at ballot #%lu", instance->iid,
 					instance->b);
+			if (IE_TO == base->type)
+				mctx->delayed_stats.proposer_p1_timeouts++;
 			bm_clear_all(instance->p1.acks);
 			instance->p1.vb = 0;
 			instance->b = new_ballot(ME_A);
 			send_prepare(ME_A_ instance);
+			mctx->delayed_stats.proposer_p1_execs++;
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -435,9 +440,11 @@ void do_is_p1_ready_with_value(ME_P_ struct pro_instance *instance, struct ie_ba
 
 void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 {
+	struct ie_base new_base;
 	switch(base->type) {
 		case IE_E:
 			send_accept(ME_A_ instance);
+			mctx->delayed_stats.proposer_p2_execs++;
 			ev_timer_set(&instance->timer, 0., TO2);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -445,9 +452,11 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			fbr_log_d(&mctx->fbr, "Phase 2 timeout for instance"
 					" #%lu at ballot #%lu", instance->iid,
 					instance->b);
+			mctx->delayed_stats.proposer_p2_timeouts++;
+			new_base.type = IE_TO21;
 			switch_instance(ME_A_ instance,
 					IS_P1_PENDING,
-					base);
+					&new_base);
 			break;
 
 		default:

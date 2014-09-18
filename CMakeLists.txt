@@ -73,6 +73,7 @@ set(MERSENNE_SOURCES
 	"src/client.c"
 	"src/leader.c"
 	"src/acceptor.c"
+	"src/statd.c"
 	"src/mersenne.c"
 	)
 ragel_add_include("${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include")

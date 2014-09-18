@@ -56,4 +56,5 @@ int main(int argc, char **argv)
 		t1 = now();
 		printf("%f s% 20f b/s\n", t1 - t0, blk_size / (t1 - t0));
 	}
+	return 0;
 }

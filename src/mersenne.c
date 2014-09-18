@@ -45,6 +45,7 @@
 #include <mersenne/fiber_args.h>
 #include <mersenne/client.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/statd.h>
 #include <mersenne/cmdline.h>
 
 #define LISTEN_BACKLOG 50
@@ -156,8 +157,57 @@ static void ev_signal_dtor(struct fbr_context *fiber_context, void *arg)
 	ev_signal_stop(mctx->loop, s);
 }
 
+static void stats_report(ME_P)
+{
+
+	statd_send_counter(ME_A_ "messages.sent",
+			mctx->delayed_stats.msg_sent);
+	mctx->delayed_stats.msg_sent = 0;
+	statd_send_counter(ME_A_ "messages.received",
+			mctx->delayed_stats.msg_recv);
+	mctx->delayed_stats.msg_recv = 0;
+
+	statd_send_counter(ME_A_ "proposer.p1.executions",
+			mctx->delayed_stats.proposer_p1_execs);
+	mctx->delayed_stats.proposer_p1_execs = 0;
+	statd_send_counter(ME_A_ "proposer.p1.timeouts",
+			mctx->delayed_stats.proposer_p1_timeouts);
+	mctx->delayed_stats.proposer_p1_timeouts = 0;
+	statd_send_counter(ME_A_ "proposer.p2.executions",
+			mctx->delayed_stats.proposer_p2_execs);
+	mctx->delayed_stats.proposer_p2_execs = 0;
+	statd_send_counter(ME_A_ "proposer.p2.timeouts",
+			mctx->delayed_stats.proposer_p2_timeouts);
+	mctx->delayed_stats.proposer_p2_timeouts = 0;
+
+	statd_send_counter(ME_A_ "learner.retransmits",
+			mctx->delayed_stats.learner_retransmits);
+	mctx->delayed_stats.learner_retransmits = 0;
+
+	statd_send_gauge(ME_A_ "acc_storage.highest_accepted",
+			acs_get_highest_accepted(ME_A));
+	statd_send_gauge(ME_A_ "acc_storage.highest_finalized",
+			acs_get_highest_finalized(ME_A));
+
+	statd_send_counter(ME_A_ "acceptor.learner_fast_path_fails",
+			mctx->delayed_stats.acceptor_lea_fast_path_failures);
+	mctx->delayed_stats.acceptor_lea_fast_path_failures = 0;
+}
+
+static void fiber_stats(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	for (;;) {
+		fbr_sleep(&mctx->fbr, 1);
+		stats_report(ME_A);
+	}
+}
+
 static void mersenne_start(ME_P)
 {
+	fbr_id_t id;
 	TAILQ_INIT(&mctx->learners);
 
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
@@ -165,6 +215,12 @@ static void mersenne_start(ME_P)
 	set_up_udp_socket(ME_A);
 	set_up_client_tcp_socket(ME_A);
 
+	if (mctx->args_info.statd_ip_given) {
+		statd_init(ME_A_ mctx->args_info.statd_ip_arg,
+				mctx->args_info.statd_port_arg);
+		id = fbr_create(&mctx->fbr, "main", fiber_stats, NULL, 0);
+		fbr_transfer(&mctx->fbr, id);
+	}
 	pxs_fiber_init(ME_A);
 
 	mctx->fiber_listener = fbr_create(&mctx->fbr, "listener",

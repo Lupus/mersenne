@@ -66,6 +66,7 @@ enum instance_event_type {
 	IE_I = 0,
 	IE_S,
 	IE_TO,
+	IE_TO21,
 	IE_P,
 	IE_R0,
 	IE_R1,
@@ -92,6 +93,11 @@ struct ie_nv {
 
 struct ie_d {
 	struct buffer *buffer;
+	struct ie_base b;
+};
+
+struct ie_to {
+	int propagated_from_p2;
 	struct ie_base b;
 };
 

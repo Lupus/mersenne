@@ -40,6 +40,7 @@ struct fiber_tailq_i {
 
 TAILQ_HEAD(fiber_tailq, fiber_tailq_i);
 
+
 struct me_context {
 	struct gengetopt_args_info args_info;
 	struct ev_loop *loop;
@@ -59,6 +60,19 @@ struct me_context {
 	fbr_id_t fiber_proposer;
 	fbr_id_t fiber_tcp_client;
 	struct fiber_tailq learners;
+	struct sockaddr_in statd_addr;
+	int use_statd;
+	int statd_sock;
+	struct {
+		unsigned msg_sent;
+		unsigned msg_recv;
+		unsigned proposer_p1_execs;
+		unsigned proposer_p1_timeouts;
+		unsigned proposer_p2_execs;
+		unsigned proposer_p2_timeouts;
+		unsigned learner_retransmits;
+		unsigned acceptor_lea_fast_path_failures;
+	} delayed_stats ;
 };
 
 #define ME_CONTEXT_INITIALIZER { \

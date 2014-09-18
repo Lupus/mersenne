@@ -49,6 +49,7 @@ static void process_message(ME_P_ XDR *xdrs, struct me_peer *from, size_t size)
 		errx(EXIT_FAILURE, "xdr_me_message: unable to decode a "
 				"message at %d", pos);
 
+	mctx->delayed_stats.msg_recv++;
 	msg_perf_dump(ME_A_ msg, MSG_DIR_RECEIVED, &from->addr, size);
 
 	switch(msg->super_type) {
@@ -299,6 +300,7 @@ void msg_send_matching(ME_P_ struct me_message *msg,
 		if(!predicate(p, context))
 			continue;
 		if (mctx->me == p) {
+			mctx->delayed_stats.msg_sent++;
 			msg_perf_dump(ME_A_ msg, 1, &p->addr, size);
 			process_message_buf(ME_A_ buf, size,
 					(struct sockaddr *)&mctx->me->addr,
@@ -312,6 +314,8 @@ void msg_send_matching(ME_P_ struct me_message *msg,
 		if (retval < size)
 			fbr_log_n(&mctx->fbr, "message got truncated from %d to"
 					" %d while sending", size, retval);
+
+		mctx->delayed_stats.msg_sent++;
 		msg_perf_dump(ME_A_ msg, 1, &p->addr, size);
 	}
 	xdr_destroy(&xdrs);
