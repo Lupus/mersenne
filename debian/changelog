@@ -1,3 +1,9 @@
+mersenne (0.9-13) unstable; urgency=low
+
+  * Split snapshot and wal metrics and folders
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Fri, 19 Sep 2014 17:23:02 +0400
+
 mersenne (0.9-12) unstable; urgency=low
 
   * Added more metrics
