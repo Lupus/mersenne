@@ -374,6 +374,7 @@ void in_progress_rename(struct wal_log *log)
 		err(EXIT_FAILURE, "rename of %s to %s failed", filename,
 				new_filename);
 	log->in_progress = 0;
+	strncpy(log->filename, new_filename, PATH_MAX);
 }
 
 void in_progress_unlink(char *filename)
@@ -504,6 +505,8 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	int i;
 	ssize_t retval;
 	size_t total = 0;
+	char *name;
+	char buf[64];
 	if (0 == kv_size(log->iov))
 		return;
 	for (i = 0; i < kv_size(log->iov); i++)
@@ -511,13 +514,21 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
 	if (retval < total)
 		err(EXIT_FAILURE, "writev failed");
-	statd_send_counter(ME_A_ "acc_storage.rows", log->iov_rows);
+	if (log->dir->kind == ALK_WAL)
+		name = "wal";
+	else
+		name = "snap";
+	snprintf(buf, sizeof(buf), "acc_storage.%s.rows", name);
+	statd_send_counter(ME_A_ buf, log->iov_rows);
 	log->stat.n_rows += log->iov_rows;
-	statd_send_counter(ME_A_ "acc_storage.buffers", kv_size(log->iov));
+	snprintf(buf, sizeof(buf), "acc_storage.%s.buffers", name);
+	statd_send_counter(ME_A_ buf, kv_size(log->iov));
 	log->stat.n_buffers += kv_size(log->iov);
-	statd_send_counter(ME_A_ "acc_storage.bytes", total);
+	snprintf(buf, sizeof(buf), "acc_storage.%s.bytes", name);
+	statd_send_counter(ME_A_ buf, total);
 	log->stat.n_bytes += total;
-	statd_send_timer(ME_A_ "acc_storage.flush_time", log->flush_io);
+	snprintf(buf, sizeof(buf), "acc_storage.%s.flush_time", name);
+	statd_send_timer(ME_A_ buf, log->flush_io);
 	log->stat.n_useconds += (unsigned)(log->flush_io * 1e6);
 	log->stat.n_flushes++;
 	fbr_log_d(&mctx->fbr, "wrotev %d rows containing %zd buffers with %zd"
@@ -630,6 +641,8 @@ static void sync_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct acs_context *ctx;
 	struct wal_log *log = _arg;
 	ssize_t retval;
+	char buf[64];
+	char *name;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	ctx = &mctx->pxs.acc.acs;
@@ -640,7 +653,12 @@ static void sync_fiber(struct fbr_context *fiber_context, void *_arg)
 	if (-1 == retval)
 		err(EXIT_FAILURE, "fdatasync failed");
 
-	statd_send_timer(ME_A_ "acc_storage.sync_time", log->flush_io);
+	if (log->dir->kind == ALK_WAL)
+		name = "wal";
+	else
+		name = "snap";
+	snprintf(buf, sizeof(buf), "acc_storage.%s.sync_time", name);
+	statd_send_timer(ME_A_ buf, log->flush_io);
 	log->stat.n_sync_useconds = (unsigned)(log->flush_io * 1e6);
 	kv_push(struct acs_iov_stat, ctx->stats, log->stat);
 	memset(&log->stat, 0x00, sizeof(log->stat));
@@ -959,6 +977,8 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	ssize_t retval;
 	struct acs_context snap_acs_ctx;
 	ev_tstamp t1, t2;
+	static char wdfn[PATH_MAX + 1];
+	static char tmp[PATH_MAX + 1] = {0};
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	ctx = &mctx->pxs.acc.acs;
@@ -1005,6 +1025,19 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 	in_progress_rename(&snap);
 	wal_log_close(ME_A_ &snap);
+	snprintf(wdfn, PATH_MAX, "%s/%020lld%s", ctx->wal_dir.dirname,
+			(long long)lsn, ctx->snap_dir.ext);
+	if (access(wdfn, R_OK) && ENOENT == errno) {
+		retval = fbr_eio_realpath(&mctx->fbr, snap.filename, tmp,
+				PATH_MAX, 0);
+		if (retval)
+			fbr_log_w(&mctx->fbr, "failed to realpath %s: %s",
+					snap.filename, strerror(errno));
+		retval = fbr_eio_symlink(&mctx->fbr, tmp, wdfn, 0);
+		if (retval)
+			fbr_log_w(&mctx->fbr, "failed to symlink %s to %s: %s",
+					tmp, wdfn, strerror(errno));
+	}
 	ctx->snap_dir.max_lsn = lsn;
 	ctx->snapshot_fiber = FBR_ID_NULL;
 	fbr_log_i(&mctx->fbr, "finished writing snapshot for %lu", lsn);
@@ -1052,7 +1085,7 @@ static void recover_snapshot(ME_P)
 static void recover(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	ctx->snap_dir.dirname = mctx->args_info.acceptor_wal_dir_arg;
+	ctx->snap_dir.dirname = mctx->args_info.acceptor_snap_dir_arg;
 	scan_log_dir(ME_A_ &ctx->snap_dir);
 	ctx->wal_dir.dirname = mctx->args_info.acceptor_wal_dir_arg;
 	scan_log_dir(ME_A_ &ctx->wal_dir);
@@ -1282,7 +1315,7 @@ void acs_batch_finish(ME_P)
 
 	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
 	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
-	if (rows_per_snap > mctx->args_info.acceptor_wal_snap_arg)
+	if (rows_per_snap > mctx->args_info.acceptor_snap_rows_arg)
 		create_snapshot(ME_A);
 	fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 }
