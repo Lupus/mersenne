@@ -1,3 +1,11 @@
+mersenne (0.9-14) unstable; urgency=low
+
+  * Reduced message spam in learner
+  * Introduced additional metrics from learner
+  * Fixed retransmit instances metric in learner
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Tue, 23 Sep 2014 21:59:20 +0400
+
 mersenne (0.9-13) unstable; urgency=low
 
   * Split snapshot and wal metrics and folders
