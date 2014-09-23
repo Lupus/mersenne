@@ -180,13 +180,13 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 	}
 	if (!found_acceptor) {
 		pxs_send_acceptors(ME_A_ &msg);
-		mctx->delayed_stats.learner_unicast_requests++;
+		mctx->delayed_stats.learner_broadcast_requests++;
 	}
 	for (i = from; i < to; i++) {
 		instance = get_instance(context, i);
 		instance->modified = ev_now(mctx->loop);
 	}
-	mctx->delayed_stats.learner_retransmits += to - from;
+	mctx->delayed_stats.learner_retransmits += to - from + 1;
 	fbr_log_d(&mctx->fbr, "requested retransmits from %ld to %ld",
 			from, to);
 }
