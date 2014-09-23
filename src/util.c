@@ -99,3 +99,49 @@ void perf_snap_finish(ME_P_ struct perf_snap *snap)
 	snap->encounters++;
 	snap->start = 0;
 }
+
+/**
+ * Encodes an unsigned variable-length integer using the MSB algorithm.
+ * @param value The input value. Any standard integer type is allowed.
+ * @param output A pointer to a piece of reserved memory. Should have a minimum
+ * size dependent on the input size (32 bit = 5 bytes, 64 bit = 10 bytes).
+ * @param outputSizePtr A pointer to a single integer that is set to the number
+ * of bytes used in the output memory.
+ */
+void encode_varint(uint64_t value, uint8_t* output, uint8_t* output_size_ptr)
+{
+	uint8_t output_size = 0;
+	/* While more than 7 bits of data are left, occupy the last output byte
+	 * and set the next byte flag
+	 */
+	while (value > 127) {
+		/* |128: Set the next byte flag */
+		output[output_size] = ((uint8_t)(value & 127)) | 128;
+		/* Remove the seven bits we just wrote */
+		value >>= 7;
+		output_size++;
+	}
+	output[output_size++] = ((uint8_t)value) & 127;
+	*output_size_ptr = output_size;
+}
+
+/**
+ * Decodes an unsigned variable-length integer using the MSB algorithm.
+ * @param value The input value. Any standard integer type is allowed.
+ * @param output A pointer to a piece of reserved memory. Should have a minimum
+ * size dependent on the input size (32 bit = 5 bytes, 64 bit = 10 bytes).
+ * @param outputSize A pointer to a single integer that is set to the number of
+ * bytes used in the output memory.
+ */
+uint64_t decode_varint(uint8_t* input, uint8_t input_size) {
+	uint64_t ret = 0;
+	uint8_t i;
+	for (i = 0; i < input_size; i++) {
+		ret |= (input[i] & 127) << (7 * i);
+		/* If the next-byte flag is set */
+		if (!(input[i] & 128)) {
+			break;
+		}
+	}
+	return ret;
+}

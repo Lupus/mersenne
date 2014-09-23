@@ -70,4 +70,7 @@ void perf_snap_init(ME_P_ struct perf_snap *snap);
 void perf_snap_start(ME_P_ struct perf_snap *snap);
 void perf_snap_finish(ME_P_ struct perf_snap *snap);
 
+void encode_varint(uint64_t value, uint8_t* output, uint8_t* output_size_ptr);
+uint64_t decode_varint(uint8_t* input, uint8_t input_size);
+
 #endif
