@@ -40,6 +40,13 @@ struct lea_ack {
 	struct buffer *v;
 };
 
+struct lea_acc_state {
+	uint64_t highest_accepted;
+	uint64_t highest_finalized;
+	uint64_t lowest_available;
+	struct me_peer *peer;
+};
+
 struct lea_instance {
 	uint64_t iid;
 	struct lea_ack *acks;
@@ -57,6 +64,7 @@ struct learner_context {
 	struct lea_fiber_arg *arg;
 	struct fbr_buffer buffer;
 	struct fiber_tailq_i item;
+	struct lea_acc_state *acc_states;
 };
 
 static inline struct lea_instance * get_instance(struct learner_context
@@ -129,6 +137,21 @@ static inline void do_deliver(ME_P_ struct learner_context *context,
 			instance->chosen->b, instance->chosen->v);
 }
 
+void shuffle(struct lea_acc_state **array, size_t n)
+{
+	size_t i, j;
+	struct lea_acc_state* t;
+	if (n <= 1)
+		return;
+	for (i = 0; i < n - 1; i++)
+	{
+		j = i + rand() / (RAND_MAX / (n - i) + 1);
+		t = array[j];
+		array[j] = array[i];
+		array[i] = t;
+	}
+}
+
 static void send_retransmit(ME_P_ struct learner_context *context,
 		uint64_t from, uint64_t to)
 {
@@ -136,16 +159,34 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 	struct lea_instance *instance;
+	struct lea_acc_state **acc_states;
+	unsigned x;
+	int found_acceptor = 0;
 	msg.super_type = ME_PAXOS;
 	data->type = ME_PAXOS_RETRANSMIT;
 	data->me_paxos_msg_data_u.retransmit.from = from;
 	data->me_paxos_msg_data_u.retransmit.to = to;
-	pxs_send_acceptors(ME_A_ &msg);
+	acc_states = alloca(pxs_acceptors_count(ME_A) * sizeof(void *));
+	for (x = 0; x < pxs_acceptors_count(ME_A); x++)
+		acc_states[x] = context->acc_states + x;
+	shuffle(acc_states, pxs_acceptors_count(ME_A));
+	for (x = 0; x < pxs_acceptors_count(ME_A); x++) {
+		if (acc_states[x]->highest_finalized >= to) {
+			msg_send_to(ME_A_ &msg, acc_states[x]->peer->index);
+			mctx->delayed_stats.learner_unicast_requests++;
+			found_acceptor = 1;
+			break;
+		}
+	}
+	if (!found_acceptor) {
+		pxs_send_acceptors(ME_A_ &msg);
+		mctx->delayed_stats.learner_unicast_requests++;
+	}
 	for (i = from; i < to; i++) {
 		instance = get_instance(context, i);
 		instance->modified = ev_now(mctx->loop);
 	}
-	mctx->delayed_stats.learner_retransmits += i - 1;
+	mctx->delayed_stats.learner_retransmits += to - from;
 	fbr_log_d(&mctx->fbr, "requested retransmits from %ld to %ld",
 			from, to);
 }
@@ -332,16 +373,21 @@ close_instance:
 	try_deliver(ME_A_ context);
 }
 
-static void do_last_accepted(ME_P_ struct learner_context *context,
+static void do_acceptor_state(ME_P_ struct learner_context *context,
 		struct me_paxos_message *pmsg, struct me_peer *from)
 {
-	struct me_paxos_last_accepted_data *data;
-
-	data = &pmsg->data.me_paxos_msg_data_u.last_accepted;
-	if (data->i > context->highest_seen) {
-		fbr_log_d(&mctx->fbr, "updating highest seen to %ld", data->i);
-		context->highest_seen = data->i;
+	struct me_paxos_acceptor_state *data;
+	struct lea_acc_state *acc_state;
+	data = &pmsg->data.me_paxos_msg_data_u.acceptor_state;
+	if (data->highest_accepted > context->highest_seen) {
+		fbr_log_d(&mctx->fbr, "updating highest seen to %ld",
+				data->highest_accepted);
+		context->highest_seen = data->highest_accepted;
 	}
+	acc_state = context->acc_states + from->acc_index;
+	acc_state->highest_accepted = data->highest_accepted;
+	acc_state->highest_finalized = data->highest_finalized;
+	acc_state->lowest_available = data->lowest_available;
 }
 
 static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
@@ -443,6 +489,7 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 static void init_context(ME_P_	struct learner_context *context,
 		struct lea_fiber_arg *arg)
 {
+	unsigned i;
 	context->first_non_delivered = arg->starting_iid;
 	context->mctx = mctx;
 	context->arg = arg;
@@ -458,6 +505,11 @@ static void init_context(ME_P_	struct learner_context *context,
 	context->highest_seen = context->first_non_delivered;
 	fbr_log_d(&mctx->fbr, "highest_seen = %ld, first_non_delivered = %ld",
 			context->highest_seen, context->first_non_delivered);
+	context->acc_states = calloc(pxs_acceptors_count(ME_A),
+				sizeof(struct lea_acc_state));
+	assert(context->acc_states);
+	for (i = 0; i < pxs_acceptors_count(ME_A); i++)
+		context->acc_states[i].peer = find_peer_by_acc_index(ME_A_ i);
 }
 
 static void init_window(ME_P_ struct learner_context *context)
@@ -521,8 +573,8 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 			do_learn(ME_A_ &context, pmsg, buf, info.from);
 			sm_free(info.buf);
 			break;
-		case ME_PAXOS_LAST_ACCEPTED:
-			do_last_accepted(ME_A_ &context, pmsg, info.from);
+		case ME_PAXOS_ACCEPTOR_STATE:
+			do_acceptor_state(ME_A_ &context, pmsg, info.from);
 			break;
 		default:
 			errx(EXIT_FAILURE,

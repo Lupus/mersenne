@@ -99,7 +99,7 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 		sm_free(buf);
 		break;
 
-	case ME_PAXOS_LAST_ACCEPTED:
+	case ME_PAXOS_ACCEPTOR_STATE:
 		TAILQ_FOREACH(item, &mctx->learners, entries) {
 			fb = fbr_get_user_data(&mctx->fbr, item->id);
 			assert(NULL != fb);

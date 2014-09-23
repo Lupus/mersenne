@@ -45,6 +45,7 @@ struct me_peer {
 void add_peer(ME_P_ struct me_peer *p);
 struct me_peer *find_peer(ME_P_ struct sockaddr_in *addr);
 struct me_peer *find_peer_by_index(ME_P_ int index);
+struct me_peer *find_peer_by_acc_index(ME_P_ int acc_index);
 void delete_peer(ME_P_ struct me_peer *peer);
 void load_peer_list(ME_P_ int my_index);
 int peer_count(ME_P);

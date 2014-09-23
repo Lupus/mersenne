@@ -105,15 +105,22 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 		msg_send_to(ME_A_ &msg, to->index);
 }
 
-static void send_highest_accepted(ME_P)
+static void send_state(ME_P)
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
 	uint64_t iid;
-	iid = acs_get_highest_accepted(ME_A);
 	msg.super_type = ME_PAXOS;
-	data->type = ME_PAXOS_LAST_ACCEPTED;
-	data->me_paxos_msg_data_u.last_accepted.i = iid;
+	data->type = ME_PAXOS_ACCEPTOR_STATE;
+
+	iid = acs_get_highest_accepted(ME_A);
+	data->me_paxos_msg_data_u.acceptor_state.highest_accepted = iid;
+
+	iid = acs_get_highest_finalized(ME_A);
+	data->me_paxos_msg_data_u.acceptor_state.highest_finalized = iid;
+
+	iid = acs_get_lowest_available(ME_A);
+	data->me_paxos_msg_data_u.acceptor_state.lowest_available = iid;
 	msg_send_all(ME_A_ &msg);
 }
 
@@ -251,7 +258,7 @@ static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
 	for(;;) {
-		send_highest_accepted(ME_A);
+		send_state(ME_A);
 		fbr_sleep(&mctx->fbr, mctx->args_info.acceptor_repeat_interval_arg);
 	}
 }

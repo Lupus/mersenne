@@ -74,6 +74,8 @@ struct me_context {
 		unsigned proposer_queue_dropped;
 		unsigned proposer_values_delivered;
 		unsigned learner_retransmits;
+		unsigned learner_unicast_requests;
+		unsigned learner_broadcast_requests;
 		unsigned acceptor_lea_fast_path_failures;
 	} delayed_stats ;
 };

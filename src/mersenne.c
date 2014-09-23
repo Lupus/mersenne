@@ -189,9 +189,15 @@ static void stats_report(ME_P)
 			mctx->delayed_stats.proposer_values_delivered);
 	mctx->delayed_stats.proposer_values_delivered = 0;
 
-	statd_send_counter(ME_A_ "learner.retransmits",
+	statd_send_counter(ME_A_ "learner.retransmit.instances",
 			mctx->delayed_stats.learner_retransmits);
 	mctx->delayed_stats.learner_retransmits = 0;
+	statd_send_counter(ME_A_ "learner.retransmit.req.unicast",
+			mctx->delayed_stats.learner_unicast_requests);
+	mctx->delayed_stats.learner_unicast_requests = 0;
+	statd_send_counter(ME_A_ "learner.retransmit.req.broadcast",
+			mctx->delayed_stats.learner_broadcast_requests);
+	mctx->delayed_stats.learner_broadcast_requests = 0;
 
 	statd_send_gauge(ME_A_ "acc_storage.highest_accepted",
 			acs_get_highest_accepted(ME_A));

@@ -49,6 +49,17 @@ struct me_peer *find_peer_by_index(ME_P_ int index)
 	return NULL;
 }
 
+struct me_peer *find_peer_by_acc_index(ME_P_ int acc_index)
+{
+	struct me_peer *p;
+
+	for(p=mctx->peers; p != NULL; p=p->hh.next) {
+		if(p->acc_index == acc_index)
+			return p;
+	}
+	return NULL;
+}
+
 void delete_peer(ME_P_ struct me_peer *peer)
 {
 	HASH_DEL(mctx->peers, peer);
