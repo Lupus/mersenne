@@ -687,9 +687,11 @@ static void store_record(ME_P_ struct acc_instance_record *record)
 	struct acc_instance_record *w = NULL;
 
 	HASH_FIND_WIID(ctx->instances, &record->iid, w);
-	if(NULL == w) {
+	if (NULL == w) {
 		record->stored = 1;
 		HASH_ADD_WIID(ctx->instances, iid, record);
+		if (record->iid > ctx->highest_stored)
+			ctx->highest_stored = record->iid;
 	}
 }
 
@@ -967,41 +969,32 @@ static void wal_write_value(ME_P_ struct acc_instance_record *r)
 	wal_write_value_to(ME_A_ r, ctx->wal);
 }
 
+int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
+		enum acs_find_mode mode);
+
 static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	struct acs_context *ctx;
 	uint64_t lsn;
-	struct acc_instance_record *r, *x;
+	struct acc_instance_record *r;
 	struct wal_log snap;
 	ssize_t retval;
 	struct acs_context snap_acs_ctx;
 	ev_tstamp t1, t2;
 	static char wdfn[PATH_MAX + 1];
 	static char tmp[PATH_MAX + 1] = {0};
+	uint64_t i;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	ctx = &mctx->pxs.acc.acs;
 	lsn = ctx->confirmed_lsn - 1;
+	ctx->cow_min = ctx->lowest_available;
+	ctx->cow_max = ctx->highest_stored;
 
-	ev_now_update(mctx->loop);
-	t1 = ev_now(mctx->loop);
-	/* Take the snapshot */
-	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
-	SLIST_INIT(&ctx->snap_instances);
-	for (r = ctx->instances; r != NULL; r = r->hh.next) {
-		r->is_cow = 1;
-		SLIST_INSERT_HEAD(&ctx->snap_instances, r, entries);
-	}
 	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
-	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
-	ev_now_update(mctx->loop);
-	t2 = ev_now(mctx->loop);
-	statd_send_keyval(ME_A_ "acc_storage.snapshot.take_time",
-			t2 - t1);
 
 	/* Write the snapshot */
-	fbr_sleep(&mctx->fbr, rand() % 60);
 	t1 = ev_now(mctx->loop);
 	fbr_log_i(&mctx->fbr, "started writing snapshot for %lu", lsn);
 	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
@@ -1009,20 +1002,25 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 		errx(EXIT_FAILURE, "unable to create a new snashot");
 	wal_log_iov_collect(ME_A_ &snap);
 	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
-	SLIST_FOREACH_SAFE(r, &ctx->snap_instances, entries, x) {
-		wal_write_value_to(ME_A_ r, &snap);
-		if (0 == r->is_cow) {
-			sm_free(r->v);
-			free(r);
+	for (i = ctx->cow_min; i <= ctx->cow_max; i++) {
+		if (!find_record(ME_A_ &r, i, ACS_FM_JUST_FIND))
+			continue;
+		if (r->r_copy) {
+			wal_write_value_to(ME_A_ r->r_copy, &snap);
+			sm_free(r->r_copy->v);
+			free(r->r_copy);
+			r->r_copy = NULL;
+		} else {
+			wal_write_value_to(ME_A_ r, &snap);
 		}
 		if (wal_log_iov_need_flush(ME_A_ &snap))
 			wal_log_iov_flush(ME_A_ &snap);
+		ctx->cow_min++;
 	}
+	ctx->cow_min = 0;
+	ctx->cow_max = 0;
 	wal_log_iov_flush(ME_A_ &snap);
 	wal_log_iov_stop(ME_A_ &snap);
-	for (r = ctx->instances; r != NULL; r = r->hh.next) {
-		r->is_cow = 0;
-	}
 	in_progress_rename(&snap);
 	wal_log_close(ME_A_ &snap);
 	snprintf(wdfn, PATH_MAX, "%s/%020lld%s", ctx->wal_dir.dirname,
@@ -1030,7 +1028,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	if (access(wdfn, R_OK) && ENOENT == errno) {
 		retval = fbr_eio_realpath(&mctx->fbr, snap.filename, tmp,
 				PATH_MAX, 0);
-		if (retval)
+		if (-1 == retval)
 			fbr_log_w(&mctx->fbr, "failed to realpath %s: %s",
 					snap.filename, strerror(errno));
 		retval = fbr_eio_symlink(&mctx->fbr, tmp, wdfn, 0);
@@ -1401,14 +1399,15 @@ void acs_vacuum(ME_P)
 	ev_now_update(mctx->loop);
 	t1 = ev_now(mctx->loop);
 	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
+		if (i == ctx->cow_min)
+			break;
 		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
 		assert(found);
 		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
 		HASH_DEL(ctx->instances, r);
-		if (!r->is_cow) {
-			sm_free(r->v);
-			free(r);
-		}
+		assert(NULL == r->r_copy);
+		sm_free(r->v);
+		free(r);
 		n_truncated++;
 	}
 	if (0 == n_truncated)
@@ -1429,26 +1428,30 @@ void acs_vacuum(ME_P)
 			ctx->lowest_available);
 }
 
+static inline int is_cow(ME_P_ struct acc_instance_record *r)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	if (r->r_copy)
+		return 0;
+	return r->iid >= ctx->cow_min && r->iid <= ctx->cow_max;
+}
+
 int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct acc_instance_record *r, *r_copy;
+	struct acc_instance_record *r;
 	int result;
 	result = find_record(ME_A_ &r, iid, mode);
-	if (1 == result && r->is_cow) {
+	if (1 == result && is_cow(ME_A_ r)) {
 		assert(0 == r->dirty);
-		r_copy = malloc(sizeof(*r_copy));
-		if (NULL == r_copy)
+		assert(NULL == r->r_copy);
+		r->r_copy = malloc(sizeof(*r));
+		if (NULL == r->r_copy)
 			err(EXIT_FAILURE, "malloc");
-		memcpy(r_copy, r, sizeof(*r));
-		if (r_copy->v)
-			r->v = buf_sm_copy(r_copy->v->ptr, r_copy->v->size1);
-		HASH_DEL(ctx->instances, r);
-		r->is_cow = 0;
-		HASH_ADD_WIID(ctx->instances, iid, r_copy);
-		r_copy->is_cow = 0;
-		r = r_copy;
+		memcpy(r->r_copy, r, sizeof(*r));
+		if (r->r_copy->v)
+			r->v = buf_sm_copy(r->r_copy->v->ptr,
+					r->r_copy->v->size1);
 	}
 	*rptr = r;
 	return result;
@@ -1470,7 +1473,6 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);
-	assert(0 == record->is_cow);
 	if (!record->dirty) {
 		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
 				dirty_entries);

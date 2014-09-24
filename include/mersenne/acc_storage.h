@@ -37,11 +37,11 @@ struct acc_instance_record {
 	uint64_t b;
 	struct buffer *v;
 	uint64_t vb;
-	int is_cow;
 	int stored;
 	int dirty;
 	struct me_message *msg;
 	int msg_to_index;
+	struct acc_instance_record *r_copy;
 	UT_hash_handle hh;
 	SLIST_ENTRY(acc_instance_record) entries;
 	SLIST_ENTRY(acc_instance_record) dirty_entries;
@@ -96,6 +96,9 @@ struct acs_context {
 	int dirty;
 	kvec_t(struct acs_iov_stat) stats;
 	kvec_t(struct acs_iov_stat) stats2;
+	uint64_t highest_stored;
+	uint64_t cow_min;
+	uint64_t cow_max;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
@@ -125,6 +128,9 @@ struct acs_context {
 	.highest_finalized = 0,        \
 	.lowest_available = 0,         \
 	.dirty = 0,                    \
+	.highest_stored = 0,           \
+	.cow_min = 0,                  \
+	.cow_max = 0,                  \
 }
 
 enum acs_find_mode {
