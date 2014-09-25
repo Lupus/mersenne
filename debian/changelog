@@ -1,3 +1,11 @@
+mersenne (0.9-15) unstable; urgency=low
+
+  * Optimized snapshot creation
+  * Value size is now configurable in strings_client
+  * Snapshot write throttling
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Thu, 25 Sep 2014 13:58:48 +0400
+
 mersenne (0.9-14) unstable; urgency=low
 
   * Reduced message spam in learner
