@@ -46,9 +46,6 @@
 #define HASH_ADD_BUFFER(head,bufferfield,add) \
 	HASH_ADD_KEYPTR(hh,head,(add)->bufferfield->ptr,(add)->bufferfield->size,add)
 
-#define VALUE_TO 1.0
-#define VALUE_SIZE 1350
-
 struct buffer {
 	char *ptr;
 	size_t size;
@@ -140,8 +137,9 @@ static void client_finished(struct client_context *cc)
 	printf("Run statistics:\n");
 	printf("==========================================\n");
 	printf("Total run time: %.3f\n", elapsed);
-	printf("Value size (bytes): %d\n", VALUE_SIZE);
-	printf("Value timeout (seconds): %f\n", VALUE_TO);
+	printf("Value size (bytes): %d\n", cc->args_info.value_size_arg);
+	printf("Value timeout (seconds): %f\n",
+			cc->args_info.instance_timeout_arg);
 	printf("Value concurrency: %d\n", cc->concurrency);
 	printf("Values received: %d\n", cc->stats.received);
 	printf("Values timed out: %d\n", cc->stats.timeouts);
@@ -153,7 +151,8 @@ static void client_finished(struct client_context *cc)
 	printf("Average throughput (transactions/second): %.3f\n",
 			cc->stats.received / elapsed);
 	printf("Average throughput (bytes/second): %.3f\n",
-			VALUE_SIZE * cc->stats.received / elapsed);
+			cc->args_info.value_size_arg * cc->stats.received /
+				elapsed);
 	printf("==========================================\n");
 }
 
@@ -167,8 +166,8 @@ static struct my_value *new_value(struct client_context *cc)
 	unsigned l;
 	value = calloc(1, sizeof(struct my_value));
 	value->buf = malloc(sizeof(struct buffer));
-	value->buf->ptr = calloc(1, VALUE_SIZE + 1);
-	value->buf->size = VALUE_SIZE;
+	value->buf->ptr = calloc(1, cc->args_info.value_size_arg + 1);
+	value->buf->size = cc->args_info.value_size_arg;
 	value->value_id = cc->last_value_id++;
 	randomize_buffer(value->buf);
 
@@ -178,7 +177,7 @@ static struct my_value *new_value(struct client_context *cc)
         MD5_Update(&context, (uint8_t *)&value->value_id,
 			sizeof(value->value_id));
         MD5_Update(&context, (uint8_t *)value->buf->ptr + header_length,
-			VALUE_SIZE - header_length);
+			cc->args_info.value_size_arg - header_length);
         MD5_Final(digest, &context);
 	l = sprintf(value->buf->ptr, "{%010d,%016lx%016lx}",
 			value->value_id,
@@ -517,6 +516,11 @@ int main(int argc, char *argv[]) {
 	params->check_required = 1;
 	if(0 != cmdline_parser_ext(argc, argv, &cc.args_info, params))
 		exit(EXIT_FAILURE + 1);
+
+	if (cc.args_info.value_size_arg < 50)
+		errx(EXIT_FAILURE, "minimum value size is 50 bytes");
+	if (cc.args_info.value_size_arg > 1350)
+		errx(EXIT_FAILURE, "maximum value size is 1350 bytes");
 
 	cmdline_parser_dump(stdout, &cc.args_info);
 	wait_for_debugger = cc.args_info.wait_for_debugger_flag;
