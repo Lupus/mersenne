@@ -974,7 +974,8 @@ int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 
 static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 {
-	struct me_context *mctx;
+	struct me_context *mctx =
+		container_of(fiber_context, struct me_context, fbr);
 	struct acs_context *ctx;
 	uint64_t lsn;
 	struct acc_instance_record *r;
@@ -985,8 +986,12 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	static char wdfn[PATH_MAX + 1];
 	static char tmp[PATH_MAX + 1] = {0};
 	uint64_t i;
+	ev_tstamp x, delta;
+	const ev_tstamp time_to_throttle =
+		mctx->args_info.acceptor_snap_throttle_time_arg;
+	const unsigned trottle_check =
+		mctx->args_info.acceptor_snap_throttle_arg;
 
-	mctx = container_of(fiber_context, struct me_context, fbr);
 	ctx = &mctx->pxs.acc.acs;
 	lsn = ctx->confirmed_lsn - 1;
 	ctx->cow_min = ctx->lowest_available;
@@ -1002,6 +1007,8 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 		errx(EXIT_FAILURE, "unable to create a new snashot");
 	wal_log_iov_collect(ME_A_ &snap);
 	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
+
+	x = ev_now(mctx->loop);
 	for (i = ctx->cow_min; i <= ctx->cow_max; i++) {
 		if (!find_record(ME_A_ &r, i, ACS_FM_JUST_FIND))
 			continue;
@@ -1016,6 +1023,12 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (wal_log_iov_need_flush(ME_A_ &snap))
 			wal_log_iov_flush(ME_A_ &snap);
 		ctx->cow_min++;
+		if (0 == i % trottle_check) {
+			delta = ev_now(mctx->loop) - x;
+			if (delta < time_to_throttle)
+				fbr_sleep(&mctx->fbr, time_to_throttle - delta);
+			x = ev_now(mctx->loop);
+		}
 	}
 	ctx->cow_min = 0;
 	ctx->cow_max = 0;
