@@ -240,14 +240,14 @@ static void retransmit_next_window(ME_P_ struct learner_context *context)
 
 static void try_deliver(ME_P_ struct learner_context *context)
 {
-	uint64_t i, j;
+	int i, j;
 	int k;
-	uint64_t start = context->first_non_delivered;
+	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(context, i);
 		if (!instance->closed)
-			break;
+			return;
 		do_deliver(ME_A_ context, instance);
 		context->first_non_delivered = i + 1;
 
@@ -262,12 +262,6 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		instance->iid = i + LEA_INSTANCE_WINDOW;
 		if (context->first_non_delivered == context->next_retransmit)
 			retransmit_next_window(ME_A_ context);
-	}
-	i = i - 1;
-	if (context->highest_seen > i) {
-		j = min(j, LEA_INSTANCE_WINDOW);
-		j = min(j, context->highest_seen - i);
-		send_retransmit(ME_A_ context, i, i + j);
 	}
 }
 
