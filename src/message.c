@@ -198,68 +198,71 @@ void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 	case ME_PAXOS:
 		type = "PAXOS";
 		pmsg = &msg->me_message_u.paxos_message;
+#define U pmsg->data.me_paxos_msg_data_u
 		switch (pmsg->data.type) {
 		case ME_PAXOS_PREPARE:
 			subtype = "PREPARE";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.prepare.i,
-					pmsg->data.me_paxos_msg_data_u.prepare.b);
+					U.prepare.i,
+					U.prepare.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_PROMISE:
 			subtype = "PROMISE";
 			retval = asprintf(&data, "%lu\t%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.promise.i,
-					pmsg->data.me_paxos_msg_data_u.promise.b,
-					pmsg->data.me_paxos_msg_data_u.promise.vb);
+					U.promise.i,
+					U.promise.b,
+					U.promise.vb);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_ACCEPT:
 			subtype = "ACCEPT";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.accept.i,
-					pmsg->data.me_paxos_msg_data_u.accept.b);
+					U.accept.i,
+					U.accept.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_REJECT:
 			subtype = "REJECT";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.reject.i,
-					pmsg->data.me_paxos_msg_data_u.reject.b);
+					U.reject.i,
+					U.reject.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
-		case ME_PAXOS_LAST_ACCEPTED:
-			subtype = "LAST_ACCEPTED";
-			retval = asprintf(&data, "%lu",
-					pmsg->data.me_paxos_msg_data_u.last_accepted.i);
+		case ME_PAXOS_ACCEPTOR_STATE:
+			subtype = "ACCEPTOR_STATE";
+			retval = asprintf(&data, "%lu %lu %lu",
+					U.acceptor_state.highest_accepted,
+					U.acceptor_state.highest_finalized,
+					U.acceptor_state.lowest_available);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_LEARN:
 			subtype = "LEARN";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.learn.i,
-					pmsg->data.me_paxos_msg_data_u.learn.b);
+					U.learn.i,
+					U.learn.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_RELEARN:
 			subtype = "RELEARN";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.learn.i,
-					pmsg->data.me_paxos_msg_data_u.learn.b);
+					U.learn.i,
+					U.learn.b);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		case ME_PAXOS_RETRANSMIT:
 			subtype = "RETRANSMIT";
 			retval = asprintf(&data, "%lu\t%lu",
-					pmsg->data.me_paxos_msg_data_u.retransmit.from,
-					pmsg->data.me_paxos_msg_data_u.retransmit.to);
+					U.retransmit.from,
+					U.retransmit.to);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "asprintf");
 			break;
@@ -270,6 +273,7 @@ void msg_perf_dump(ME_P_ struct me_message *msg, enum msg_direction dir,
 				err(EXIT_FAILURE, "asprintf");
 			break;
 		}
+#undef U
 	}
 	if (NULL == inet_ntop(AF_INET, &addr->sin_addr.s_addr, str, INET_ADDRSTRLEN))
 		err(EXIT_FAILURE, "inet_ntop failed");
