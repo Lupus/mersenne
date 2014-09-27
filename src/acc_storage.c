@@ -1486,6 +1486,7 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);
+	assert(0 == is_cow(ME_A_ record));
 	if (!record->dirty) {
 		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
 				dirty_entries);
