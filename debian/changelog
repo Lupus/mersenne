@@ -1,3 +1,9 @@
+mersenne (0.9-16) unstable; urgency=low
+
+  * Remapped dirs in service/run
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Wed, 01 Oct 2014 13:02:03 +0400
+
 mersenne (0.9-15) unstable; urgency=low
 
   * Optimized snapshot creation
