@@ -65,6 +65,7 @@ struct learner_context {
 	struct fbr_buffer buffer;
 	struct fiber_tailq_i item;
 	struct lea_acc_state *acc_states;
+	struct fbr_cond_var delivered;
 };
 
 static inline struct lea_instance * get_instance(struct learner_context
@@ -219,7 +220,7 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 				send_retransmit(ME_A_ context, from, i - 1);
 				collecting_gap = 0;
 			}
-		} else if(!instance->closed || age(ME_A_ instance)) {
+		} else if (!instance->closed && age(ME_A_ instance)) {
 			from = i;
 			collecting_gap = 1;
 		}
@@ -247,7 +248,7 @@ static void try_deliver(ME_P_ struct learner_context *context)
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(context, i);
 		if (!instance->closed)
-			return;
+			break;
 		do_deliver(ME_A_ context, instance);
 		context->first_non_delivered = i + 1;
 
@@ -258,11 +259,10 @@ static void try_deliver(ME_P_ struct learner_context *context)
 			instance->acks[k].b = 0;
 		}
 		instance->chosen = NULL;
-		instance->modified = ev_now(mctx->loop);
+		instance->modified = 0;
 		instance->iid = i + LEA_INSTANCE_WINDOW;
-		if (context->first_non_delivered == context->next_retransmit)
-			retransmit_next_window(ME_A_ context);
 	}
+	fbr_cond_signal(&mctx->fbr, &context->delivered);
 }
 
 static int ack_eq(void *_a, void *_b) {
@@ -414,12 +414,18 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 	struct me_context *mctx;
 	struct learner_context *context = _arg;
 	ev_tstamp next_aged;
+	struct fbr_ev_cond_var ev;
+	struct fbr_ev_base *events[] = {NULL, NULL};
+	int retval;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 
+	fbr_ev_cond_var_init(&mctx->fbr, &ev, &context->delivered, NULL);
+	events[0] = &ev.ev_base;
 	for (;;) {
 		next_aged = min_window_age(ME_A_ context);
-		fbr_sleep(&mctx->fbr, next_aged);
+		retval = fbr_ev_wait_to(&mctx->fbr, events, next_aged);
+		assert(retval >= 0);
 		if (context->highest_seen >= context->first_non_delivered +
 				LEA_INSTANCE_WINDOW) {
 			fbr_log_d(&mctx->fbr, "learner is lagging behind"
@@ -493,6 +499,7 @@ static void init_context(ME_P_	struct learner_context *context,
 	context->first_non_delivered = arg->starting_iid;
 	context->mctx = mctx;
 	context->arg = arg;
+	fbr_cond_init(&mctx->fbr, &context->delivered);
 
 	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
 	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &context->buffer);
