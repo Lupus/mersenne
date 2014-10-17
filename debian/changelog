@@ -1,3 +1,11 @@
+mersenne (0.9-17) unstable; urgency=low
+
+  * Added option to push values at fixed time interval in strings_client
+  * Reduced learner lag by adding proactive retransmits
+  * Updated evfibers
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Fri, 17 Oct 2014 18:22:25 +0400
+
 mersenne (0.9-16) unstable; urgency=low
 
   * Remapped dirs in service/run
