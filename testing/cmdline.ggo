@@ -5,6 +5,7 @@ version "1.0.0"
 option "mersenne-ip" i "IP address of a mersenne instance" string multiple
 option "port" p "Port of a client tcp socket" int default="6328" optional
 option "concurrency" c "number of concurrent instances" int default="16" optional
+option "each" e "send value once per given time interval" double default="0.0" optional
 option "run-time" r "Run time (in seconds)"int default="60" optional
 option "instance-timeout" t "Single instance timeout time" double default="1.0" optional
 option "log-level" l "Log level" values="error","warning","notice","info","debug" enum default="info" optional

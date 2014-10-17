@@ -378,6 +378,7 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 	struct my_value *value;
 	struct me_cli_value *mv;
 	int retval;
+	ev_tstamp t1, t2, diff;
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
 	for (;;) {
 		value = new_value(cc);
@@ -392,13 +393,18 @@ void fiber_value(struct fbr_context *fiber_context, void *_arg)
 			mv->data_len = value->buf->size;
 			value->nsent++;
 			ev_now_update(cc->loop);
+			t1 = ev_now(cc->loop);
 			retval = me_cli_value_submit(mv,
 					cc->args_info.instance_timeout_arg);
 			if (0 == retval) {
 				value->latency = mv->latency;
 				cc->last_iid = mv->iid;
+				t2 = ev_now(cc->loop);
+				diff = cc->args_info.each_arg - (t2 - t1);
+				if (diff > 0)
+					fbr_sleep(&cc->fbr, diff);
 				if (value->nreceived > 0)
-				break;
+					break;
 				next_value(cc, value, mv->iid);
 				me_cli_value_processed(mv);
 				me_cli_value_dispose(mv);
