@@ -27,10 +27,18 @@
 
 void statd_init(ME_P_ const char *ip, int port)
 {
+	char buf[64] = {0};
+	unsigned i;
 	mctx->statd_addr.sin_port = htons(port);
 	if (0 == inet_aton(ip, &mctx->statd_addr.sin_addr))
 		errx(EXIT_FAILURE, "invalid statd address: %s", ip);
 	mctx->use_statd = 1;
+	strcpy(buf, inet_ntoa(mctx->me->addr.sin_addr));
+	for (i = 0; i < strlen(buf); i++)
+		if ('.' == buf[i])
+			buf[i] = '_';
+	snprintf(mctx->statd_prefix, sizeof(mctx->statd_prefix), "mersenne.%s",
+			buf);
 }
 
 void statd_send_keyval(ME_P_ const char *key, double value)
@@ -105,10 +113,12 @@ void statd_send(ME_P_ const char *key, const char *value, const char *type,
 	if (!mctx->use_statd)
 		return;
 	if (flag)
-		rv = snprintf(buf, sizeof(buf), "mersenne.%s:%s|%s|@%s\n", key,
+		rv = snprintf(buf, sizeof(buf), "%s.%s:%s|%s|@%s\n",
+				mctx->statd_prefix, key,
 				value, type, flag);
 	else
-		rv = snprintf(buf, sizeof(buf), "mersenne.%s:%s|%s\n", key,
+		rv = snprintf(buf, sizeof(buf), "%s.%s:%s|%s\n",
+				mctx->statd_prefix, key,
 				value, type);
 	assert(rv > 0 && rv < sizeof(buf));
 	retval = fbr_sendto(&mctx->fbr, mctx->fd, buf, rv, 0,

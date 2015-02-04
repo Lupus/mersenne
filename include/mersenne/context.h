@@ -63,6 +63,7 @@ struct me_context {
 	struct sockaddr_in statd_addr;
 	int use_statd;
 	int statd_sock;
+	char statd_prefix[128];
 	struct {
 		unsigned msg_sent;
 		unsigned msg_recv;
