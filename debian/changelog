@@ -1,3 +1,9 @@
+mersenne (0.9-18) unstable; urgency=low
+
+  * Statd metrics are now prefixed with instance IP
+
+ -- Konstantin Olkhovskiy <kolkhovskiy@nvidia.com>  Wed, 04 Feb 2015 15:54:21 +0300
+
 mersenne (0.9-17) unstable; urgency=low
 
   * Added option to push values at fixed time interval in strings_client
