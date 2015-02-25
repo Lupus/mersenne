@@ -3,7 +3,7 @@ set -e
 for acc_dir in acceptor?
 do
 	maxsnap="00000000000000000000"
-	pushd $acc_dir > /dev/null
+	pushd $acc_dir/snap > /dev/null
 	for snap in $(find . -iname '*.snap'| cut -c 3-)
 	do
 		lsn="${snap%.*}"
@@ -12,6 +12,8 @@ do
 		fi
 	done
 	echo "Greatest snapshot is $maxsnap"
+	popd > /dev/null
+	pushd $acc_dir/wal > /dev/null
 	maxwal="00000000000000000000"
 	for wal in $(find . -iname '*.wal'| cut -c 3-)
 	do
