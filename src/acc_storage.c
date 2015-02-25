@@ -994,8 +994,8 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	ctx = &mctx->pxs.acc.acs;
 	lsn = ctx->confirmed_lsn - 1;
-	ctx->cow_min = ctx->lowest_available;
-	ctx->cow_max = ctx->highest_stored;
+	ctx->snap_min = ctx->lowest_available;
+	ctx->snap_max = ctx->highest_stored;
 
 	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
 
@@ -1009,20 +1009,15 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
 
 	x = ev_now(mctx->loop);
-	for (i = ctx->cow_min; i <= ctx->cow_max; i++) {
-		if (!find_record(ME_A_ &r, i, ACS_FM_JUST_FIND))
+	for (i = ctx->snap_min; i <= ctx->snap_max; i++) {
+		if (!find_record(ME_A_ &r, i, ACS_FM_JUST_FIND)) {
+			ctx->snap_min++;
 			continue;
-		if (r->r_copy) {
-			wal_write_value_to(ME_A_ r->r_copy, &snap);
-			sm_free(r->r_copy->v);
-			free(r->r_copy);
-			r->r_copy = NULL;
-		} else {
-			wal_write_value_to(ME_A_ r, &snap);
 		}
+		wal_write_value_to(ME_A_ r, &snap);
+		ctx->snap_min++;
 		if (wal_log_iov_need_flush(ME_A_ &snap))
 			wal_log_iov_flush(ME_A_ &snap);
-		ctx->cow_min++;
 		if (0 == i % trottle_check) {
 			delta = ev_now(mctx->loop) - x;
 			if (delta < time_to_throttle)
@@ -1030,8 +1025,8 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 			x = ev_now(mctx->loop);
 		}
 	}
-	ctx->cow_min = 0;
-	ctx->cow_max = 0;
+	ctx->snap_min = 0;
+	ctx->snap_max = 0;
 	wal_log_iov_flush(ME_A_ &snap);
 	wal_log_iov_stop(ME_A_ &snap);
 	in_progress_rename(&snap);
@@ -1412,13 +1407,12 @@ void acs_vacuum(ME_P)
 	ev_now_update(mctx->loop);
 	t1 = ev_now(mctx->loop);
 	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
-		if (i == ctx->cow_min)
+		if (i == ctx->snap_min)
 			break;
 		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
 		assert(found);
 		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
 		HASH_DEL(ctx->instances, r);
-		assert(NULL == r->r_copy);
 		sm_free(r->v);
 		free(r);
 		n_truncated++;
@@ -1441,31 +1435,12 @@ void acs_vacuum(ME_P)
 			ctx->lowest_available);
 }
 
-static inline int is_cow(ME_P_ struct acc_instance_record *r)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	if (r->r_copy)
-		return 0;
-	return r->iid >= ctx->cow_min && r->iid <= ctx->cow_max;
-}
-
 int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode)
 {
-	struct acc_instance_record *r;
+	struct acc_instance_record *r = NULL;
 	int result;
 	result = find_record(ME_A_ &r, iid, mode);
-	if (1 == result && is_cow(ME_A_ r)) {
-		assert(0 == r->dirty);
-		assert(NULL == r->r_copy);
-		r->r_copy = malloc(sizeof(*r));
-		if (NULL == r->r_copy)
-			err(EXIT_FAILURE, "malloc");
-		memcpy(r->r_copy, r, sizeof(*r));
-		if (r->r_copy->v)
-			r->v = buf_sm_copy(r->r_copy->v->ptr,
-					r->r_copy->v->size1);
-	}
 	*rptr = r;
 	return result;
 }
@@ -1486,7 +1461,6 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);
-	assert(0 == is_cow(ME_A_ record));
 	if (!record->dirty) {
 		SLIST_INSERT_HEAD(&ctx->dirty_instances, record,
 				dirty_entries);
