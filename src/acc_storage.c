@@ -81,400 +81,6 @@ struct wal_rec_header {
 #define HASH_ADD_WIID(head,iidfield,add) \
 	HASH_ADD(hh,head,iidfield,sizeof(uint64_t),add)
 
-const char in_progress_ext[] = ".in_progress";
-
-static int cmp_uint64_t(const void *_a, const void *_b)
-{
-	const uint64_t *a = _a, *b = _b;
-	if (*a == *b)
-		return 0;
-	return (*a > *b) ? 1 : -1;
-}
-
-static void scan_log_dir(ME_P_ struct acs_log_dir *dir)
-{
-	size_t i = 0;
-	const ssize_t ext_len = strlen(dir->ext);
-	DIR *dh = opendir(dir->dirname);
-	struct dirent *dent;
-	int ext_is_ok;
-	char *ext, *suffix;
-
-	if (NULL == dh)
-		err(EXIT_FAILURE, "unable to open %s", dir->dirname);
-
-	if (NULL == dir->lsn_arr) {
-		dir->lsn_arr_size = 128;
-		dir->lsn_arr = malloc(dir->lsn_arr_size * sizeof(uint64_t));
-		if (NULL == dir->lsn_arr)
-			err(EXIT_FAILURE, "malloc");
-	}
-	dir->lsn_arr_len = 0;
-
-	errno = 0;
-	while (NULL != (dent = readdir(dh))) {
-
-		ext = strchr(dent->d_name, '.');
-		if (NULL == ext)
-			continue;
-
-		suffix = strchr(ext + 1, '.');
-		if (NULL == suffix)
-			ext_is_ok = !strcmp(ext, dir->ext);
-		else
-			ext_is_ok = (!strncmp(ext, dir->ext, ext_len) &&
-				     !strcmp(suffix, in_progress_ext));
-		if (!ext_is_ok)
-			continue;
-
-		if (i >= dir->lsn_arr_size) {
-			while (i >= dir->lsn_arr_size)
-				dir->lsn_arr_size *= 2;
-			dir->lsn_arr = realloc(dir->lsn_arr,
-					dir->lsn_arr_size * sizeof(uint64_t));
-			if (NULL == dir->lsn_arr)
-				err(EXIT_FAILURE, "realloc");
-		}
-		dir->lsn_arr[i] = strtoll(dent->d_name, &ext, 10);
-		if (strncmp(ext, dir->ext, ext_len) != 0) {
-			fbr_log_w(&mctx->fbr, "strtoll can't parse `%s'",
-					dent->d_name);
-			continue;
-		}
-
-		if (dir->lsn_arr[i] == LLONG_MAX ||
-				dir->lsn_arr[i] == LLONG_MIN) {
-			fbr_log_w(&mctx->fbr, "strtoll can't parse `%s'",
-					dent->d_name);
-			continue;
-		}
-
-		if (dir->lsn_arr[i] > dir->max_lsn)
-			dir->max_lsn = dir->lsn_arr[i];
-		dir->lsn_arr_len = ++i;
-	}
-
-	qsort(dir->lsn_arr, dir->lsn_arr_len, sizeof(uint64_t), cmp_uint64_t);
-
-	if (errno != 0)
-		err(EXIT_FAILURE, "error reading directory `%s'", dir->dirname);
-
-	if (dh != NULL)
-		closedir(dh);
-}
-
-static char *wal_lsn_to_filename(struct acs_log_dir *dir, uint64_t lsn,
-		int in_progress)
-{
-	static char filename[PATH_MAX + 1];
-	const char *suffix_str = in_progress ? in_progress_ext : "";
-	snprintf(filename, PATH_MAX, "%s/%020lld%s%s",
-		 dir->dirname, (long long)lsn, dir->ext, suffix_str);
-	return filename;
-}
-
-static void wal_iter_open(ME_P_ struct wal_iter *iter, struct wal_log *log)
-{
-	ssize_t retval;
-	iter->log = log;
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "seek failed");
-	iter->good_offt = retval;
-	iter->row_count = 0;
-	iter->eof = 0;
-}
-
-static void wal_iter_close(ME_P_ struct wal_iter *iter)
-{
-	ssize_t retval;
-	iter->log->rows += iter->row_count;
-	retval = fbr_eio_seek(&mctx->fbr, iter->log->fd, iter->good_offt,
-			EIO_SEEK_SET, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "seek failed");
-}
-
-static inline uint32_t calc_header_checksum(struct wal_rec_header *header)
-{
-	uint32_t crc;
-	crc = crc32(0L, Z_NULL, 0);
-	crc = crc32(crc, (void *)&header->lsn, sizeof(header->lsn));
-	crc = crc32(crc, (void *)&header->tstamp, sizeof(header->tstamp));
-	crc = crc32(crc, (void *)&header->size, sizeof(header->size));
-	crc = crc32(crc, (void *)&header->checksum, sizeof(header->checksum));
-	return crc;
-}
-
-size_t wal_rec_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr, void **pptr,
-		size_t *size_ptr)
-{
-	struct wal_log *log = iter->log;
-	struct wal_rec_header header;
-	uint32_t header_checksum, checksum;
-	ssize_t retval;
-
-	retval = fbr_eio_read(&mctx->fbr, log->fd, &header, sizeof(header), -1,
-			0);
-	if (0 == retval)
-		return 0;
-	if (0 > retval)
-		err(EXIT_FAILURE, "WAL read failed");
-	if (retval < (ssize_t)sizeof(header))
-		errx(EXIT_FAILURE, "unable to read a header: unexpected eof");
-
-	header_checksum = calc_header_checksum(&header);
-
-	if (header.header_checksum != header_checksum)
-		errx(EXIT_FAILURE, "header checksum mismatch");
-
-	if (NULL != *pptr) {
-		if (*size_ptr != header.size) {
-			*pptr = realloc(*pptr, header.size);
-			if (NULL == *pptr)
-				err(EXIT_FAILURE, "realloc");
-			*size_ptr = header.size;
-		}
-	} else {
-			*pptr = malloc(header.size);
-			if (NULL == *pptr)
-				err(EXIT_FAILURE, "malloc");
-			*size_ptr = header.size;
-	}
-
-	retval = fbr_eio_read(&mctx->fbr, log->fd, *pptr, header.size, -1, 0);
-	if (0 == retval)
-		return 0;
-	if (0 > retval)
-		err(EXIT_FAILURE, "WAL read failed");
-	if (retval < (ssize_t)header.size)
-		errx(EXIT_FAILURE, "unable to read a record: unexpected eof");
-
-	checksum = crc32(0L, Z_NULL, 0);
-	checksum = crc32(checksum, *pptr, header.size);
-	if (header.checksum != checksum)
-		errx(EXIT_FAILURE, "data checksum mismatch");
-
-	*lsn_ptr = header.lsn;
-	/* fbr_log_d(&mctx->fbr, "read wal rec with lsn %zd", header.lsn); */
-	return header.size;
-}
-
-static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
-		void **pptr, size_t *size_ptr)
-{
-	struct wal_log *log = iter->log;
-	uint32_t magic;
-	uint64_t magic_offset = 0;
-	ssize_t retval;
-	size_t size;
-	char c;
-
-	assert(0 == iter->eof);
-	if (magic_offset > 0) {
-		retval = fbr_eio_seek(&mctx->fbr, log->fd, magic_offset + 1,
-				EIO_SEEK_SET, 0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "seek failed");
-	}
-
-	retval = fbr_eio_read(&mctx->fbr, log->fd, &magic, sizeof(magic), -1,
-			0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "read failed");
-	if (retval < sizeof(magic))
-		goto eof;
-
-	while (REC_MAGIC != magic) {
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &c, sizeof(c), -1,
-				0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "read failed");
-		if (retval < sizeof(c)) {
-			/* fbr_log_d(&mctx->fbr, "got eof while looking for rec"
-					" magic"); */
-			goto eof;
-		}
-		magic = magic >> 8 |
-			((uint32_t)c & 0xff) << (sizeof(magic) * 8 - 8);
-	}
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "seek failed");
-	magic_offset = retval - sizeof(REC_MAGIC);
-	if (iter->good_offt != magic_offset)
-		fbr_log_d(&mctx->fbr, "skipped %jd bytes after 0x%08jx offset",
-			(intmax_t)(magic_offset - iter->good_offt),
-			(uintmax_t)iter->good_offt);
-	/* fbr_log_d(&mctx->fbr, "magic found at 0x%08jx",
-			(uintmax_t)magic_offset); */
-
-	size = wal_rec_read(ME_A_ iter, lsn_ptr, pptr, size_ptr);
-	if (0 == size)
-		goto eof;
-
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "seek failed");
-	iter->good_offt = retval;
-	iter->row_count++;
-
-	if (iter->row_count % 100000 == 0)
-		fbr_log_d(&mctx->fbr, "%.1fM wal recs processed",
-				iter->row_count / 1000000.);
-
-	return size;
-eof:
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "seek failed");
-	if (retval == iter->good_offt + sizeof(EOF_MAGIC)) {
-		retval = fbr_eio_seek(&mctx->fbr, log->fd, iter->good_offt,
-				EIO_SEEK_SET, 0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "seek failed");
-
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "read failed");
-		if (retval < sizeof(magic)) {
-			fbr_log_e(&mctx->fbr, "unable to read eof magic");
-		} else if (magic == EOF_MAGIC) {
-			retval = fbr_eio_seek(&mctx->fbr, log->fd,
-					iter->good_offt, EIO_SEEK_SET, 0);
-			if (-1 == retval)
-				err(EXIT_FAILURE, "seek failed");
-			iter->good_offt = retval;
-			iter->eof = 1;
-		} else {
-			fbr_log_e(&mctx->fbr, "eof magic is corrupt: %lu",
-				  (unsigned long) magic);
-		}
-	}
-
-	return 0;
-}
-
-void in_progress_rename(struct wal_log *log)
-{
-	char *filename = log->filename;
-	char *new_filename;
-	char *suffix = strrchr(filename, '.');
-
-	assert(log->in_progress);
-	assert(suffix);
-	assert(!strcmp(suffix, in_progress_ext));
-
-	new_filename = alloca(suffix - filename + 1);
-	memcpy(new_filename, filename, suffix - filename);
-	new_filename[suffix - filename] = '\0';
-
-	if (0 != rename(filename, new_filename))
-		err(EXIT_FAILURE, "rename of %s to %s failed", filename,
-				new_filename);
-	log->in_progress = 0;
-	strncpy(log->filename, new_filename, PATH_MAX);
-}
-
-void in_progress_unlink(char *filename)
-{
-	char *suffix = strrchr(filename, '.');
-	assert(suffix);
-	assert(!strcmp(suffix, in_progress_ext));
-	(void)suffix;
-
-	if (0 != unlink(filename) && ENOENT != errno)
-		err(EXIT_FAILURE, "unlink");
-}
-
-int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
-		enum wal_log_mode mode, uint64_t lsn, int in_progress)
-{
-	uint32_t magic;
-	char *formatted_filename = wal_lsn_to_filename(dir, lsn, in_progress);
-	int open_flags;
-	ssize_t retval;
-	memset(log, 0x00, sizeof(*log));
-	strncpy(log->filename, formatted_filename, PATH_MAX);
-	log->mode = mode;
-	log->dir = dir;
-	log->in_progress = in_progress;
-	kv_init(log->iov);
-	kv_resize(struct iovec, log->iov, UIO_MAXIOV);
-	if (WLM_RO == mode)
-		open_flags = O_RDONLY;
-	else
-		open_flags = O_CREAT | O_WRONLY | O_EXCL;
-	log->fd = fbr_eio_open(&mctx->fbr, log->filename, open_flags, 0640, 0);
-	if (0 > log->fd)
-		err(EXIT_FAILURE, "open failed");
-	if (WLM_RO == mode) {
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "read failed");
-		if (retval < sizeof(magic)) {
-			fbr_log_w(&mctx->fbr, "eof while looking for wal"
-					" header for %s", log->filename);
-			goto error;
-		}
-		if (WAL_MAGIC != magic) {
-			fbr_log_w(&mctx->fbr, "wal file magic mismatch for %s",
-					log->filename);
-			goto error;
-		}
-	} else {
-		magic = WAL_MAGIC;
-		retval = fbr_eio_write(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
-		if (retval < sizeof(magic))
-			err(EXIT_FAILURE, "write failed");
-	}
-	return 0;
-error:
-
-	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
-	if (0 > retval)
-		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
-	return -1;
-}
-
-int wal_log_open_ro(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
-		 uint64_t lsn, int in_progress)
-{
-	return wal_log_open(ME_A_ log, dir, WLM_RO, lsn, in_progress);
-}
-
-int wal_log_open_rw(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
-		 uint64_t lsn, int in_progress)
-{
-	char *filename;
-
-	if (in_progress) {
-		filename = wal_lsn_to_filename(dir, lsn, 0);
-		if (0 == access(filename, F_OK)) {
-			fbr_log_w(&mctx->fbr, "attempt to create in-progress"
-					" file for already existing WAL");
-			return -1;
-		}
-	}
-	return wal_log_open(ME_A_ log, dir, WLM_RW, lsn, in_progress);
-}
-
-void wal_log_iov_collect(ME_P_ struct wal_log *log)
-{
-	assert(0 == log->collecting_iov);
-	log->collecting_iov = 1;
-	log->iov_rows = 0;
-}
-
-int wal_log_iov_need_flush(ME_P_ struct wal_log *log)
-{
-	assert(1 == log->collecting_iov);
-	return kv_size(log->iov) > UIO_MAXIOV - 10;
-}
-
 static double now()
 {
 	struct timeval t;
@@ -544,136 +150,6 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	log->iov_rows = 0;
 }
 
-void wal_log_iov_stop(ME_P_ struct wal_log *log)
-{
-	assert(1 == log->collecting_iov);
-	log->collecting_iov = 0;
-}
-
-void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct wal_rec_header header;
-	uint32_t magic = REC_MAGIC;
-	struct iovec iovec;
-	assert(WLM_RW == log->mode);
-	assert(1 == log->collecting_iov);
-	if (ALK_WAL == log->dir->kind)
-		header.lsn = ctx->confirmed_lsn + log->iov_rows;
-	else
-		header.lsn = 0;
-	header.size = size;
-	header.tstamp = ev_now(mctx->loop);
-	header.checksum = crc32(0L, Z_NULL, 0);
-	header.checksum = crc32(header.checksum, data, size);
-	header.header_checksum = calc_header_checksum(&header);
-	assert(kv_size(log->iov) + 3 <= UIO_MAXIOV);
-
-	iovec.iov_base = malloc(sizeof(magic));
-	memcpy(iovec.iov_base, &magic, sizeof(magic));
-	iovec.iov_len = sizeof(magic);
-	kv_push(struct iovec, log->iov, iovec);
-
-	iovec.iov_base = malloc(sizeof(header));
-	memcpy(iovec.iov_base, &header, sizeof(header));
-	iovec.iov_len = sizeof(header);
-	kv_push(struct iovec, log->iov, iovec);
-
-	iovec.iov_base = data;
-	iovec.iov_len = size;
-	kv_push(struct iovec, log->iov, iovec);
-
-	log->iov_rows++;
-	if (0 == log->rows && 1 == log->iov_rows && ALK_WAL == log->dir->kind) {
-		fbr_log_d(&mctx->fbr, "flushed first row");
-		wal_log_iov_flush(ME_A_ log);
-		in_progress_rename(log);
-	}
-}
-
-void wal_log_close(ME_P_ struct wal_log *log)
-{
-	uint32_t magic = EOF_MAGIC;
-	ssize_t retval;
-
-	kv_destroy(log->iov);
-
-	if (log->mode == WLM_RW) {
-		retval = fbr_eio_write(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
-		if (retval < sizeof(magic))
-			err(EXIT_FAILURE, "write failed");
-		retval = fbr_eio_fsync(&mctx->fbr, log->fd, 0);
-		if (-1 == retval)
-			err(EXIT_FAILURE, "fsync failed");
-	}
-
-	if (log->in_progress) {
-		if (1 == log->rows)
-			in_progress_rename(log);
-		else if(0 == log->rows)
-			in_progress_unlink(log->filename);
-		else
-			errx(EXIT_FAILURE, "In-progress log with %zd"
-					" rows", log->rows);
-	}
-
-	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
-	if (-1 == retval)
-		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
-}
-
-static eio_ssize_t log_sync_custom_cb(void *data)
-{
-	struct wal_log *log = data;
-	ssize_t rv;
-	double t1, t2;
-	t1 = now();
-	rv = fdatasync(log->fd);
-	t2 = now();
-	log->flush_io = t2 - t1;
-	return rv;
-}
-
-static void sync_fiber(struct fbr_context *fiber_context, void *_arg)
-{
-	struct me_context *mctx;
-	struct acs_context *ctx;
-	struct wal_log *log = _arg;
-	ssize_t retval;
-	char buf[64];
-	char *name;
-
-	mctx = container_of(fiber_context, struct me_context, fbr);
-	ctx = &mctx->pxs.acc.acs;
-	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
-	assert(WLM_RW == log->mode);
-	log->stat.n_rows += log->iov_rows;
-	retval = fbr_eio_custom(&mctx->fbr, log_sync_custom_cb, log, 0);
-	if (-1 == retval)
-		err(EXIT_FAILURE, "fdatasync failed");
-
-	if (log->dir->kind == ALK_WAL)
-		name = "wal";
-	else
-		name = "snap";
-	snprintf(buf, sizeof(buf), "acc_storage.%s.sync_time", name);
-	statd_send_timer(ME_A_ buf, log->flush_io);
-	log->stat.n_sync_useconds = (unsigned)(log->flush_io * 1e6);
-	kv_push(struct acs_iov_stat, ctx->stats, log->stat);
-	memset(&log->stat, 0x00, sizeof(log->stat));
-	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
-}
-
-void wal_log_sync(ME_P_ struct wal_log *log)
-{
-	fbr_id_t id;
-	id = fbr_create(&mctx->fbr, "acceptor/sync_log", sync_fiber, log, 0);
-	fbr_transfer(&mctx->fbr, id);
-	acs_vacuum(ME_A);
-	fbr_reclaim(&mctx->fbr, id);
-}
-
 static void wal_replay_state(ME_P_ struct wal_state *w_state)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
@@ -733,167 +209,7 @@ static void wal_replay_promise(ME_P_ struct wal_promise *w_promise)
 	store_record(ME_A_ r);
 }
 
-static void wal_replay_rec(ME_P_ union wal_rec_any *wal_rec)
-{
-
-	switch (wal_rec->w_type) {
-	case WAL_REC_TYPE_STATE:
-		wal_replay_state(ME_A_ &wal_rec->state);
-		break;
-	case WAL_REC_TYPE_VALUE:
-		wal_replay_value(ME_A_ &wal_rec->value);
-		break;
-	case WAL_REC_TYPE_PROMISE:
-		wal_replay_promise(ME_A_ &wal_rec->promise);
-		break;
-	default:
-		errx(EXIT_FAILURE, "unknown WAL message type: %d",
-				wal_rec->w_type);
-	}
-}
-
-static void replay_rec(ME_P_ void *ptr, size_t size, int alloc)
-{
-	int retval;
-	msgpack_unpacked result;
-	union wal_rec_any wal_rec;
-	char *error = NULL;
-
-	msgpack_unpacked_init(&result);
-
-	retval = msgpack_unpack_next(&result, ptr, size, NULL);
-	if(!retval) {
-		errx(EXIT_FAILURE, "unable to deserialize WAL rec for replay");
-	}
-
-	retval = wal_msg_unpack(&result.data, &wal_rec, alloc, &error);
-	if(retval){
-		errx(EXIT_FAILURE, "unable to unpack WAL record for replay: %s", error);
-	}
-	wal_replay_rec(ME_A_ &wal_rec);
-	if(alloc) {
-		wal_msg_free(&wal_rec);
-	}
-	msgpack_unpacked_destroy(&result);
-}
-
-static void recover_wal(ME_P_ struct wal_log *log)
-{
-	struct wal_iter iter;
-	void *ptr = NULL;
-	size_t buf_size = 0, size = 0;
-	uint64_t lsn;
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	int alloc_mem = 0;
-
-	wal_iter_open(ME_A_ &iter, log);
-	fbr_log_i(&mctx->fbr, "recovering %s", log->filename);
-
-	while ((size = wal_iter_read(ME_A_ &iter, &lsn, &ptr, &buf_size))) {
-		if (ALK_SNAP == log->dir->kind) {
-			replay_rec(ME_A_ ptr, size, alloc_mem);
-			continue;
-		}
-		if (lsn > 0 && lsn <= ctx->confirmed_lsn) {
-			/* fbr_log_d(&mctx->fbr, "skipping lsn less than current,"
-					" (%zd <= %zd)", lsn,
-					ctx->confirmed_lsn); */
-			continue;
-		}
-		if (lsn > ctx->confirmed_lsn + 1) {
-			fbr_log_e(&mctx->fbr, "Gap found in log, lsn is %zd"
-					" while last confirmed lsn is %zd",
-					lsn, ctx->confirmed_lsn);
-			abort();
-		}
-		replay_rec(ME_A_ ptr, size, alloc_mem);
-		ctx->confirmed_lsn = lsn;
-	}
-	wal_iter_close(ME_A_ &iter);
-}
-
-static void recover_remaining_wals(ME_P)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct acs_log_dir *dir = &ctx->wal_dir;
-	uint64_t lsn = 0, last_lsn;
-	size_t i;
-	struct wal_log log;
-	ssize_t retval;
-	char *last_filename;
-
-	if (0 == dir->lsn_arr_len) {
-		retval = wal_log_open_rw(ME_A_ ctx->wal, &ctx->wal_dir, 0, 1);
-		if (-1 == retval)
-			errx(EXIT_FAILURE, "unable to open initial log for"
-					" writing");
-		return;
-	}
-	if (1 == dir->lsn_arr_len) {
-		last_lsn = dir->lsn_arr[0];
-		goto last_wal;
-	}
-	lsn = ctx->confirmed_lsn;
-
-	for (i = 0; i < dir->lsn_arr_len - 1; i++) {
-		if (dir->lsn_arr[i] <= lsn && lsn < dir->lsn_arr[i + 1])
-			break;
-	}
-	for (; i < dir->lsn_arr_len - 1; i++) {
-		lsn = dir->lsn_arr[i];
-		retval = wal_log_open_ro(ME_A_ &log, dir, lsn, 0);
-		if (-1 == retval)
-			errx(EXIT_FAILURE, "unable to read log for %zd", lsn);
-		recover_wal(ME_A_ &log);
-		wal_log_close(ME_A_ &log);
-	}
-	last_lsn = dir->lsn_arr[i];
-last_wal:
-	last_filename = wal_lsn_to_filename(dir, last_lsn, 1);
-	if (0 == access(last_filename, F_OK)) {
-		retval = wal_log_open_ro(ME_A_ &log, dir, last_lsn, 1);
-		if (-1 == retval) {
-			fbr_log_w(&mctx->fbr, "unable to read in-progress log"
-				" for %zd, unlinking it", last_lsn);
-			in_progress_unlink(last_filename);
-			return;
-		}
-		recover_wal(ME_A_ &log);
-		wal_log_close(ME_A_ &log);
-		fbr_log_i(&mctx->fbr, "Recovered in-progress WAL");
-	} else {
-		retval = wal_log_open_ro(ME_A_ &log, dir, last_lsn, 0);
-		if (-1 == retval)
-			errx(EXIT_FAILURE, "unable to read log for %zd", lsn);
-		recover_wal(ME_A_ &log);
-		wal_log_close(ME_A_ &log);
-	}
-	/* Switch confirmed_lsn semantics to write mode, i.e. hold not yet used
-	 * lsn number for the next wal record
-	 */
-	ctx->confirmed_lsn++;
-	retval = wal_log_open_rw(ME_A_ ctx->wal, &ctx->wal_dir,
-			ctx->confirmed_lsn, 1);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "unable to open last log for writing");
-}
-
-void wal_rotate(ME_P_ struct wal_log *log, struct acs_log_dir *dir)
-{
-	struct wal_log new_log;
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	uint64_t lsn = ctx->confirmed_lsn;
-	ssize_t retval;
-
-	retval = wal_log_open_rw(ME_A_ &new_log, dir, lsn, 1);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "unable to rotate log at lsn %zd", lsn);
-	wal_log_close(ME_A_ log);
-	*log = new_log;
-}
-
-static void wal_write_state_to(ME_P_ struct acs_context *ctx,
-		struct wal_log *log)
+static void ldb_write_state(ME_P_ struct acs_context *ctx)
 {
 	msgpack_packer pk;
 	msgpack_sbuffer sbuf;
@@ -901,6 +217,8 @@ static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 	int retval;
 	char *tmp_data;
 	size_t tmp_size;
+	const char *key = "acc_state";
+	const size_t klen = strlen(key);
 
 	wal_rec.w_type = WAL_REC_TYPE_STATE;
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
@@ -915,18 +233,18 @@ static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 	}
 	tmp_size = sbuf.size;
 	tmp_data = msgpack_sbuffer_release(&sbuf);
-	wal_log_write(ME_A_ log, tmp_data, tmp_size);
+	leveldb_writebatch_put(ctx->ldb_batch, key, klen, tmp_data, tmp_size);
 	ctx->writes_per_sync++;
 }
 
-static void wal_write_state(ME_P_ struct acs_context *ctx)
+static char *record_iid_to_key(uint64_t iid)
 {
-	struct acs_context *me_ctx = &mctx->pxs.acc.acs;
-	wal_write_state_to(ME_A_ ctx, me_ctx->wal);
+	static char buf[256];
+	snprintf(buf, sizeof(buf), "acc_rec/%020lld", (long long int)iid);
+	return buf;
 }
 
-static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
-		struct wal_log *log)
+static void ldb_write_value(ME_P_ struct acc_instance_record *r)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	msgpack_packer pk;
@@ -935,6 +253,7 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 	int retval;
 	char *tmp_data;
 	size_t tmp_size;
+	char *key;
 
 	if (r->v) {
 		wal_rec.w_type = WAL_REC_TYPE_VALUE;
@@ -959,148 +278,103 @@ static void wal_write_value_to(ME_P_ struct acc_instance_record *r,
 	}
 	tmp_size = sbuf.size;
 	tmp_data = msgpack_sbuffer_release(&sbuf);
-	wal_log_write(ME_A_ log, tmp_data, tmp_size);
-	ctx->writes_per_sync++;
-}
+	key = record_iid_to_key(r->iid);
+	leveldb_writebatch_put(ctx->ldb_batch, key, strlen(key), tmp_data,
+			tmp_size);
 
-static void wal_write_value(ME_P_ struct acc_instance_record *r)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	wal_write_value_to(ME_A_ r, ctx->wal);
+	ctx->writes_per_sync++;
 }
 
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 		enum acs_find_mode mode);
 
-static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
+static void recover_rec(ME_P_ const void *ptr, size_t size)
 {
-	struct me_context *mctx =
-		container_of(fiber_context, struct me_context, fbr);
-	struct acs_context *ctx;
-	uint64_t lsn;
-	struct acc_instance_record *r;
-	struct wal_log snap;
-	ssize_t retval;
-	struct acs_context snap_acs_ctx;
-	ev_tstamp t1, t2;
-	static char wdfn[PATH_MAX + 1];
-	static char tmp[PATH_MAX + 1] = {0};
-	uint64_t i;
-	ev_tstamp x, delta;
-	const ev_tstamp time_to_throttle =
-		mctx->args_info.acceptor_snap_throttle_time_arg;
-	const unsigned trottle_check =
-		mctx->args_info.acceptor_snap_throttle_arg;
+	int retval;
+	msgpack_unpacked result;
+	union wal_rec_any wal_rec;
+	char *error = NULL;
 
-	ctx = &mctx->pxs.acc.acs;
-	lsn = ctx->confirmed_lsn - 1;
-	ctx->snap_min = ctx->lowest_available;
-	ctx->snap_max = ctx->highest_stored;
+	msgpack_unpacked_init(&result);
 
-	memcpy(&snap_acs_ctx, ctx, sizeof(snap_acs_ctx));
-
-	/* Write the snapshot */
-	t1 = ev_now(mctx->loop);
-	fbr_log_i(&mctx->fbr, "started writing snapshot for %lu", lsn);
-	retval = wal_log_open_rw(ME_A_ &snap, &ctx->snap_dir, lsn, 1);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "unable to create a new snashot");
-	wal_log_iov_collect(ME_A_ &snap);
-	wal_write_state_to(ME_A_ &snap_acs_ctx, &snap);
-
-	x = ev_now(mctx->loop);
-	for (i = ctx->snap_min; i <= ctx->snap_max; i++) {
-		if (!find_record(ME_A_ &r, i, ACS_FM_JUST_FIND)) {
-			ctx->snap_min++;
-			continue;
-		}
-		wal_write_value_to(ME_A_ r, &snap);
-		ctx->snap_min++;
-		if (wal_log_iov_need_flush(ME_A_ &snap))
-			wal_log_iov_flush(ME_A_ &snap);
-		if (0 == i % trottle_check) {
-			delta = ev_now(mctx->loop) - x;
-			if (delta < time_to_throttle)
-				fbr_sleep(&mctx->fbr, time_to_throttle - delta);
-			x = ev_now(mctx->loop);
-		}
+	retval = msgpack_unpack_next(&result, ptr, size, NULL);
+	if(!retval) {
+		errx(EXIT_FAILURE, "unable to deserialize rec for recover");
 	}
-	ctx->snap_min = 0;
-	ctx->snap_max = 0;
-	wal_log_iov_flush(ME_A_ &snap);
-	wal_log_iov_stop(ME_A_ &snap);
-	in_progress_rename(&snap);
-	wal_log_close(ME_A_ &snap);
-	snprintf(wdfn, PATH_MAX, "%s/%020lld%s", ctx->wal_dir.dirname,
-			(long long)lsn, ctx->snap_dir.ext);
-	if (access(wdfn, R_OK) && ENOENT == errno) {
-		retval = fbr_eio_realpath(&mctx->fbr, snap.filename, tmp,
-				PATH_MAX, 0);
-		if (-1 == retval)
-			fbr_log_w(&mctx->fbr, "failed to realpath %s: %s",
-					snap.filename, strerror(errno));
-		retval = fbr_eio_symlink(&mctx->fbr, tmp, wdfn, 0);
-		if (retval)
-			fbr_log_w(&mctx->fbr, "failed to symlink %s to %s: %s",
-					tmp, wdfn, strerror(errno));
+
+	retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
+	if(retval){
+		errx(EXIT_FAILURE, "unable to unpack record for recover: %s",
+				error);
 	}
-	ctx->snap_dir.max_lsn = lsn;
-	ctx->snapshot_fiber = FBR_ID_NULL;
-	fbr_log_i(&mctx->fbr, "finished writing snapshot for %lu", lsn);
-	t2 = ev_now(mctx->loop);
-	statd_send_keyval(ME_A_ "acc_storage.snapshot.write_time", t2 - t1);
-}
-
-static void create_snapshot(ME_P)
-{
-	struct acs_context* ctx = &mctx->pxs.acc.acs;
-	if (!fbr_id_isnull(ctx->snapshot_fiber))
-		return;
-	ctx->snapshot_fiber = fbr_create(&mctx->fbr, "acceptor/snap",
-			snapshot_fiber, NULL, 0);
-	fbr_transfer(&mctx->fbr, ctx->snapshot_fiber);
-}
-
-static void recover_snapshot(ME_P)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct wal_log log;
-	ssize_t retval;
-	char *test_filename;
-	if (0 == ctx->snap_dir.max_lsn)
-		return;
-
-	test_filename = wal_lsn_to_filename(&ctx->snap_dir,
-			ctx->snap_dir.max_lsn, 1);
-	if (0 == access(test_filename, F_OK)) {
-		in_progress_unlink(test_filename);
-		ctx->snap_dir.lsn_arr_len--;
-		ctx->snap_dir.max_lsn =
-			ctx->snap_dir.lsn_arr[ctx->snap_dir.lsn_arr_len - 1];
+	switch (wal_rec.w_type) {
+	case WAL_REC_TYPE_STATE:
+		wal_replay_state(ME_A_ &wal_rec.state);
+		break;
+	case WAL_REC_TYPE_VALUE:
+		wal_replay_value(ME_A_ &wal_rec.value);
+		break;
+	case WAL_REC_TYPE_PROMISE:
+		wal_replay_promise(ME_A_ &wal_rec.promise);
+		break;
+	default:
+		errx(EXIT_FAILURE, "unknown WAL message type: %d",
+				wal_rec.w_type);
 	}
-	retval = wal_log_open(ME_A_ &log, &ctx->snap_dir, WLM_RO,
-			ctx->snap_dir.max_lsn, 0);
-	if (-1 == retval)
-		errx(EXIT_FAILURE, "unable to recover from snapshot at %zd",
-				ctx->snap_dir.max_lsn);
-	recover_wal(ME_A_ &log);
-	wal_log_close(ME_A_ &log);
-	ctx->confirmed_lsn = ctx->snap_dir.max_lsn;
+	msgpack_unpacked_destroy(&result);
 }
 
 static void recover(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	ctx->snap_dir.dirname = mctx->args_info.acceptor_snap_dir_arg;
-	scan_log_dir(ME_A_ &ctx->snap_dir);
-	ctx->wal_dir.dirname = mctx->args_info.acceptor_wal_dir_arg;
-	scan_log_dir(ME_A_ &ctx->wal_dir);
-	recover_snapshot(ME_A);
-	recover_remaining_wals(ME_A);
+	char *buf;
+	size_t len;
+	char *error = NULL;
+	leveldb_readoptions_t *options = leveldb_readoptions_create();
+	leveldb_iterator_t* iter;
+	const char *key;
+	size_t klen;
+	const char *value;
+	size_t vlen;
+
+	leveldb_readoptions_set_verify_checksums(options, 1);
+	leveldb_readoptions_set_fill_cache(options, 0);
+
+	key = "acc_state";
+	klen = strlen(key);
+	buf = leveldb_get(ctx->ldb, options, key, klen, &len, &error);
+	if (error)
+		errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
+	if (NULL == buf) {
+		ctx->highest_accepted = 0;
+		ctx->highest_finalized = 0;
+		ctx->lowest_available = 0;
+	} else {
+		recover_rec(ME_A_ buf, len);
+		free(buf);
+	}
+
+	iter = leveldb_create_iterator(ctx->ldb, options);
+	key = record_iid_to_key(ctx->highest_finalized + 1);
+	fbr_log_i(&mctx->fbr, "iter start key %s", key);
+	leveldb_iter_seek(iter, key, strlen(key));
+	while (0 != leveldb_iter_valid(iter)) {
+		key = leveldb_iter_key(iter, &klen);
+		if (klen < 8 || memcmp(key, "acc_rec/", 8))
+			break;
+		value = leveldb_iter_value(iter, &vlen);
+		fbr_log_d(&mctx->fbr, "recovering record %.*s, len %zd",
+				(unsigned)klen, key, vlen);
+		recover_rec(ME_A_ value, vlen);
+		leveldb_iter_next(iter);
+	}
+
 	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepted = %zd,"
 			" highest finalized = %zd, lowest available = %zd",
 			ctx->highest_accepted, ctx->highest_finalized,
 			ctx->lowest_available);
+	leveldb_iter_destroy(iter);
+	leveldb_readoptions_destroy(options);
 }
 
 struct stats_summary {
@@ -1205,7 +479,7 @@ static inline void report_stats(ME_P_ struct stats_calc_arg *arg)
 			arg->write_speed / 1e6, arg->bytes_written);
 }
 
-static void stats_fiber(struct fbr_context *fiber_context, void *_arg)
+void stats_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	struct acs_context *ctx;
@@ -1241,21 +515,34 @@ skip:
 void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	fbr_id_t stats_fiber_id;
-	fbr_mutex_init(&mctx->fbr, &ctx->snapshot_mutex);
+	char *error = NULL;
+	ctx->ldb_options = leveldb_options_create();
+	leveldb_options_set_create_if_missing(ctx->ldb_options, 1);
+	ctx->ldb = leveldb_open(ctx->ldb_options,
+			mctx->args_info.acceptor_db_dir_arg, &error);
+	if (error) {
+		fbr_log_e(&mctx->fbr, "leveldb error: %s", error);
+		exit(EXIT_FAILURE);
+	}
+	ctx->ldb_batch = leveldb_writebatch_create();
+	ctx->ldb_write_options_sync = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(ctx->ldb_write_options_sync, 1);
+	/* fbr_id_t stats_fiber_id; */
 	fbr_mutex_init(&mctx->fbr, &ctx->batch_mutex);
 	fbr_cond_init(&mctx->fbr, &ctx->highest_finalized_changed);
-	ctx->wal = malloc(sizeof(*ctx->wal));
-	if (NULL == ctx->wal)
-		err(EXIT_FAILURE, "malloc");
 	kv_init(ctx->stats);
 	kv_resize(struct acs_iov_stat, ctx->stats, 1024);
 	kv_init(ctx->stats2);
 	kv_resize(struct acs_iov_stat, ctx->stats2, 1024);
+
 	recover(ME_A);
+	/*
+
 	stats_fiber_id = fbr_create(&mctx->fbr, "acceptor/stats",
 			stats_fiber, NULL, 0);
 	fbr_transfer(&mctx->fbr, stats_fiber_id);
+
+	*/
 }
 
 void acs_batch_start(ME_P)
@@ -1269,14 +556,36 @@ void acs_batch_start(ME_P)
 	ctx->dirty = 0;
 }
 
+struct ldb_write_custom_cb_arg {
+	char *error;
+	struct acs_context *ctx;
+	double write_time;
+};
+
+static eio_ssize_t ldb_write_custom_cb(void *data)
+{
+	struct ldb_write_custom_cb_arg *arg = data;
+	struct acs_context *ctx = arg->ctx;
+	double t1, t2;
+	t1 = now();
+	leveldb_write(ctx->ldb, ctx->ldb_write_options_sync, ctx->ldb_batch,
+			&arg->error);
+	t2 = now();
+	arg->write_time = t2 - t1;
+	return 0;
+}
+
 void acs_batch_finish(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	uint64_t rows_per_snap;
 	struct acc_instance_record *r, *x;
+	int retval;
+	struct ldb_write_custom_cb_arg arg;
 	ctx->in_batch = 0;
 
-	wal_log_iov_collect(ME_A_ ctx->wal);
+	arg.ctx = ctx;
+	arg.error = NULL;
+	arg.write_time = 0;
 	SLIST_FOREACH_SAFE(r, &ctx->dirty_instances, dirty_entries, x) {
 		if (!r->stored) {
 			SLIST_REMOVE(&ctx->dirty_instances, r,
@@ -1286,24 +595,23 @@ void acs_batch_finish(ME_P)
 			free(r);
 			continue;
 		}
-		if (wal_log_iov_need_flush(ME_A_ ctx->wal))
-			wal_log_iov_flush(ME_A_ ctx->wal);
-		wal_write_value(ME_A_ r);
+		ldb_write_value(ME_A_ r);
 		r->dirty = 0;
 	}
 	if (ctx->dirty)
-		wal_write_state(ME_A_ ctx);
-	wal_log_iov_flush(ME_A_ ctx->wal);
-	wal_log_iov_stop(ME_A_ ctx->wal);
+		ldb_write_state(ME_A_ ctx);
 
 	if (0 == ctx->writes_per_sync) {
 		fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 		return;
 	}
-	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
-		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
-	else
-		wal_log_sync(ME_A_ ctx->wal);
+	retval = fbr_eio_custom(&mctx->fbr, ldb_write_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
+
+	fbr_log_d(&mctx->fbr, "leveldb_write() finished in %f", arg.write_time);
+	leveldb_writebatch_clear(ctx->ldb_batch);
+
 	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
 		assert(r->stored);
 		if (r->msg) {
@@ -1319,10 +627,6 @@ void acs_batch_finish(ME_P)
 		}
 	}
 
-	//fbr_mutex_unlock(&mctx->fbr, &ctx->snapshot_mutex);
-	rows_per_snap = ctx->confirmed_lsn - ctx->snap_dir.max_lsn;
-	if (rows_per_snap > mctx->args_info.acceptor_snap_rows_arg)
-		create_snapshot(ME_A);
 	fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 }
 
@@ -1476,7 +780,10 @@ void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r, *x;
-	wal_log_close(ME_A_ ctx->wal);
+	leveldb_writeoptions_destroy(ctx->ldb_write_options_sync);
+	leveldb_writebatch_destroy(ctx->ldb_batch);
+	leveldb_options_destroy(ctx->ldb_options);
+	leveldb_close(ctx->ldb);
 	HASH_ITER(hh, ctx->instances, r, x) {
 		HASH_DEL(ctx->instances, r);
 		sm_free(r->v);
@@ -1486,5 +793,4 @@ void acs_destroy(ME_P)
 	fbr_cond_destroy(&mctx->fbr, &ctx->highest_finalized_changed);
 	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
 	fbr_mutex_destroy(&mctx->fbr, &ctx->batch_mutex);
-	free(ctx->wal);
 }

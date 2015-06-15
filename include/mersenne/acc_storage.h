@@ -26,6 +26,7 @@
 #include <sys/queue.h>
 #include <uthash.h>
 #include <evfibers/fiber.h>
+#include <leveldb/c.h>
 
 #include <stdint.h>
 #include <mersenne/kvec.h>
@@ -75,6 +76,10 @@ struct acs_iov_stat {
 };
 
 struct acs_context {
+	leveldb_t *ldb;
+	leveldb_options_t *ldb_options;
+	leveldb_writebatch_t *ldb_batch;
+	leveldb_writeoptions_t *ldb_write_options_sync;
 	struct acs_log_dir wal_dir;
 	struct acs_log_dir snap_dir;
 	uint64_t confirmed_lsn;
@@ -147,8 +152,6 @@ uint64_t acs_get_lowest_available(ME_P);
 void acs_set_highest_finalized(ME_P_ uint64_t iid);
 void acs_set_highest_finalized_async(ME_P_ uint64_t iid);
 void acs_vacuum(ME_P);
-int acs_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
-		enum acs_find_mode mode);
 int acs_find_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
 		enum acs_find_mode mode);
 const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid);

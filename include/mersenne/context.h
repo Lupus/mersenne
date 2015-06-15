@@ -59,6 +59,7 @@ struct me_context {
 	fbr_id_t fiber_acceptor;
 	fbr_id_t fiber_proposer;
 	fbr_id_t fiber_tcp_client;
+	fbr_id_t fiber_learner;
 	struct fiber_tailq learners;
 	struct sockaddr_in statd_addr;
 	int use_statd;
@@ -81,18 +82,19 @@ struct me_context {
 	} delayed_stats ;
 };
 
-#define ME_CONTEXT_INITIALIZER { \
-	.loop = NULL, \
-	.counter = 0, \
-	.peers = NULL, \
-	.me = NULL, \
-	.ldr = LDR_CONTEXT_INITIALIZER, \
-	.pxs = PXS_CONTEXT_INITIALIZER, \
-	.fiber_main = FBR_ID_NULL, \
-	.fiber_leader = FBR_ID_NULL, \
-	.fiber_listener = FBR_ID_NULL, \
-	.fiber_proposer = FBR_ID_NULL, \
+#define ME_CONTEXT_INITIALIZER {         \
+	.loop = NULL,                    \
+	.counter = 0,                    \
+	.peers = NULL,                   \
+	.me = NULL,                      \
+	.ldr = LDR_CONTEXT_INITIALIZER,  \
+	.pxs = PXS_CONTEXT_INITIALIZER,  \
+	.fiber_main = FBR_ID_NULL,       \
+	.fiber_leader = FBR_ID_NULL,     \
+	.fiber_listener = FBR_ID_NULL,   \
+	.fiber_proposer = FBR_ID_NULL,   \
 	.fiber_tcp_client = FBR_ID_NULL, \
+	.fiber_learner = FBR_ID_NULL,    \
 }
 
 #define ME_P struct me_context *mctx

@@ -23,6 +23,7 @@
 #include <netinet/tcp.h>
 #include <errno.h>
 #include <msgpack.h>
+#include <pthread.h>
 
 #include <mersenne/client.h>
 #include <mersenne/context.h>
@@ -124,7 +125,7 @@ static void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer,
 	}
 }
 
-void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
+static void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	fbr_id_t learner;
@@ -301,12 +302,61 @@ static int send_error(ME_P_ struct connection_fiber_arg *arg,
 	return 0;
 }
 
+struct informer_thread_func_arg {
+	int fd;
+	uint64_t starting_iid;
+	struct me_context *mctx;
+};
+
+void *informer_thread_func(void *_arg)
+{
+	struct informer_thread_func_arg *arg = _arg;
+	struct me_context *mctx = arg->mctx;
+	uint64_t i;
+	char *buf;
+	size_t size;
+	msgpack_sbuffer *sbuf = msgpack_sbuffer_new();
+	msgpack_packer pk;
+	union me_cli_any me_msg;
+	int retval;
+	for (i = arg->starting_iid;;i++) {
+		printf("informer waiting for instance %zd\n", i);
+		lea_get_or_wait_for_instance(ME_A_ i, &buf, &size);
+		printf("informer got instance %zd !\n", i);
+
+		me_msg.m_type = ME_CMT_ARRIVED_VALUE;
+		me_msg.arrived_value.buf = buf;
+		me_msg.arrived_value.size = size;
+		me_msg.arrived_value.iid = i;
+		msgpack_sbuffer_clear(sbuf);
+		msgpack_packer_init(&pk, sbuf, msgpack_sbuffer_write);
+		retval = me_cli_msg_pack(&pk, &me_msg);
+		if (retval) {
+			printf("informer: me_cli_msg_pack() failed\n");
+			break;
+		}
+		do {
+			retval = write(arg->fd, sbuf->data, sbuf->size);
+		} while (-1 == retval && EINTR == errno);
+		if (retval < sbuf->size) {
+			printf("informer: wrote less than expected: %d\n",
+					retval);
+			break;
+		}
+	}
+	msgpack_sbuffer_free(sbuf);
+	free(_arg);
+	return NULL;
+}
+
 static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 		union me_cli_any *u)
 {
 	fbr_id_t informer;
+	//pthread_t tid;
 	arg->starting_iid = u->client_hello.starting_iid;
 	int retval;
+	//struct informer_thread_func_arg *targ = malloc(sizeof(*arg));
 	if (0 == arg->starting_iid) {
 		fbr_log_i(&mctx->fbr, "requested start from recent instance");
 		arg->starting_iid = acs_get_highest_finalized(ME_A) + 1;
@@ -323,7 +373,13 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 					" the client");
 		return -1;
 	}
-	fbr_log_i(&mctx->fbr, "starting informer fiber at instance %ld",
+	//targ->fd = arg->fd;
+	//targ->starting_iid = arg->starting_iid;
+	//targ->mctx = mctx;
+	//retval = pthread_create(&tid, NULL, informer_thread_func, targ);
+	//if (retval)
+	//	err(EXIT_FAILURE, "pthread_create() failed");
+	fbr_log_i(&mctx->fbr, "started informer thread at instance %ld",
 			arg->starting_iid);
 	informer = fbr_create(&mctx->fbr, "client/informer",
 			client_informer_fiber, arg, 0);
