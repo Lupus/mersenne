@@ -52,6 +52,9 @@ struct lea_context {
 	struct fbr_cond_var delivered;
 	struct fbr_buffer buffer;
 	leveldb_t *ldb;
+	leveldb_options_t *ldb_options;
+	leveldb_writebatch_t *ldb_batch;
+	leveldb_writeoptions_t *ldb_write_options_sync;
 	leveldb_writeoptions_t *ldb_write_options_async;
 	leveldb_readoptions_t *ldb_read_options_cache;
 	pthread_cond_t fnd_pcond;

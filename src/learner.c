@@ -20,6 +20,7 @@
  ********************************************************************/
 #include <assert.h>
 #include <err.h>
+#include <evfibers/eio.h>
 
 #include <mersenne/learner.h>
 #include <mersenne/paxos.h>
@@ -176,17 +177,13 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 	struct lea_packed_instance *pinstance = (void *)msg_buf;
 	struct lea_instance_info *info;
 	char *key;
-	char *error = NULL;
 	pinstance->iid = instance->iid;
 	memcpy(pinstance->value, instance->chosen->v->ptr,
 			instance->chosen->v->size1);
 	key = instance_iid_to_key(instance->iid);
-	leveldb_put(context->ldb, context->ldb_write_options_async, key,
-			strlen(key), (void *)pinstance,
-			sizeof(pinstance) + instance->chosen->v->size1, &error);
-	if (error)
-		errx(EXIT_FAILURE, "do_deliver: leveldb_put() failed: %s",
-				error);
+	leveldb_writebatch_put(context->ldb_batch, key, strlen(key),
+			(void *)pinstance,
+			sizeof(pinstance) + instance->chosen->v->size1);
 	if (mctx->pxs.pro.lea_fb) {
 		fbr_log_d(&mctx->fbr, "Delivering instance #%ld to proposer",
 			instance->iid);
@@ -325,6 +322,36 @@ static void retransmit_next_window(ME_P)
 			context->highest_seen);
 }
 
+static double now()
+{
+	struct timeval t;
+	int retval;
+	retval = gettimeofday(&t, NULL);
+	if (retval)
+		err(EXIT_FAILURE, "gettimeofday");
+	return t.tv_sec + t.tv_usec * 1e-6;
+}
+
+struct ldb_write_custom_cb_arg {
+	char *error;
+	struct lea_context *ctx;
+	double write_time;
+};
+
+static eio_ssize_t ldb_write_custom_cb(void *data)
+{
+	struct ldb_write_custom_cb_arg *arg = data;
+	struct lea_context *ctx = arg->ctx;
+	double t1, t2;
+	t1 = now();
+	leveldb_write(ctx->ldb, ctx->ldb_write_options_async, ctx->ldb_batch,
+			&arg->error);
+	t2 = now();
+	arg->write_time = t2 - t1;
+	return 0;
+}
+
+
 static void try_deliver(ME_P)
 {
 	struct lea_context *context = &mctx->pxs.lea;
@@ -333,9 +360,16 @@ static void try_deliver(ME_P)
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	struct lea_packed_state pstate;
+	struct ldb_write_custom_cb_arg arg;
 	char *error = NULL;
 	const char *key = "lea_state";
 	const size_t klen = strlen(key);
+	int retval;
+
+	arg.ctx = context;
+	arg.error = NULL;
+	arg.write_time = 0;
+
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(ME_A_ i);
 		if (!instance->closed)
@@ -353,18 +387,28 @@ static void try_deliver(ME_P)
 		instance->modified = 0;
 		instance->iid = i + LEA_INSTANCE_WINDOW;
 	}
+
+	if (context->first_non_delivered == start)
+		return;
+
 	fbr_cond_signal(&mctx->fbr, &context->delivered);
-	if (context->first_non_delivered > start) {
-		pthread_cond_broadcast(&context->fnd_pcond);
-		pstate.first_non_delivered = context->first_non_delivered;
-		pstate.lowest_available = 0; /* FIXME */
-		leveldb_put(context->ldb, context->ldb_write_options_async, key,
-			klen, (void *)&pstate, sizeof(pstate), &error);
-		if (error)
-			errx(EXIT_FAILURE,
-					"try_deliver: leveldb_put() failed: %s",
-					error);
-	}
+
+	pthread_cond_broadcast(&context->fnd_pcond);
+	pstate.first_non_delivered = context->first_non_delivered;
+	pstate.lowest_available = 0; /* FIXME */
+	leveldb_writebatch_put(context->ldb_batch, key,	klen,
+			(void *)&pstate, sizeof(pstate));
+
+	retval = fbr_eio_custom(&mctx->fbr, ldb_write_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
+
+	if (error)
+		errx(EXIT_FAILURE,
+				"try_deliver: leveldb_write() failed: %s",
+				error);
+	fbr_log_d(&mctx->fbr, "leveldb_write() finished in %f", arg.write_time);
+	leveldb_writebatch_clear(context->ldb_batch);
 }
 
 static int ack_eq(void *_a, void *_b) {
@@ -579,8 +623,21 @@ static void init_context(ME_P)
 	const size_t klen = strlen(key);
 	struct lea_packed_state *pstate;
 	size_t sz;
+	char path[PATH_MAX];
 
-	context->ldb = mctx->pxs.acc.acs.ldb;
+	context->ldb_options = leveldb_options_create();
+	leveldb_options_set_create_if_missing(context->ldb_options, 1);
+	snprintf(path, sizeof(path), "%s/learner", mctx->args_info.db_dir_arg);
+	context->ldb = leveldb_open(context->ldb_options, path, &error);
+	if (error) {
+		fbr_log_e(&mctx->fbr, "leveldb error: %s", error);
+		exit(EXIT_FAILURE);
+	}
+	context->ldb_batch = leveldb_writebatch_create();
+	context->ldb_write_options_sync = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(context->ldb_write_options_sync, 1);
+	context->ldb_write_options_async = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(context->ldb_write_options_async, 0);
 
 	context->ldb_read_options_cache = leveldb_readoptions_create();
 	leveldb_readoptions_set_verify_checksums(

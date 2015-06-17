@@ -516,10 +516,11 @@ void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	char *error = NULL;
+	char path[PATH_MAX];
 	ctx->ldb_options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(ctx->ldb_options, 1);
-	ctx->ldb = leveldb_open(ctx->ldb_options,
-			mctx->args_info.acceptor_db_dir_arg, &error);
+	snprintf(path, sizeof(path), "%s/acceptor", mctx->args_info.db_dir_arg);
+	ctx->ldb = leveldb_open(ctx->ldb_options, path, &error);
 	if (error) {
 		fbr_log_e(&mctx->fbr, "leveldb error: %s", error);
 		exit(EXIT_FAILURE);
