@@ -337,6 +337,9 @@ static void recover(ME_P)
 	const char *value;
 	size_t vlen;
 
+	ev_now_update(mctx->loop);
+	fbr_log_i(&mctx->fbr, "Starting recovery of acceptor state");
+
 	leveldb_readoptions_set_verify_checksums(options, 1);
 	leveldb_readoptions_set_fill_cache(options, 0);
 
@@ -356,7 +359,6 @@ static void recover(ME_P)
 
 	iter = leveldb_create_iterator(ctx->ldb, options);
 	key = record_iid_to_key(ctx->highest_finalized + 1);
-	fbr_log_i(&mctx->fbr, "iter start key %s", key);
 	leveldb_iter_seek(iter, key, strlen(key));
 	while (0 != leveldb_iter_valid(iter)) {
 		key = leveldb_iter_key(iter, &klen);
@@ -369,6 +371,7 @@ static void recover(ME_P)
 		leveldb_iter_next(iter);
 	}
 
+	ev_now_update(mctx->loop);
 	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepted = %zd,"
 			" highest finalized = %zd, lowest available = %zd",
 			ctx->highest_accepted, ctx->highest_finalized,
@@ -519,6 +522,22 @@ void acs_initialize(ME_P)
 	char path[PATH_MAX];
 	ctx->ldb_options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(ctx->ldb_options, 1);
+	leveldb_options_set_write_buffer_size(ctx->ldb_options,
+			mctx->args_info.ldb_write_buffer_arg);
+	leveldb_options_set_max_open_files(ctx->ldb_options,
+			mctx->args_info.ldb_max_open_files_arg);
+	ctx->ldb_cache =
+		leveldb_cache_create_lru(mctx->args_info.ldb_cache_arg);
+	leveldb_options_set_cache(ctx->ldb_options, ctx->ldb_cache);
+	leveldb_options_set_block_size(ctx->ldb_options,
+			mctx->args_info.ldb_block_size_arg);
+	if (mctx->args_info.ldb_compression_flag) {
+		leveldb_options_set_compression(ctx->ldb_options,
+				leveldb_snappy_compression);
+	} else {
+		leveldb_options_set_compression(ctx->ldb_options,
+				leveldb_no_compression);
+	}
 	snprintf(path, sizeof(path), "%s/acceptor", mctx->args_info.db_dir_arg);
 	ctx->ldb = leveldb_open(ctx->ldb_options, path, &error);
 	if (error) {

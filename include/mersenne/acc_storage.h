@@ -77,6 +77,7 @@ struct acs_iov_stat {
 
 struct acs_context {
 	leveldb_t *ldb;
+	leveldb_cache_t *ldb_cache;
 	leveldb_options_t *ldb_options;
 	leveldb_writebatch_t *ldb_batch;
 	leveldb_writeoptions_t *ldb_write_options_sync;

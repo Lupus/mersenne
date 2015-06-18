@@ -17,6 +17,11 @@ option "learner-instance-window" - "Instance window size for learner" int defaul
 option "learner-retransmit-age" - "Instance retransmit age" double default="0.25" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
 option "db-dir" - "Directory, containing state database" string default="/var/lib/mersenne" optional
+option "ldb-write-buffer" - "LevelDB write buffer" int default="64000000" optional
+option "ldb-max-open-files" - "LevelDB max open files" int default="1024" optional
+option "ldb-cache" - "LevelDB uncompressed data cache" int default="256000000" optional
+option "ldb-block-size" - "LevelDB block size" int default="131072" optional
+option "ldb-compression" - "LevelDB snappy compression" flag on
 option "acceptor-truncate" T "Maximum number of records to store" int default="100000" optional
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
 option "statd-ip" - "Send metrics to the specified statd instance" string optional

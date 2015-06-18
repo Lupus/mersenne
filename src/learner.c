@@ -627,6 +627,22 @@ static void init_context(ME_P)
 
 	context->ldb_options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(context->ldb_options, 1);
+	leveldb_options_set_write_buffer_size(context->ldb_options,
+			mctx->args_info.ldb_write_buffer_arg);
+	leveldb_options_set_max_open_files(context->ldb_options,
+			mctx->args_info.ldb_max_open_files_arg);
+	context->ldb_cache =
+		leveldb_cache_create_lru(mctx->args_info.ldb_cache_arg);
+	leveldb_options_set_cache(context->ldb_options, context->ldb_cache);
+	leveldb_options_set_block_size(context->ldb_options,
+			mctx->args_info.ldb_block_size_arg);
+	if (mctx->args_info.ldb_compression_flag) {
+		leveldb_options_set_compression(context->ldb_options,
+				leveldb_snappy_compression);
+	} else {
+		leveldb_options_set_compression(context->ldb_options,
+				leveldb_no_compression);
+	}
 	snprintf(path, sizeof(path), "%s/learner", mctx->args_info.db_dir_arg);
 	context->ldb = leveldb_open(context->ldb_options, path, &error);
 	if (error) {
