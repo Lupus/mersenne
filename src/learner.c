@@ -32,6 +32,7 @@
 #include <mersenne/util.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/acc_storage.h>
+#include <mersenne/md5.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
 #define LEA_CACHE_WINDOW (LEA_INSTANCE_WINDOW * 10)
@@ -60,6 +61,7 @@ struct lea_instance {
 struct lea_packed_instance {
 	uint64_t iid;
 	uint16_t size;
+	uint8_t checksum[16];
 	char value[0];
 } __attribute__((packed));
 
@@ -177,14 +179,27 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 	struct lea_packed_instance *pinstance = (void *)msg_buf;
 	struct lea_instance_info *info;
 	char *key;
+	MD5_CTX md5;
+	MD5_Init(&md5);
+	MD5_Update(&md5, context->last_checksum,
+			sizeof(context->last_checksum));
+	MD5_Update(&md5, instance->chosen->v->ptr, instance->chosen->v->size1);
+	MD5_Final(context->last_checksum, &md5);
 	pinstance->iid = instance->iid;
 	pinstance->size = instance->chosen->v->size1;
+	memcpy(pinstance->checksum, context->last_checksum,
+			sizeof(context->last_checksum));
 	memcpy(pinstance->value, instance->chosen->v->ptr,
 			instance->chosen->v->size1);
 	key = instance_iid_to_key(instance->iid);
 	leveldb_writebatch_put(context->ldb_batch, key, strlen(key),
 			(void *)pinstance,
 			sizeof(pinstance) + instance->chosen->v->size1);
+	if (0 == instance->iid % 100000)
+		fbr_log_i(&mctx->fbr, "running checksum at #%ld is %lx%lx",
+				pinstance->iid,
+				*((uint64_t *)context->last_checksum),
+				*((uint64_t *)context->last_checksum + 1));
 	if (mctx->pxs.pro.lea_fb) {
 		fbr_log_d(&mctx->fbr, "Delivering instance #%ld to proposer",
 			instance->iid);
@@ -622,8 +637,10 @@ static void init_context(ME_P)
 	const char *key = "lea_state";
 	const size_t klen = strlen(key);
 	struct lea_packed_state *pstate;
+	struct lea_packed_instance *pinstance;
 	size_t sz;
 	char path[PATH_MAX];
+	char buf[256];
 
 	context->ldb_options = leveldb_options_create();
 	leveldb_options_set_create_if_missing(context->ldb_options, 1);
@@ -666,8 +683,26 @@ static void init_context(ME_P)
 		errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
 	if (pstate) {
 		context->first_non_delivered = pstate->first_non_delivered;
+		snprintf(buf, sizeof(buf), "lea_instance/%020lld",
+				(long long int)
+				(context->first_non_delivered - 1));
+		pinstance = (void *)leveldb_get(context->ldb,
+				context->ldb_read_options_cache, buf,
+				strlen(buf), &sz, &error);
+		if (error)
+			errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
+		memcpy(context->last_checksum, pinstance->checksum,
+				sizeof(context->last_checksum));
+		fbr_log_i(&mctx->fbr,
+				"last checksum loaded from #%ld is %lx%lx",
+				pinstance->iid,
+				*((uint64_t *)context->last_checksum),
+				*((uint64_t *)context->last_checksum + 1));
 	} else {
 		context->first_non_delivered = 1ULL;
+		fbr_log_i(&mctx->fbr, "last checksum initialized to zero");
+		memset(context->last_checksum, 0x00,
+				sizeof(context->last_checksum));
 	}
 	context->mctx = mctx;
 	fbr_cond_init(&mctx->fbr, &context->delivered);
@@ -824,7 +859,7 @@ static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
 	arg.ctx = context;
 	arg.i = i;
 
-	fbr_log_i(&mctx->fbr, "ldb deliver from %lu", i);
+	fbr_log_d(&mctx->fbr, "ldb deliver from %lu", i);
 	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
 	if (retval)
 		err(EXIT_FAILURE, "ldb_read_custom_cb failed");

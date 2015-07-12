@@ -58,6 +58,7 @@ struct lea_context {
 	leveldb_writeoptions_t *ldb_write_options_async;
 	leveldb_readoptions_t *ldb_read_options_cache;
 	pthread_cond_t fnd_pcond;
+	uint8_t last_checksum[16];
 };
 
 #define LEA_CONTEXT_INITIALIZER {              \
