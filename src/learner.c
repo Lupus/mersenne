@@ -59,6 +59,7 @@ struct lea_instance {
 
 struct lea_packed_instance {
 	uint64_t iid;
+	uint16_t size;
 	char value[0];
 } __attribute__((packed));
 
@@ -155,17 +156,16 @@ void lea_get_or_wait_for_instance(ME_P_ uint64_t iid, char **value,
 }
 
 static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
-		uint64_t b, struct buffer *v)
+		struct buffer *v)
 {
 	struct lea_instance_info *info;
-	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
-			"#%ld vith value ``%.*s'' size %d",
-			iid, b, (unsigned)v->size1, v->ptr, v->size1);
+	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered "
+			"with value ``%.*s'' size %d",
+			iid, (unsigned)v->size1, v->ptr, v->size1);
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = iid;
-	info->vb = b;
 	info->buffer = sm_in_use(v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
@@ -178,6 +178,7 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 	struct lea_instance_info *info;
 	char *key;
 	pinstance->iid = instance->iid;
+	pinstance->size = instance->chosen->v->size1;
 	memcpy(pinstance->value, instance->chosen->v->ptr,
 			instance->chosen->v->size1);
 	key = instance_iid_to_key(instance->iid);
@@ -188,7 +189,7 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 		fbr_log_d(&mctx->fbr, "Delivering instance #%ld to proposer",
 			instance->iid);
 		deliver_v(ME_A_ mctx->pxs.pro.lea_fb, instance->iid,
-				instance->chosen->b, instance->chosen->v);
+				instance->chosen->v);
 	}
 	info = get_cache_instance(ME_A_ instance->iid);
 	if (0 == info->iid) {
@@ -209,7 +210,6 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 	fbr_log_d(&mctx->fbr, "assigning %zd to slot with old iid %zd",
 			instance->iid, info->iid);
 	info->iid = instance->iid;
-	info->vb = instance->chosen->b;
 	info->buffer = sm_in_use(instance->chosen->v);
 	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
 			"#%ld vith value ``%.*s'' size %d", instance->iid,
@@ -767,6 +767,78 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
+#define LDB_READ_INSTANCES 1000
+
+struct ldb_read_custom_cb_arg {
+	char *error;
+	struct lea_context *ctx;
+	struct lea_packed_instance *pinstances[LDB_READ_INSTANCES];
+	uint64_t i;
+	size_t count;
+};
+
+static eio_ssize_t ldb_read_custom_cb(void *data)
+{
+	struct ldb_read_custom_cb_arg *arg = data;
+	struct lea_context *context = arg->ctx;
+	char buf[256];
+	char buf2[256];
+	leveldb_readoptions_t *options = context->ldb_read_options_cache;
+	leveldb_iterator_t* iter;
+	const char *key;
+	size_t klen;
+	size_t vlen;
+	size_t i = 0;
+
+	iter = leveldb_create_iterator(context->ldb, options);
+	snprintf(buf, sizeof(buf), "lea_instance/%020lld",
+			(long long int)arg->i);
+	leveldb_iter_seek(iter, buf, strlen(buf));
+	snprintf(buf2, sizeof(buf), "lea_instance/%020lld",
+			(long long int)arg->i + LDB_READ_INSTANCES);
+	while (0 != leveldb_iter_valid(iter)) {
+		key = leveldb_iter_key(iter, &klen);
+		if (klen < 13 || 0 != memcmp(key, "lea_instance/", 13) ||
+				0 < memcmp(key, buf2, klen))
+			break;
+		arg->pinstances[i++] = (void *)leveldb_iter_value(iter, &vlen);
+
+		leveldb_iter_next(iter);
+	}
+	arg->count = i;
+
+	leveldb_iter_destroy(iter);
+	return 0;
+}
+
+
+static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
+{
+	struct lea_context *context = &mctx->pxs.lea;
+	struct ldb_read_custom_cb_arg arg;
+	int retval;
+	uint64_t x;
+	struct buffer *buf;
+
+	memset(&arg, 0x00, sizeof(arg));
+	arg.ctx = context;
+	arg.i = i;
+
+	fbr_log_i(&mctx->fbr, "ldb deliver from %lu", i);
+	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_read_custom_cb failed");
+
+	for (x = 0; x < arg.count; x++) {
+		buf = buf_sm_copy(arg.pinstances[x]->value,
+				arg.pinstances[x]->size);
+		assert(i == arg.pinstances[x]->iid);
+		deliver_v(ME_A_ fb, arg.pinstances[x]->iid, buf);
+		i++;
+	}
+	return i;
+}
+
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
@@ -784,16 +856,19 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 		fbr_cond_wait(&mctx->fbr, cond, NULL);
 	}
 
+
 	for (;;i++) {
+		while (i < mctx->pxs.lea.lowest_cached)
+			i = ldb_deliver(ME_A_ i, arg->buffer);
 		while (i >= mctx->pxs.lea.first_non_delivered) {
-			fbr_log_d(&mctx->fbr, "waiting for first non delivered to change");
+			fbr_log_d(&mctx->fbr, "waiting for first non delivered"
+					" to change");
 			fbr_cond_wait(&mctx->fbr, cond, NULL);
 		}
 		info = get_cache_instance(ME_A_ i);
 		assert(info->iid == i);
 		fbr_log_d(&mctx->fbr, "delivering %ld from cache",
 				info->iid);
-		deliver_v(ME_A_ arg->buffer, info->iid, info->vb,
-				info->buffer);
+		deliver_v(ME_A_ arg->buffer, info->iid, info->buffer);
 	}
 }

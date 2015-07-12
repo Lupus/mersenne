@@ -36,7 +36,6 @@ struct lea_fiber_arg {
 
 struct lea_instance_info {
 	uint64_t iid;
-	uint64_t vb;
 	struct buffer *buffer;
 };
 
