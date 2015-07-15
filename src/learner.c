@@ -175,7 +175,8 @@ static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 static inline void do_deliver(ME_P_ struct lea_instance *instance)
 {
 	struct lea_context *context = &mctx->pxs.lea;
-	static char msg_buf[ME_MAX_XDR_MESSAGE_LEN];
+	static char msg_buf[ME_MAX_XDR_MESSAGE_LEN +
+		sizeof(struct lea_packed_instance)];
 	struct lea_packed_instance *pinstance = (void *)msg_buf;
 	struct lea_instance_info *info;
 	char *key;
@@ -194,7 +195,7 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 	key = instance_iid_to_key(instance->iid);
 	leveldb_writebatch_put(context->ldb_batch, key, strlen(key),
 			(void *)pinstance,
-			sizeof(pinstance) + instance->chosen->v->size1);
+			sizeof(*pinstance) + instance->chosen->v->size1);
 	if (0 == instance->iid % 100000)
 		fbr_log_i(&mctx->fbr, "running checksum at #%ld is %lx%lx",
 				pinstance->iid,
@@ -807,7 +808,8 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 struct ldb_read_custom_cb_arg {
 	char *error;
 	struct lea_context *ctx;
-	struct lea_packed_instance *pinstances[LDB_READ_INSTANCES];
+	unsigned max;
+	struct lea_instance_info *instances;
 	uint64_t i;
 	size_t count;
 };
@@ -817,35 +819,35 @@ static eio_ssize_t ldb_read_custom_cb(void *data)
 	struct ldb_read_custom_cb_arg *arg = data;
 	struct lea_context *context = arg->ctx;
 	char buf[256];
-	char buf2[256];
 	leveldb_readoptions_t *options = context->ldb_read_options_cache;
 	leveldb_iterator_t* iter;
 	const char *key;
 	size_t klen;
 	size_t vlen;
 	size_t i = 0;
+	struct lea_packed_instance *pinstance;
 
 	iter = leveldb_create_iterator(context->ldb, options);
 	snprintf(buf, sizeof(buf), "lea_instance/%020lld",
 			(long long int)arg->i);
 	leveldb_iter_seek(iter, buf, strlen(buf));
-	snprintf(buf2, sizeof(buf), "lea_instance/%020lld",
-			(long long int)arg->i + LDB_READ_INSTANCES);
-	while (0 != leveldb_iter_valid(iter)) {
+	while (0 != leveldb_iter_valid(iter) && i < arg->max) {
 		key = leveldb_iter_key(iter, &klen);
-		if (klen < 13 || 0 != memcmp(key, "lea_instance/", 13) ||
-				0 < memcmp(key, buf2, klen))
+		if (klen < 13 || 0 != memcmp(key, "lea_instance/", 13))
 			break;
-		arg->pinstances[i++] = (void *)leveldb_iter_value(iter, &vlen);
-
+		pinstance = (void *)leveldb_iter_value(iter, &vlen);
+		arg->instances[i].iid = pinstance->iid;
+		arg->instances[i].buffer = buf_sm_copy(pinstance->value,
+				pinstance->size);
 		leveldb_iter_next(iter);
+		i++;
 	}
 	arg->count = i;
+	assert(arg->count <= arg->max);
 
 	leveldb_iter_destroy(iter);
 	return 0;
 }
-
 
 static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
 {
@@ -853,11 +855,12 @@ static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
 	struct ldb_read_custom_cb_arg arg;
 	int retval;
 	uint64_t x;
-	struct buffer *buf;
 
 	memset(&arg, 0x00, sizeof(arg));
 	arg.ctx = context;
 	arg.i = i;
+	arg.max = LDB_READ_INSTANCES;
+	arg.instances = calloc(arg.max, sizeof(struct lea_instance_info));
 
 	fbr_log_d(&mctx->fbr, "ldb deliver from %lu", i);
 	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
@@ -865,12 +868,12 @@ static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
 		err(EXIT_FAILURE, "ldb_read_custom_cb failed");
 
 	for (x = 0; x < arg.count; x++) {
-		buf = buf_sm_copy(arg.pinstances[x]->value,
-				arg.pinstances[x]->size);
-		assert(i == arg.pinstances[x]->iid);
-		deliver_v(ME_A_ fb, arg.pinstances[x]->iid, buf);
+		assert(i == arg.instances[x].iid);
+		deliver_v(ME_A_ fb, arg.instances[x].iid,
+				arg.instances[x].buffer);
 		i++;
 	}
+	free(arg.instances);
 	return i;
 }
 
