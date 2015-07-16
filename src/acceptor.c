@@ -116,7 +116,7 @@ static void send_state(ME_P)
 	iid = acs_get_highest_accepted(ME_A);
 	data->me_paxos_msg_data_u.acceptor_state.highest_accepted = iid;
 
-	iid = acs_get_highest_finalized(ME_A);
+	iid = mctx->pxs.lea.first_non_delivered - 1;
 	data->me_paxos_msg_data_u.acceptor_state.highest_finalized = iid;
 
 	iid = acs_get_lowest_available(ME_A);
@@ -234,7 +234,13 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_retransmit_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
-	for(iid = data->from; iid <= data->to; iid++) {
+
+	if (data->to < mctx->pxs.lea.first_non_delivered) {
+		lea_resend(ME_A_ data->from, data->to, from);
+		return;
+	}
+
+	for (iid = data->from; iid <= data->to; iid++) {
 		if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND)) {
 			fbr_log_d(&mctx->fbr, "unable to find record %lu for"
 					" a retransmit", iid);
@@ -259,7 +265,8 @@ static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	for(;;) {
 		send_state(ME_A);
-		fbr_sleep(&mctx->fbr, mctx->args_info.acceptor_repeat_interval_arg);
+		fbr_sleep(&mctx->fbr,
+				mctx->args_info.acceptor_repeat_interval_arg);
 	}
 }
 

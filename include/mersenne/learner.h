@@ -28,6 +28,7 @@
 
 #include <evfibers/fiber.h>
 #include <mersenne/context_fwd.h>
+#include <mersenne/message.h>
 
 struct lea_fiber_arg {
 	struct fbr_buffer *buffer;
@@ -49,6 +50,7 @@ struct lea_context {
 	struct me_context *mctx;
 	struct lea_acc_state *acc_states;
 	struct fbr_cond_var delivered;
+	int cache_populated;
 	struct fbr_buffer buffer;
 	leveldb_t *ldb;
 	leveldb_options_t *ldb_options;
@@ -70,10 +72,12 @@ struct lea_context {
 	.ldb = NULL,                           \
 	.ldb_write_options_async = NULL,       \
 	.fnd_pcond = PTHREAD_COND_INITIALIZER, \
+	.cache_populated = 0,                  \
 }
 
 void lea_fiber(struct fbr_context *fiber_context, void *_arg);
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg);
 void lea_get_or_wait_for_instance(ME_P_ uint64_t iid, char **value, size_t *sz);
+void lea_resend(ME_P_ uint64_t from, uint64_t to, struct me_peer *to_peer);
 
 #endif

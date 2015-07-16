@@ -35,7 +35,7 @@
 #include <mersenne/md5.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
-#define LEA_CACHE_WINDOW (LEA_INSTANCE_WINDOW * 10)
+#define LEA_CACHE_WINDOW (LEA_INSTANCE_WINDOW * 1000)
 //#define WINDOW_DUMP
 
 struct lea_ack {
@@ -217,6 +217,7 @@ static inline void do_deliver(ME_P_ struct lea_instance *instance)
 				       instance->iid);
 	       }
 	} else {
+		context->cache_populated = 1;
 		context->lowest_cached = info->iid + 1;
 		fbr_log_d(&mctx->fbr,
 				"slided lowest cached to %zd",
@@ -909,4 +910,63 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 				info->iid);
 		deliver_v(ME_A_ arg->buffer, info->iid, info->buffer);
 	}
+}
+
+static void send_relearn(ME_P_ uint64_t iid, struct buffer *buf,
+		struct me_peer *to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data;
+
+	assert(buf->size1 > 0);
+
+	data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_RELEARN;
+	data->me_paxos_msg_data_u.learn.i = iid;
+	/* ballot numbers are irrelevant for final instances */
+	data->me_paxos_msg_data_u.learn.b = 0;
+	data->me_paxos_msg_data_u.learn.v = buf;
+	data->me_paxos_msg_data_u.learn.final = 1;
+	if(NULL == to)
+		msg_send_all(ME_A_ &msg);
+	else
+		msg_send_to(ME_A_ &msg, to->index);
+}
+
+void lea_resend(ME_P_ uint64_t from, uint64_t to, struct me_peer *to_peer)
+{
+	struct lea_context *context = &mctx->pxs.lea;
+	struct ldb_read_custom_cb_arg arg;
+	int retval;
+	uint64_t x;
+	struct lea_instance_info *info;
+	uint64_t i;
+
+	if (context->cache_populated && from >= context->lowest_cached) {
+		for (i = from; i <= to; i++) {
+			info = get_cache_instance(ME_A_ i);
+			send_relearn(ME_A_ info->iid, info->buffer, to_peer);
+		}
+		return;
+	}
+
+	memset(&arg, 0x00, sizeof(arg));
+	arg.ctx = context;
+	arg.i = from;
+	arg.max = to - from + 1;
+	arg.instances = calloc(arg.max, sizeof(struct lea_instance_info));
+
+	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_read_custom_cb failed");
+
+	i = from;
+	for (x = 0; x < arg.count; x++) {
+		assert(i == arg.instances[x].iid);
+		send_relearn(ME_A_ arg.instances[x].iid,
+				arg.instances[x].buffer, to_peer);
+		i++;
+	}
+	free(arg.instances);
 }
