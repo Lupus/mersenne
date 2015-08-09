@@ -872,6 +872,7 @@ static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
 		assert(i == arg.instances[x].iid);
 		deliver_v(ME_A_ fb, arg.instances[x].iid,
 				arg.instances[x].buffer);
+		sm_free(arg.instances[x].buffer);
 		i++;
 	}
 	free(arg.instances);
@@ -966,6 +967,7 @@ void lea_resend(ME_P_ uint64_t from, uint64_t to, struct me_peer *to_peer)
 		assert(i == arg.instances[x].iid);
 		send_relearn(ME_A_ arg.instances[x].iid,
 				arg.instances[x].buffer, to_peer);
+		sm_free(arg.instances[x].buffer);
 		i++;
 	}
 	free(arg.instances);

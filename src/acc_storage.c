@@ -232,8 +232,9 @@ static void ldb_write_state(ME_P_ struct acs_context *ctx)
 		errx(EXIT_FAILURE, "unable to pack wal_state");
 	}
 	tmp_size = sbuf.size;
-	tmp_data = msgpack_sbuffer_release(&sbuf);
+	tmp_data = sbuf.data;
 	leveldb_writebatch_put(ctx->ldb_batch, key, klen, tmp_data, tmp_size);
+	msgpack_sbuffer_destroy(&sbuf);
 	ctx->writes_per_sync++;
 }
 
@@ -277,11 +278,12 @@ static void ldb_write_value(ME_P_ struct acc_instance_record *r)
 		errx(EXIT_FAILURE, "unable to pack wal_value");
 	}
 	tmp_size = sbuf.size;
-	tmp_data = msgpack_sbuffer_release(&sbuf);
+	tmp_data = sbuf.data;
 	key = record_iid_to_key(r->iid);
 	leveldb_writebatch_put(ctx->ldb_batch, key, strlen(key), tmp_data,
 			tmp_size);
 
+	msgpack_sbuffer_destroy(&sbuf);
 	ctx->writes_per_sync++;
 }
 
