@@ -2120,4 +2120,6 @@ int fbr_waitpid(FBR_P_ pid_t pid);
 int fbr_system(FBR_P_ const char *filename, char *const argv[],
 		char *const envp[], const char *working_dir);
 
+void fbr_flush_usage(FBR_P);
+
 #endif

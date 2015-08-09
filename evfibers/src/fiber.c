@@ -197,6 +197,8 @@ void fbr_init(FBR_P_ struct ev_loop *loop)
 	struct fbr_fiber *root;
 	struct fbr_logger *logger;
 	char *buffer_pattern;
+	char buf[256];
+	int rv;
 
 	fctx->__p = malloc(sizeof(struct fbr_context_private));
 	LIST_INIT(&fctx->__p->reclaimed);
@@ -232,6 +234,11 @@ void fbr_init(FBR_P_ struct ev_loop *loop)
 		fctx->__p->buffer_file_pattern = buffer_pattern;
 	else
 		fctx->__p->buffer_file_pattern = default_buffer_pattern;
+
+	rv = getrusage(RUSAGE_THREAD, &fctx->__p->usage);
+	assert(0 == rv);
+	sprintf(buf, "./fbr_usage.log.%d", getpid());
+	fctx->__p->usage_log = fopen(buf, "w+");
 }
 
 const char *fbr_strerror(_unused_ FBR_P_ enum fbr_error_code code)
@@ -317,6 +324,24 @@ static void reclaim_children(FBR_P_ struct fbr_fiber *fiber)
 
 static void fbr_free_in_fiber(_unused_ FBR_P_ _unused_ struct fbr_fiber *fiber,
 		void *ptr, int destructor);
+
+static void flush_fiber_usage(FBR_P_ struct fbr_fiber *fiber)
+{
+	struct fbr_fiber *f;
+	fprintf(fctx->__p->usage_log, "%s,%f,%f\n", fiber->name,
+			fiber->usage.ru_stime.tv_sec +
+				fiber->usage.ru_stime.tv_usec / 1e6,
+			fiber->usage.ru_utime.tv_sec +
+				fiber->usage.ru_utime.tv_usec / 1e6);
+	LIST_FOREACH(f, &fiber->children, entries.children) {
+		flush_fiber_usage(FBR_A_ f);
+	}
+}
+
+void fbr_flush_usage(FBR_P)
+{
+	flush_fiber_usage(FBR_A_ &fctx->__p->root);
+}
 
 void fbr_destroy(FBR_P)
 {
@@ -779,11 +804,12 @@ int fbr_ev_wait_one_wto(FBR_P_ struct fbr_ev_base *one, ev_tstamp timeout)
 	return -1;
 }
 
-
 int fbr_transfer(FBR_P_ fbr_id_t to)
 {
 	struct fbr_fiber *callee;
 	struct fbr_fiber *caller = fctx->__p->sp->fiber;
+	struct rusage usage;
+	int rv;
 
 	unpack_transfer_errno(-1, &callee, to);
 
@@ -792,6 +818,14 @@ int fbr_transfer(FBR_P_ fbr_id_t to)
 	fctx->__p->sp->fiber = callee;
 	fill_trace_info(FBR_A_ &fctx->__p->sp->tinfo);
 
+	rv = getrusage(RUSAGE_THREAD, &usage);
+	assert(0 == rv);
+
+	caller->usage.ru_utime.tv_usec += (usage.ru_utime.tv_usec - fctx->__p->usage.ru_utime.tv_usec);
+	caller->usage.ru_utime.tv_sec += (usage.ru_utime.tv_sec - fctx->__p->usage.ru_utime.tv_sec);
+	caller->usage.ru_stime.tv_usec += (usage.ru_stime.tv_usec - fctx->__p->usage.ru_stime.tv_usec);
+	caller->usage.ru_stime.tv_sec += (usage.ru_stime.tv_sec - fctx->__p->usage.ru_stime.tv_sec);
+	memcpy(&fctx->__p->usage, &usage, sizeof(usage));
 	coro_transfer(&caller->ctx, &callee->ctx);
 
 	return_success(0);
@@ -801,10 +835,21 @@ void fbr_yield(FBR_P)
 {
 	struct fbr_fiber *callee;
 	struct fbr_fiber *caller;
+	struct rusage usage;
+	int rv;
 	assert("Attemp to yield in a root fiber" &&
 			fctx->__p->sp->fiber != &fctx->__p->root);
 	callee = fctx->__p->sp->fiber;
 	caller = (--fctx->__p->sp)->fiber;
+
+	rv = getrusage(RUSAGE_THREAD, &usage);
+	assert(0 == rv);
+
+	callee->usage.ru_utime.tv_usec += (usage.ru_utime.tv_usec - fctx->__p->usage.ru_utime.tv_usec);
+	callee->usage.ru_utime.tv_sec += (usage.ru_utime.tv_sec - fctx->__p->usage.ru_utime.tv_sec);
+	callee->usage.ru_stime.tv_usec += (usage.ru_stime.tv_usec - fctx->__p->usage.ru_stime.tv_usec);
+	callee->usage.ru_stime.tv_sec += (usage.ru_stime.tv_sec - fctx->__p->usage.ru_stime.tv_sec);
+	memcpy(&fctx->__p->usage, &usage, sizeof(usage));
 	coro_transfer(&callee->ctx, &caller->ctx);
 }
 

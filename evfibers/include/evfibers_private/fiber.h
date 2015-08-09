@@ -19,11 +19,13 @@
 #ifndef _FBR_FIBER_PRIVATE_H_
 #define _FBR_FIBER_PRIVATE_H_
 
+#include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <sys/queue.h>
+#include <sys/resource.h>
 #include <evfibers/fiber.h>
 #include <evfibers_private/trace.h>
 #include <coro.h>
@@ -128,6 +130,9 @@
 		return (value);         \
 	} while (0)
 
+#ifndef RUSAGE_THREAD
+#define RUSAGE_THREAD 1
+#endif
 
 struct mem_pool {
 	void *ptr;
@@ -167,6 +172,7 @@ struct fbr_fiber {
 	int no_reclaim;
 	int want_reclaim;
 	struct fbr_cond_var reclaim_cond;
+	struct rusage usage;
 };
 
 TAILQ_HEAD(mutex_tailq, fbr_mutex);
@@ -187,6 +193,8 @@ struct fbr_context_private {
 	uint64_t last_id;
 	uint64_t key_free_mask;
 	const char *buffer_file_pattern;
+	struct rusage usage;
+	FILE *usage_log;
 
 	struct ev_loop *loop;
 };
