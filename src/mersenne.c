@@ -324,10 +324,14 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		fbr_destructor_remove(&mctx->fbr, &sighup_dtor, 1 /* Call? */);
 		if (evw_sigint.ev_base.arrived) {
 			fbr_log_d(&mctx->fbr, "got SIGINT");
+			fbr_flush_usage(&mctx->fbr);
+			exit(0);
 			break;
 		}
 		if (evw_sigterm.ev_base.arrived) {
 			fbr_log_d(&mctx->fbr, "got SIGTERM");
+			fbr_flush_usage(&mctx->fbr);
+			exit(0);
 			break;
 		}
 		if (evw_sighup.ev_base.arrived) {
@@ -391,6 +395,8 @@ int main(int argc, char *argv[])
 	setup_logging(ME_A);
 	fbr_mutex_init(&mctx->fbr, &mctx->pxs.pro.pending_mutex);
 	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.pending_cond);
+
+	fbr_log_i(&mctx->fbr, "PID: %d", getpid());
 
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
 	fbr_transfer(&mctx->fbr, mctx->fiber_main);
