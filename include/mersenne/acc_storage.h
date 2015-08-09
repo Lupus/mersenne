@@ -152,7 +152,6 @@ uint64_t acs_get_highest_finalized(ME_P);
 uint64_t acs_get_lowest_available(ME_P);
 void acs_set_highest_finalized(ME_P_ uint64_t iid);
 void acs_set_highest_finalized_async(ME_P_ uint64_t iid);
-void acs_vacuum(ME_P);
 int acs_find_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
 		enum acs_find_mode mode);
 const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid);

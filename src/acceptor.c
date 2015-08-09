@@ -58,7 +58,6 @@ static void record_send_learn(ME_P_ struct acc_instance_record *r,
 {
 	struct me_message *msg;
 	struct me_paxos_msg_data *data;
-	int final;
 
 	assert(r->v->size1 > 0);
 
@@ -72,8 +71,7 @@ static void record_send_learn(ME_P_ struct acc_instance_record *r,
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->vb;
 	data->me_paxos_msg_data_u.learn.v = r->v;
-	final = (r->iid <= acs_get_highest_finalized(ME_A));
-	data->me_paxos_msg_data_u.learn.final = final;
+	data->me_paxos_msg_data_u.learn.final = 0;
 	r->msg = msg;
 	if(NULL == to)
 		r->msg_to_index = -1;
@@ -87,7 +85,6 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data;
-	int final;
 
 	assert(r->v->size1 > 0);
 
@@ -97,8 +94,7 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->vb;
 	data->me_paxos_msg_data_u.learn.v = r->v;
-	final = (r->iid <= acs_get_highest_finalized(ME_A));
-	data->me_paxos_msg_data_u.learn.final = final;
+	data->me_paxos_msg_data_u.learn.final = 0;
 	if(NULL == to)
 		msg_send_all(ME_A_ &msg);
 	else
@@ -143,7 +139,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	if (data->i <= acs_get_highest_finalized(ME_A)) {
+	if (data->i <= mctx->pxs.lea.lowest_synced) {
 		// Learner already delivered this instance and it is finalized,
 		// so we will ignore this message altogether.
 		fbr_log_d(&mctx->fbr, "Ignoring prepare for instance %lu"
@@ -178,14 +174,14 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
-	if (data->i <= acs_get_highest_finalized(ME_A)) {
+	if (data->i <= mctx->pxs.lea.lowest_synced) {
 		// Learner already delivered this instance and it is finalized,
 		// so we will ignore this message altogether.
 		fbr_log_d(&mctx->fbr, "Ignoring accept for instance %lu"
 				" as it's finalized", data->i);
 		return;
 	}
-	assert(data->i > acs_get_highest_finalized(ME_A));
+	assert(data->i > mctx->pxs.lea.lowest_synced);
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		// We got an accept for an instance we know nothing about
 		// without prior prepare.

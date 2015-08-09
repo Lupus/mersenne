@@ -37,10 +37,6 @@
 #include <mersenne/statd.h>
 #include <mersenne/wal_obj.h>
 
-static const uint32_t WAL_MAGIC = 0xcf52754d;
-static const uint32_t REC_MAGIC = 0xc548d94d;
-static const uint32_t EOF_MAGIC = 0x2478c945;
-
 enum wal_log_mode {
 	WLM_RO,
 	WLM_RW,
@@ -597,12 +593,117 @@ static eio_ssize_t ldb_write_custom_cb(void *data)
 	return 0;
 }
 
+struct ldb_vacuum_custom_cb_arg {
+	char *error;
+	struct acs_context *ctx;
+	uint64_t from;
+	uint64_t to;
+	double vacuum_time;
+};
+
+static eio_ssize_t ldb_vacuum_custom_cb(void *data)
+{
+	struct ldb_vacuum_custom_cb_arg *arg = data;
+	struct acs_context *ctx = arg->ctx;
+	char *key;
+	uint64_t i;
+	leveldb_writebatch_t *ldb_batch;
+	leveldb_writeoptions_t *ldb_write_options_nosync;
+	ldb_batch = leveldb_writebatch_create();
+	ldb_write_options_nosync = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(ldb_write_options_nosync, 0);
+
+	for (i = arg->from; i <= arg->to; i++) {
+		key = record_iid_to_key(i);
+		leveldb_writebatch_delete(ldb_batch, key, strlen(key));
+	}
+	leveldb_write(ctx->ldb, ldb_write_options_nosync, ldb_batch,
+			&arg->error);
+	leveldb_writeoptions_destroy(ldb_write_options_nosync);
+	leveldb_writebatch_destroy(ldb_batch);
+	return 0;
+}
+
+void vacuum_defer_fiber(struct fbr_context *fctx, void *_arg)
+{
+	struct me_context *mctx;
+	struct ldb_vacuum_custom_cb_arg varg;
+	int retval;
+
+	mctx = container_of(fctx, struct me_context, fbr);
+	varg = *((struct ldb_vacuum_custom_cb_arg *)_arg);
+
+	fbr_log_d(&mctx->fbr, "removing [%ld;%ld] from leveldb",
+			varg.from, varg.to);
+	retval = fbr_eio_custom(&mctx->fbr, ldb_vacuum_custom_cb,
+			&varg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_vacuum_custom_cb failed");
+}
+
+static void vacuum_state(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	struct acc_instance_record *r;
+	int trunc;
+	uint64_t max_truncated = ctx->lowest_available;
+	unsigned n_truncated = 0;
+	uint64_t i;
+	int found;
+	ev_tstamp t1, t2;
+	struct ldb_vacuum_custom_cb_arg varg;
+	fbr_id_t vacuum_id;
+	trunc = mctx->args_info.acceptor_truncate_arg;
+
+	if (ctx->highest_accepted < trunc)
+		return;
+	if (0 == max_truncated)
+		max_truncated = 1;
+	varg.ctx = ctx;
+	varg.from = ctx->lowest_available;
+	ev_now_update(mctx->loop);
+	t1 = ev_now(mctx->loop);
+	for (i = max_truncated; i < ctx->highest_accepted - trunc; i++) {
+		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
+		if (!found)
+			continue;
+		HASH_DEL(ctx->instances, r);
+		sm_free(r->v);
+		free(r);
+		n_truncated++;
+	}
+	if (0 == n_truncated)
+		return;
+	ctx->lowest_available = i;
+	if (ctx->highest_finalized > 1)
+		assert(ctx->highest_finalized > ctx->lowest_available);
+	ev_now_update(mctx->loop);
+	t2 = ev_now(mctx->loop);
+	fbr_log_d(&mctx->fbr, "vacuumed the state: highest accepted = %zd,"
+			" lowest available = %zd",
+			ctx->highest_accepted,
+			ctx->lowest_available);
+	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
+	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
+	statd_send_timer(ME_A_ "acc_storage.vacuum_time", t2 - t1);
+	statd_send_gauge(ME_A_ "acc_storage.lowest_available",
+			ctx->lowest_available);
+
+	varg.to = ctx->lowest_available - 1;
+	if (varg.to > varg.from) {
+		vacuum_id = fbr_create(&mctx->fbr, "vacuum_defer",
+				vacuum_defer_fiber, &varg, 0);
+		fbr_transfer(&mctx->fbr, vacuum_id);
+	}
+}
+
 void acs_batch_finish(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r, *x;
 	int retval;
 	struct ldb_write_custom_cb_arg arg;
+
 	ctx->in_batch = 0;
 
 	arg.ctx = ctx;
@@ -620,6 +721,7 @@ void acs_batch_finish(ME_P)
 		ldb_write_value(ME_A_ r);
 		r->dirty = 0;
 	}
+
 	if (ctx->dirty)
 		ldb_write_state(ME_A_ ctx);
 
@@ -648,6 +750,8 @@ void acs_batch_finish(ME_P)
 			r->msg = NULL;
 		}
 	}
+
+	vacuum_state(ME_A);
 
 	fbr_mutex_unlock(&mctx->fbr, &ctx->batch_mutex);
 }
@@ -709,56 +813,6 @@ int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
 	}
 	*rptr = w;
 	return found;
-}
-
-void acs_vacuum(ME_P)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	struct acc_instance_record *r;
-	int trunc;
-	uint64_t max_truncated = ctx->lowest_available;
-	unsigned n_truncated = 0;
-	uint64_t i;
-	int found;
-	trunc = mctx->args_info.acceptor_truncate_arg;
-	ev_tstamp t1, t2;
-
-	if (ctx->highest_finalized > 1)
-		assert(ctx->highest_finalized > ctx->lowest_available);
-
-	if (ctx->highest_finalized < trunc)
-		return;
-	if (0 == max_truncated)
-		max_truncated = 1;
-	ev_now_update(mctx->loop);
-	t1 = ev_now(mctx->loop);
-	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
-		if (i == ctx->snap_min)
-			break;
-		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
-		assert(found);
-		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
-		HASH_DEL(ctx->instances, r);
-		sm_free(r->v);
-		free(r);
-		n_truncated++;
-	}
-	if (0 == n_truncated)
-		return;
-	ctx->lowest_available = i;
-	if (ctx->highest_finalized > 1)
-		assert(ctx->highest_finalized > ctx->lowest_available);
-	ev_now_update(mctx->loop);
-	t2 = ev_now(mctx->loop);
-	fbr_log_d(&mctx->fbr, "vacuumed the state: highest accepted = %zd,"
-			" highest finalized = %zd, lowest available = %zd",
-			ctx->highest_accepted, ctx->highest_finalized,
-			ctx->lowest_available);
-	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
-	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
-	statd_send_timer(ME_A_ "acc_storage.vacuum_time", t2 - t1);
-	statd_send_gauge(ME_A_ "acc_storage.lowest_available",
-			ctx->lowest_available);
 }
 
 int acs_find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,

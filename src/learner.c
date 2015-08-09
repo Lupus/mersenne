@@ -382,6 +382,8 @@ static void try_deliver(ME_P)
 	const char *key = "lea_state";
 	const size_t klen = strlen(key);
 	int retval;
+	int will_sync = 0;
+	int trunc = mctx->args_info.acceptor_truncate_arg;
 
 	arg.ctx = context;
 	arg.error = NULL;
@@ -416,9 +418,20 @@ static void try_deliver(ME_P)
 	leveldb_writebatch_put(context->ldb_batch, key,	klen,
 			(void *)&pstate, sizeof(pstate));
 
+	if (context->first_non_delivered - context->lowest_synced > trunc + 1) {
+		leveldb_writeoptions_set_sync(context->ldb_write_options_async,
+				1);
+		will_sync = 1;
+	}
 	retval = fbr_eio_custom(&mctx->fbr, ldb_write_custom_cb, &arg, 0);
 	if (retval)
 		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
+	if (will_sync) {
+		leveldb_writeoptions_set_sync(context->ldb_write_options_async,
+				0);
+		context->lowest_synced = context->first_non_delivered - 1;
+		fbr_log_i(&mctx->fbr, "synced learner db");
+	}
 
 	if (error)
 		errx(EXIT_FAILURE,
@@ -710,9 +723,6 @@ static void init_context(ME_P)
 	fbr_cond_init(&mctx->fbr, &context->delivered);
 
 	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
-
-	context->ldb_write_options_async = leveldb_writeoptions_create();
-	leveldb_writeoptions_set_sync(context->ldb_write_options_async, 0);
 
 	context->next_retransmit = ~0ULL; // "infinity"
 	context->instances = calloc(LEA_INSTANCE_WINDOW,

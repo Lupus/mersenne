@@ -363,6 +363,7 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 		fbr_log_i(&mctx->fbr, "picked latest iid %lu",
 				arg->starting_iid);
 	}
+	/*
 	if (arg->starting_iid < acs_get_lowest_available(ME_A)) {
 		fbr_log_i(&mctx->fbr, "requested instance is unavailable");
 		fbr_log_i(&mctx->fbr, "lowest available is %lu",
@@ -373,6 +374,7 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 					" the client");
 		return -1;
 	}
+	*/
 	//targ->fd = arg->fd;
 	//targ->starting_iid = arg->starting_iid;
 	//targ->mctx = mctx;

@@ -42,6 +42,7 @@ struct lea_instance_info {
 
 struct lea_context {
 	uint64_t first_non_delivered;
+	uint64_t lowest_synced;
 	uint64_t highest_seen;
 	uint64_t next_retransmit;
 	uint64_t lowest_cached;
