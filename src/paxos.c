@@ -136,7 +136,6 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 
 void pxs_fiber_init(ME_P)
 {
-	acs_initialize(ME_A);
 	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber,
 			NULL, 0);
 	mctx->fiber_proposer = FBR_ID_NULL;

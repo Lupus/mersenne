@@ -177,7 +177,7 @@ static void wal_iter_open(ME_P_ struct wal_iter *iter, struct wal_log *log)
 {
 	ssize_t retval;
 	iter->log = log;
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
+	retval = lseek(log->fd, 0, EIO_SEEK_CUR);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "seek failed");
 	iter->good_offt = retval;
@@ -189,8 +189,8 @@ static void wal_iter_close(ME_P_ struct wal_iter *iter)
 {
 	ssize_t retval;
 	iter->log->rows += iter->row_count;
-	retval = fbr_eio_seek(&mctx->fbr, iter->log->fd, iter->good_offt,
-			EIO_SEEK_SET, 0);
+	retval = lseek(iter->log->fd, iter->good_offt,
+			EIO_SEEK_SET);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "seek failed");
 }
@@ -214,8 +214,7 @@ size_t wal_rec_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr, void **pptr,
 	uint32_t header_checksum, checksum;
 	ssize_t retval;
 
-	retval = fbr_eio_read(&mctx->fbr, log->fd, &header, sizeof(header), -1,
-			0);
+	retval = read(log->fd, &header, sizeof(header));
 	if (0 == retval)
 		return 0;
 	if (0 > retval)
@@ -242,7 +241,7 @@ size_t wal_rec_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr, void **pptr,
 			*size_ptr = header.size;
 	}
 
-	retval = fbr_eio_read(&mctx->fbr, log->fd, *pptr, header.size, -1, 0);
+	retval = read(log->fd, *pptr, header.size);
 	if (0 == retval)
 		return 0;
 	if (0 > retval)
@@ -272,22 +271,19 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 
 	assert(0 == iter->eof);
 	if (magic_offset > 0) {
-		retval = fbr_eio_seek(&mctx->fbr, log->fd, magic_offset + 1,
-				EIO_SEEK_SET, 0);
+		retval = lseek(log->fd, magic_offset + 1, EIO_SEEK_SET);
 		if (-1 == retval)
 			err(EXIT_FAILURE, "seek failed");
 	}
 
-	retval = fbr_eio_read(&mctx->fbr, log->fd, &magic, sizeof(magic), -1,
-			0);
+	retval = read(log->fd, &magic, sizeof(magic));
 	if (-1 == retval)
 		err(EXIT_FAILURE, "read failed");
 	if (retval < sizeof(magic))
 		goto eof;
 
 	while (REC_MAGIC != magic) {
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &c, sizeof(c), -1,
-				0);
+		retval = read(log->fd, &c, sizeof(c));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "read failed");
 		if (retval < sizeof(c)) {
@@ -298,7 +294,7 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 		magic = magic >> 8 |
 			((uint32_t)c & 0xff) << (sizeof(magic) * 8 - 8);
 	}
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
+	retval = lseek(log->fd, 0, EIO_SEEK_CUR);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "seek failed");
 	magic_offset = retval - sizeof(REC_MAGIC);
@@ -313,7 +309,7 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 	if (0 == size)
 		goto eof;
 
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
+	retval = lseek(log->fd, 0, EIO_SEEK_CUR);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "seek failed");
 	iter->good_offt = retval;
@@ -325,24 +321,21 @@ static size_t wal_iter_read(ME_P_ struct wal_iter *iter, uint64_t *lsn_ptr,
 
 	return size;
 eof:
-	retval = fbr_eio_seek(&mctx->fbr, log->fd, 0, EIO_SEEK_CUR, 0);
+	retval = lseek(log->fd, 0, EIO_SEEK_CUR);
 	if (-1 == retval)
 		err(EXIT_FAILURE, "seek failed");
 	if (retval == iter->good_offt + sizeof(EOF_MAGIC)) {
-		retval = fbr_eio_seek(&mctx->fbr, log->fd, iter->good_offt,
-				EIO_SEEK_SET, 0);
+		retval = lseek(log->fd, iter->good_offt, EIO_SEEK_SET);
 		if (-1 == retval)
 			err(EXIT_FAILURE, "seek failed");
 
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
+		retval = read(log->fd, &magic, sizeof(magic));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "read failed");
 		if (retval < sizeof(magic)) {
 			fbr_log_e(&mctx->fbr, "unable to read eof magic");
 		} else if (magic == EOF_MAGIC) {
-			retval = fbr_eio_seek(&mctx->fbr, log->fd,
-					iter->good_offt, EIO_SEEK_SET, 0);
+			retval = lseek(log->fd, iter->good_offt, EIO_SEEK_SET);
 			if (-1 == retval)
 				err(EXIT_FAILURE, "seek failed");
 			iter->good_offt = retval;
@@ -402,16 +395,18 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 	log->in_progress = in_progress;
 	kv_init(log->iov);
 	kv_resize(struct iovec, log->iov, UIO_MAXIOV);
-	if (WLM_RO == mode)
+	if (WLM_RO == mode) {
 		open_flags = O_RDONLY;
-	else
+		log->fd = open(log->filename, open_flags, 0640);
+	} else {
 		open_flags = O_CREAT | O_WRONLY | O_EXCL;
-	log->fd = fbr_eio_open(&mctx->fbr, log->filename, open_flags, 0640, 0);
+		log->fd = fbr_eio_open(&mctx->fbr, log->filename, open_flags,
+				0640, 0);
+	}
 	if (0 > log->fd)
 		err(EXIT_FAILURE, "open failed");
 	if (WLM_RO == mode) {
-		retval = fbr_eio_read(&mctx->fbr, log->fd, &magic,
-				sizeof(magic), -1, 0);
+		retval = read(log->fd, &magic, sizeof(magic));
 		if (-1 == retval)
 			err(EXIT_FAILURE, "read failed");
 		if (retval < sizeof(magic)) {
@@ -434,7 +429,11 @@ int wal_log_open(ME_P_ struct wal_log *log, struct acs_log_dir *dir,
 	return 0;
 error:
 
-	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	if (WLM_RW == mode) {
+		retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	} else {
+		retval = close(log->fd);
+	}
 	if (0 > retval)
 		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
 	return -1;
@@ -618,7 +617,10 @@ void wal_log_close(ME_P_ struct wal_log *log)
 					" rows", log->rows);
 	}
 
-	retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	if (WLM_RW == log->mode)
+		retval = fbr_eio_close(&mctx->fbr, log->fd, 0);
+	else
+		retval = close(log->fd);
 	if (-1 == retval)
 		fbr_log_e(&mctx->fbr, "close failed: %s", strerror(errno));
 }

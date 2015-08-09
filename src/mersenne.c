@@ -305,6 +305,8 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		fb_events[2] = NULL;
 	}
 
+	fbr_log_i(&mctx->fbr, "Initializing acceptor storage");
+	acs_initialize(ME_A);
 	mersenne_start(ME_A);
 
 	for(;;) {
