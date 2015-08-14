@@ -789,6 +789,7 @@ static void recover_wal(ME_P_ struct wal_log *log)
 	int alloc_mem = 0;
 
 	wal_iter_open(ME_A_ &iter, log);
+	ev_now_update(mctx->loop);
 	fbr_log_i(&mctx->fbr, "recovering %s", log->filename);
 
 	while ((size = wal_iter_read(ME_A_ &iter, &lsn, &ptr, &buf_size))) {
