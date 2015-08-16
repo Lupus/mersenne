@@ -20,6 +20,7 @@
  ********************************************************************/
 #include <assert.h>
 #include <err.h>
+#include <evfibers/eio.h>
 
 #include <mersenne/learner.h>
 #include <mersenne/paxos.h>
@@ -31,8 +32,10 @@
 #include <mersenne/util.h>
 #include <mersenne/sharedmem.h>
 #include <mersenne/acc_storage.h>
+#include <mersenne/md5.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
+#define LEA_CACHE_WINDOW (LEA_INSTANCE_WINDOW * 1000)
 //#define WINDOW_DUMP
 
 struct lea_ack {
@@ -55,24 +58,29 @@ struct lea_instance {
 	ev_tstamp modified;
 };
 
-struct learner_context {
-	uint64_t first_non_delivered;
-	uint64_t highest_seen;
-	uint64_t next_retransmit;
-	struct lea_instance *instances;
-	struct me_context *mctx;
-	struct lea_fiber_arg *arg;
-	struct fbr_buffer buffer;
-	struct fiber_tailq_i item;
-	struct lea_acc_state *acc_states;
-	struct fbr_cond_var delivered;
-};
+struct lea_packed_instance {
+	uint64_t iid;
+	uint16_t size;
+	uint8_t checksum[16];
+	char value[0];
+} __attribute__((packed));
 
-static inline struct lea_instance * get_instance(struct learner_context
-		*context, uint64_t iid)
+struct lea_packed_state {
+	uint64_t lowest_available;
+	uint64_t first_non_delivered;
+} __attribute__((packed));
+
+
+static inline struct lea_instance *get_instance(ME_P_ uint64_t iid)
 {
-	struct me_context *mctx = context->mctx;
+	struct lea_context *context = &mctx->pxs.lea;
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
+}
+
+static inline struct lea_instance_info *get_cache_instance(ME_P_ uint64_t iid)
+{
+	struct lea_context *context = &mctx->pxs.lea;
+	return context->cache + (iid % LEA_CACHE_WINDOW);
 }
 
 static inline int count_acks(ME_P_ struct lea_ack *acks)
@@ -85,8 +93,9 @@ static inline int count_acks(ME_P_ struct lea_ack *acks)
 }
 
 #ifdef WINDOW_DUMP
-static void print_window(ME_P_ struct learner_context *context)
+static void print_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	int j;
 	struct lea_instance *instance;
 	char buf[LEA_INSTANCE_WINDOW + 1];
@@ -114,28 +123,117 @@ static void print_window(ME_P_ struct learner_context *context)
 }
 #endif
 
+static char *instance_iid_to_key(uint64_t iid)
+{
+	static char buf[256];
+	snprintf(buf, sizeof(buf), "lea_instance/%020lld", (long long int)iid);
+	return buf;
+}
+
+void lea_get_or_wait_for_instance(ME_P_ uint64_t iid, char **value,
+		size_t *size)
+{
+	char buf[256];
+	char *error = NULL;
+	struct lea_packed_instance *pinstance;
+	size_t sz;
+	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	while (iid >= mctx->pxs.lea.first_non_delivered) {
+		pthread_mutex_lock(&mutex);
+		pthread_cond_wait(&mctx->pxs.lea.fnd_pcond, &mutex);
+		pthread_mutex_unlock(&mutex);
+	}
+	snprintf(buf, sizeof(buf), "lea_instance/%020lld", (long long int)iid);
+	printf("retrieving %s\n", buf);
+	pinstance = (void *)leveldb_get(mctx->pxs.lea.ldb,
+			mctx->pxs.lea.ldb_read_options_cache, buf, strlen(buf),
+			&sz, &error);
+	if (error)
+		errx(EXIT_FAILURE, "wfi: leveldb_get() failed: %s", error);
+	assert(pinstance);
+	fprintf(stderr, "%zd == %zd\n", pinstance->iid, iid);
+	assert(pinstance->iid == iid);
+	*value = pinstance->value;
+	*size = sz - sizeof(*pinstance);
+}
+
 static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
-		uint64_t b, struct buffer *v)
+		struct buffer *v)
 {
 	struct lea_instance_info *info;
-
-	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
-			"#%ld vith value ``%.*s'' size %d",
-			iid, b, (unsigned)v->size1, v->ptr, v->size1);
+	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered "
+			"with value ``%.*s'' size %d",
+			iid, (unsigned)v->size1, v->ptr, v->size1);
 	buffer_ensure_writable(ME_A_ buffer, sizeof(struct lea_instance_info));
 	info = fbr_buffer_alloc_prepare(&mctx->fbr, buffer,
 			sizeof(struct lea_instance_info));
 	info->iid = iid;
-	info->vb = b;
 	info->buffer = sm_in_use(v);
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
 
-static inline void do_deliver(ME_P_ struct learner_context *context,
-		struct lea_instance *instance)
+static inline void do_deliver(ME_P_ struct lea_instance *instance)
 {
-	deliver_v(ME_A_ context->arg->buffer, instance->iid,
-			instance->chosen->b, instance->chosen->v);
+	struct lea_context *context = &mctx->pxs.lea;
+	static char msg_buf[ME_MAX_XDR_MESSAGE_LEN +
+		sizeof(struct lea_packed_instance)];
+	struct lea_packed_instance *pinstance = (void *)msg_buf;
+	struct lea_instance_info *info;
+	char *key;
+	MD5_CTX md5;
+	MD5_Init(&md5);
+	MD5_Update(&md5, context->last_checksum,
+			sizeof(context->last_checksum));
+	MD5_Update(&md5, instance->chosen->v->ptr, instance->chosen->v->size1);
+	MD5_Final(context->last_checksum, &md5);
+	pinstance->iid = instance->iid;
+	pinstance->size = instance->chosen->v->size1;
+	memcpy(pinstance->checksum, context->last_checksum,
+			sizeof(context->last_checksum));
+	memcpy(pinstance->value, instance->chosen->v->ptr,
+			instance->chosen->v->size1);
+	key = instance_iid_to_key(instance->iid);
+	leveldb_writebatch_put(context->ldb_batch, key, strlen(key),
+			(void *)pinstance,
+			sizeof(*pinstance) + instance->chosen->v->size1);
+	if (0 == instance->iid % 100000)
+		fbr_log_i(&mctx->fbr, "running checksum at #%ld is %lx%lx",
+				pinstance->iid,
+				*((uint64_t *)context->last_checksum),
+				*((uint64_t *)context->last_checksum + 1));
+	if (mctx->pxs.pro.lea_fb) {
+		fbr_log_d(&mctx->fbr, "Delivering instance #%ld to proposer",
+			instance->iid);
+		deliver_v(ME_A_ mctx->pxs.pro.lea_fb, instance->iid,
+				instance->chosen->v);
+	}
+	info = get_cache_instance(ME_A_ instance->iid);
+	if (0 == info->iid) {
+	       if (0 == context->lowest_cached) {
+			context->lowest_cached = instance->iid;
+			fbr_cond_signal(&mctx->fbr, &context->delivered);
+			fbr_log_d(&mctx->fbr,
+					"initialized lowest cached to %zd",
+				       instance->iid);
+	       }
+	} else {
+		context->cache_populated = 1;
+		context->lowest_cached = info->iid + 1;
+		fbr_log_d(&mctx->fbr,
+				"slided lowest cached to %zd",
+			       info->iid + 1);
+		sm_free(info->buffer);
+	}
+	fbr_log_d(&mctx->fbr, "assigning %zd to slot with old iid %zd",
+			instance->iid, info->iid);
+	info->iid = instance->iid;
+	info->buffer = sm_in_use(instance->chosen->v);
+	fbr_log_d(&mctx->fbr, "Instance #%ld is delivered at ballot "
+			"#%ld vith value ``%.*s'' size %d", instance->iid,
+			instance->chosen->b,
+			(unsigned)instance->chosen->v->size1,
+			instance->chosen->v->ptr,
+			(unsigned)instance->chosen->v->size1);
 }
 
 void shuffle(struct lea_acc_state **array, size_t n)
@@ -153,9 +251,9 @@ void shuffle(struct lea_acc_state **array, size_t n)
 	}
 }
 
-static void send_retransmit(ME_P_ struct learner_context *context,
-		uint64_t from, uint64_t to)
+static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i;
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
@@ -184,7 +282,7 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 		mctx->delayed_stats.learner_broadcast_requests++;
 	}
 	for (i = from; i < to; i++) {
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		instance->modified = ev_now(mctx->loop);
 	}
 	mctx->delayed_stats.learner_retransmits += to - from + 1;
@@ -201,8 +299,9 @@ static ev_tstamp age(ME_P_ struct lea_instance *instance)
 	return 1;
 }
 
-static void retransmit_window(ME_P_ struct learner_context *context)
+static void retransmit_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	uint64_t start = context->first_non_delivered;
 	uint64_t from = 0;
@@ -211,13 +310,13 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
 		if (i > context->highest_seen) {
 			if (collecting_gap)
-				send_retransmit(ME_A_ context, from, i - 1);
+				send_retransmit(ME_A_ from, i - 1);
 			break;
 		}
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		if (collecting_gap) {
 			if (instance->closed || !age(ME_A_ instance)) {
-				send_retransmit(ME_A_ context, from, i - 1);
+				send_retransmit(ME_A_ from, i - 1);
 				collecting_gap = 0;
 			}
 		} else if (!instance->closed && age(ME_A_ instance)) {
@@ -227,29 +326,74 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	}
 }
 
-static void retransmit_next_window(ME_P_ struct learner_context *context)
+static void retransmit_next_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	context->next_retransmit = min(
 			context->first_non_delivered + LEA_INSTANCE_WINDOW,
 			context->highest_seen);
-	send_retransmit(ME_A_ context, context->first_non_delivered,
+	send_retransmit(ME_A_ context->first_non_delivered,
 			min(context->highest_seen, context->next_retransmit));
 	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu, highest seen is %lu",
 			context->first_non_delivered, context->next_retransmit,
 			context->highest_seen);
 }
 
-static void try_deliver(ME_P_ struct learner_context *context)
+static double now()
 {
+	struct timeval t;
+	int retval;
+	retval = gettimeofday(&t, NULL);
+	if (retval)
+		err(EXIT_FAILURE, "gettimeofday");
+	return t.tv_sec + t.tv_usec * 1e-6;
+}
+
+struct ldb_write_custom_cb_arg {
+	char *error;
+	struct lea_context *ctx;
+	double write_time;
+};
+
+static eio_ssize_t ldb_write_custom_cb(void *data)
+{
+	struct ldb_write_custom_cb_arg *arg = data;
+	struct lea_context *ctx = arg->ctx;
+	double t1, t2;
+	t1 = now();
+	leveldb_write(ctx->ldb, ctx->ldb_write_options_async, ctx->ldb_batch,
+			&arg->error);
+	t2 = now();
+	arg->write_time = t2 - t1;
+	return 0;
+}
+
+
+static void try_deliver(ME_P)
+{
+	struct lea_context *context = &mctx->pxs.lea;
 	int i, j;
 	int k;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
+	struct lea_packed_state pstate;
+	struct ldb_write_custom_cb_arg arg;
+	char *error = NULL;
+	const char *key = "lea_state";
+	const size_t klen = strlen(key);
+	int retval;
+	int will_sync = 0;
+	int trunc = mctx->args_info.acceptor_truncate_arg;
+
+	arg.ctx = context;
+	arg.error = NULL;
+	arg.write_time = 0;
+
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		if (!instance->closed)
 			break;
-		do_deliver(ME_A_ context, instance);
+		do_deliver(ME_A_ instance);
 		context->first_non_delivered = i + 1;
 
 		instance->closed = 0;
@@ -262,7 +406,39 @@ static void try_deliver(ME_P_ struct learner_context *context)
 		instance->modified = 0;
 		instance->iid = i + LEA_INSTANCE_WINDOW;
 	}
+
+	if (context->first_non_delivered == start)
+		return;
+
 	fbr_cond_signal(&mctx->fbr, &context->delivered);
+
+	pthread_cond_broadcast(&context->fnd_pcond);
+	pstate.first_non_delivered = context->first_non_delivered;
+	pstate.lowest_available = 0; /* FIXME */
+	leveldb_writebatch_put(context->ldb_batch, key,	klen,
+			(void *)&pstate, sizeof(pstate));
+
+	if (context->first_non_delivered - context->lowest_synced > trunc + 1) {
+		leveldb_writeoptions_set_sync(context->ldb_write_options_async,
+				1);
+		will_sync = 1;
+	}
+	retval = fbr_eio_custom(&mctx->fbr, ldb_write_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
+	if (will_sync) {
+		leveldb_writeoptions_set_sync(context->ldb_write_options_async,
+				0);
+		context->lowest_synced = context->first_non_delivered - 1;
+		fbr_log_i(&mctx->fbr, "synced learner db");
+	}
+
+	if (error)
+		errx(EXIT_FAILURE,
+				"try_deliver: leveldb_write() failed: %s",
+				error);
+	fbr_log_d(&mctx->fbr, "leveldb_write() finished in %f", arg.write_time);
+	leveldb_writebatch_clear(context->ldb_batch);
 }
 
 static int ack_eq(void *_a, void *_b) {
@@ -281,10 +457,10 @@ static int ack_eq(void *_a, void *_b) {
 	return 1;
 }
 
-static void do_learn(ME_P_ struct learner_context *context, struct
-		me_paxos_message *pmsg, struct buffer *buf, struct me_peer
-		*from)
+static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct buffer *buf,
+		struct me_peer *from)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	struct lea_instance *instance;
 	struct me_paxos_learn_data *data;
 	int num;
@@ -309,7 +485,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		return;
 	}
 
-	instance = get_instance(context, data->i);
+	instance = get_instance(ME_A_ data->i);
 	assert(instance->iid == data->i);
 	if (instance->closed) {
 		fbr_log_d(&mctx->fbr, "instance %lu is already closed,"
@@ -370,12 +546,13 @@ close_instance:
 			instance->chosen->b,
 			(unsigned)instance->chosen->v->size1,
 			instance->chosen->v->ptr, instance->chosen->v->size1);
-	try_deliver(ME_A_ context);
+	try_deliver(ME_A);
 }
 
-static void do_acceptor_state(ME_P_ struct learner_context *context,
-		struct me_paxos_message *pmsg, struct me_peer *from)
+static void do_acceptor_state(ME_P_ struct me_paxos_message *pmsg,
+		struct me_peer *from)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	struct me_paxos_acceptor_state *data;
 	struct lea_acc_state *acc_state;
 	data = &pmsg->data.me_paxos_msg_data_u.acceptor_state;
@@ -390,8 +567,9 @@ static void do_acceptor_state(ME_P_ struct learner_context *context,
 	acc_state->lowest_available = data->lowest_available;
 }
 
-static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
+static ev_tstamp min_window_age(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	uint64_t start = context->first_non_delivered;
 	struct lea_instance *instance;
@@ -400,7 +578,7 @@ static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
 		if (i == context->highest_seen)
 			break;
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		instance_age = age(ME_A_ instance);
 		if (instance_age < m)
 			m = instance_age;
@@ -412,18 +590,19 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 		void *_arg)
 {
 	struct me_context *mctx;
-	struct learner_context *context = _arg;
+	struct lea_context *context;
 	ev_tstamp next_aged;
 	struct fbr_ev_cond_var ev;
 	struct fbr_ev_base *events[] = {NULL, NULL};
 	int retval;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
+	context = &mctx->pxs.lea;
 
 	fbr_ev_cond_var_init(&mctx->fbr, &ev, &context->delivered, NULL);
 	events[0] = &ev.ev_base;
 	for (;;) {
-		next_aged = min_window_age(ME_A_ context);
+		next_aged = min_window_age(ME_A);
 		retval = fbr_ev_wait_to(&mctx->fbr, events, next_aged);
 		assert(retval >= 0);
 		if (context->highest_seen >= context->first_non_delivered +
@@ -433,58 +612,31 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 					" delivered: %zu",
 					context->highest_seen,
 					context->first_non_delivered);
-			retransmit_window(ME_A_ context);
-			retransmit_next_window(ME_A_ context);
+			retransmit_window(ME_A);
+			retransmit_next_window(ME_A);
 		} else if(context->highest_seen >= context->first_non_delivered) {
 			fbr_log_d(&mctx->fbr, "learner is out of sync, highest"
 					" seen: %zu, first non delivered: %zu",
 					context->highest_seen,
 					context->first_non_delivered);
-			retransmit_window(ME_A_ context);
+			retransmit_window(ME_A);
 		}
 	}
 }
 
-static void try_local_delivery(ME_P_ struct learner_context *context)
-{
-	uint64_t i;
-	const struct acc_instance_record *r;
-	uint64_t start = context->first_non_delivered;
-	uint64_t highest_finalized;
-	if (!mctx->me->pxs.is_acceptor)
-		return;
-	highest_finalized = acs_get_highest_finalized(ME_A);
-	if (0 == highest_finalized)
-		return;
-	for (i = start; i <= highest_finalized; i++) {
-		r = acs_find_record_ro(ME_A_ i);
-		if (NULL == r)
-			break;
-		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
-				r->iid);
-		deliver_v(ME_A_ context->arg->buffer, r->iid, r->vb, r->v);
-		context->first_non_delivered = i + 1;
-	}
-	context->highest_seen = context->first_non_delivered;
-	fbr_log_d(&mctx->fbr, "finished local delivery, highest seen =  %ld",
-		       context->highest_seen);
-}
-
 struct lea_context_destructor_arg {
 	struct me_context *mctx;
-	struct learner_context *lcontext;
+	struct lea_context *lcontext;
 };
 
 void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 {
 	struct lea_context_destructor_arg *arg = _arg;
 	struct me_context *mctx = arg->mctx;
-	struct learner_context *lcontext = arg->lcontext;
+	struct lea_context *lcontext = arg->lcontext;
 	uint64_t j;
 	struct lea_instance *instance;
 
-	TAILQ_REMOVE(&mctx->learners, &lcontext->item, entries);
-	fbr_buffer_destroy(&mctx->fbr, &lcontext->buffer);
 	for (j = 0; j < LEA_INSTANCE_WINDOW; j++) {
 		instance = lcontext->instances + j;
 		free(instance->acks);
@@ -492,23 +644,92 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 	free(lcontext->instances);
 }
 
-static void init_context(ME_P_	struct learner_context *context,
-		struct lea_fiber_arg *arg)
+static void init_context(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	unsigned i;
-	context->first_non_delivered = arg->starting_iid;
+	char *error = NULL;
+	const char *key = "lea_state";
+	const size_t klen = strlen(key);
+	struct lea_packed_state *pstate;
+	struct lea_packed_instance *pinstance;
+	size_t sz;
+	char path[PATH_MAX];
+	char buf[256];
+
+	context->ldb_options = leveldb_options_create();
+	leveldb_options_set_create_if_missing(context->ldb_options, 1);
+	leveldb_options_set_write_buffer_size(context->ldb_options,
+			mctx->args_info.ldb_write_buffer_arg);
+	leveldb_options_set_max_open_files(context->ldb_options,
+			mctx->args_info.ldb_max_open_files_arg);
+	context->ldb_cache =
+		leveldb_cache_create_lru(mctx->args_info.ldb_cache_arg);
+	leveldb_options_set_cache(context->ldb_options, context->ldb_cache);
+	leveldb_options_set_block_size(context->ldb_options,
+			mctx->args_info.ldb_block_size_arg);
+	if (mctx->args_info.ldb_compression_flag) {
+		leveldb_options_set_compression(context->ldb_options,
+				leveldb_snappy_compression);
+	} else {
+		leveldb_options_set_compression(context->ldb_options,
+				leveldb_no_compression);
+	}
+	snprintf(path, sizeof(path), "%s/learner", mctx->args_info.db_dir_arg);
+	context->ldb = leveldb_open(context->ldb_options, path, &error);
+	if (error) {
+		fbr_log_e(&mctx->fbr, "leveldb error: %s", error);
+		exit(EXIT_FAILURE);
+	}
+	context->ldb_batch = leveldb_writebatch_create();
+	context->ldb_write_options_sync = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(context->ldb_write_options_sync, 1);
+	context->ldb_write_options_async = leveldb_writeoptions_create();
+	leveldb_writeoptions_set_sync(context->ldb_write_options_async, 0);
+
+	context->ldb_read_options_cache = leveldb_readoptions_create();
+	leveldb_readoptions_set_verify_checksums(
+			context->ldb_read_options_cache, 1);
+	leveldb_readoptions_set_fill_cache(context->ldb_read_options_cache, 1);
+	pstate = (void *)leveldb_get(context->ldb,
+			context->ldb_read_options_cache, key, klen, &sz,
+			&error);
+	if (error)
+		errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
+	if (pstate) {
+		context->first_non_delivered = pstate->first_non_delivered;
+		snprintf(buf, sizeof(buf), "lea_instance/%020lld",
+				(long long int)
+				(context->first_non_delivered - 1));
+		pinstance = (void *)leveldb_get(context->ldb,
+				context->ldb_read_options_cache, buf,
+				strlen(buf), &sz, &error);
+		if (error)
+			errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
+		memcpy(context->last_checksum, pinstance->checksum,
+				sizeof(context->last_checksum));
+		fbr_log_i(&mctx->fbr,
+				"last checksum loaded from #%ld is %lx%lx",
+				pinstance->iid,
+				*((uint64_t *)context->last_checksum),
+				*((uint64_t *)context->last_checksum + 1));
+	} else {
+		context->first_non_delivered = 1ULL;
+		fbr_log_i(&mctx->fbr, "last checksum initialized to zero");
+		memset(context->last_checksum, 0x00,
+				sizeof(context->last_checksum));
+	}
 	context->mctx = mctx;
-	context->arg = arg;
 	fbr_cond_init(&mctx->fbr, &context->delivered);
 
 	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &context->buffer);
 
-	context->item.id = fbr_self(&mctx->fbr);
-	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
 	context->next_retransmit = ~0ULL; // "infinity"
 	context->instances = calloc(LEA_INSTANCE_WINDOW,
 			sizeof(struct lea_instance));
+	context->cache = calloc(LEA_CACHE_WINDOW,
+			sizeof(struct lea_instance_info));
+	context->lowest_cached = 0;
 	context->highest_seen = context->first_non_delivered;
 	fbr_log_d(&mctx->fbr, "highest_seen = %ld, first_non_delivered = %ld",
 			context->highest_seen, context->first_non_delivered);
@@ -519,8 +740,9 @@ static void init_context(ME_P_	struct learner_context *context,
 		context->acc_states[i].peer = find_peer_by_acc_index(ME_A_ i);
 }
 
-static void init_window(ME_P_ struct learner_context *context)
+static void init_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	struct lea_instance *instance;
 	uint64_t start;
@@ -542,28 +764,27 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct me_context *mctx;
 	struct me_paxos_message *pmsg;
 	struct buffer *buf;
-	struct fbr_buffer *fb;
 	struct msg_info info, *ptr;
+	struct fbr_buffer *fb;
 	fbr_id_t hole_checker;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 	struct lea_context_destructor_arg dtor_arg;
-	struct learner_context context;
+	struct lea_context *context;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	memset(&context, 0x00, sizeof(context));
-	init_context(ME_A_ &context, _arg);
+	context = &mctx->pxs.lea;
+	init_context(ME_A);
 	dtor_arg.mctx = mctx;
-	dtor_arg.lcontext = &context;
+	dtor_arg.lcontext = context;
 	dtor.func = lea_context_destructor;
 	dtor.arg = &dtor_arg;
 	fbr_destructor_add(&mctx->fbr, &dtor);
-	fb = &context.buffer;
+	fb = &context->buffer;
 
-	try_local_delivery(ME_A_ &context);
-	init_window(ME_A_ &context);
+	init_window(ME_A);
 
 	hole_checker = fbr_create(&mctx->fbr, "learner/hole_checker",
-			lea_hole_checker_fiber, &context, 0);
+			lea_hole_checker_fiber, NULL, 0);
 	fbr_transfer(&mctx->fbr, hole_checker);
 
 	for (;;) {
@@ -577,11 +798,11 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		case ME_PAXOS_LEARN:
 		case ME_PAXOS_RELEARN:
 			buf = info.buf;
-			do_learn(ME_A_ &context, pmsg, buf, info.from);
+			do_learn(ME_A_ pmsg, buf, info.from);
 			sm_free(info.buf);
 			break;
 		case ME_PAXOS_ACCEPTOR_STATE:
-			do_acceptor_state(ME_A_ &context, pmsg, info.from);
+			do_acceptor_state(ME_A_ pmsg, info.from);
 			break;
 		default:
 			errx(EXIT_FAILURE,
@@ -593,36 +814,171 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
+#define LDB_READ_INSTANCES 1000
+
+struct ldb_read_custom_cb_arg {
+	char *error;
+	struct lea_context *ctx;
+	unsigned max;
+	struct lea_instance_info *instances;
+	uint64_t i;
+	size_t count;
+};
+
+static eio_ssize_t ldb_read_custom_cb(void *data)
+{
+	struct ldb_read_custom_cb_arg *arg = data;
+	struct lea_context *context = arg->ctx;
+	char buf[256];
+	leveldb_readoptions_t *options = context->ldb_read_options_cache;
+	leveldb_iterator_t* iter;
+	const char *key;
+	size_t klen;
+	size_t vlen;
+	size_t i = 0;
+	struct lea_packed_instance *pinstance;
+
+	iter = leveldb_create_iterator(context->ldb, options);
+	snprintf(buf, sizeof(buf), "lea_instance/%020lld",
+			(long long int)arg->i);
+	leveldb_iter_seek(iter, buf, strlen(buf));
+	while (0 != leveldb_iter_valid(iter) && i < arg->max) {
+		key = leveldb_iter_key(iter, &klen);
+		if (klen < 13 || 0 != memcmp(key, "lea_instance/", 13))
+			break;
+		pinstance = (void *)leveldb_iter_value(iter, &vlen);
+		arg->instances[i].iid = pinstance->iid;
+		arg->instances[i].buffer = buf_sm_copy(pinstance->value,
+				pinstance->size);
+		leveldb_iter_next(iter);
+		i++;
+	}
+	arg->count = i;
+	assert(arg->count <= arg->max);
+
+	leveldb_iter_destroy(iter);
+	return 0;
+}
+
+static uint64_t ldb_deliver(ME_P_ uint64_t i, struct fbr_buffer *fb)
+{
+	struct lea_context *context = &mctx->pxs.lea;
+	struct ldb_read_custom_cb_arg arg;
+	int retval;
+	uint64_t x;
+
+	memset(&arg, 0x00, sizeof(arg));
+	arg.ctx = context;
+	arg.i = i;
+	arg.max = LDB_READ_INSTANCES;
+	arg.instances = calloc(arg.max, sizeof(struct lea_instance_info));
+
+	fbr_log_d(&mctx->fbr, "ldb deliver from %lu", i);
+	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_read_custom_cb failed");
+
+	for (x = 0; x < arg.count; x++) {
+		assert(i == arg.instances[x].iid);
+		deliver_v(ME_A_ fb, arg.instances[x].iid,
+				arg.instances[x].buffer);
+		sm_free(arg.instances[x].buffer);
+		i++;
+	}
+	free(arg.instances);
+	return i;
+}
+
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	struct lea_fiber_arg *arg = _arg;
-	const struct acc_instance_record *r;
+	struct lea_instance_info *info;
 	uint64_t i = arg->starting_iid > 0 ? arg->starting_iid : 1;
-	uint64_t highest_finalized = 0;
-	struct fbr_mutex mutex;
 	struct fbr_cond_var *cond;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
-	fbr_mutex_init(&mctx->fbr, &mutex);
+	cond = &mctx->pxs.lea.delivered;
 
 	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
-
-	for (;;) {
-		for (; i <= acs_get_highest_finalized(ME_A); i++) {
-			r = acs_find_record_ro(ME_A_ i);
-			assert(r);
-			fbr_log_d(&mctx->fbr, "delivering %ld from local state",
-					r->iid);
-			deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
-		}
-		highest_finalized = acs_get_highest_finalized(ME_A);
-		while (highest_finalized == acs_get_highest_finalized(ME_A)) {
-			fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
-			fbr_mutex_lock(&mctx->fbr, &mutex);
-			fbr_cond_wait(&mctx->fbr, cond, &mutex);
-			fbr_mutex_unlock(&mctx->fbr, &mutex);
-		}
+	while (0 == mctx->pxs.lea.lowest_cached) {
+		fbr_log_d(&mctx->fbr, "waiting for cache to populate");
+		fbr_cond_wait(&mctx->fbr, cond, NULL);
 	}
+
+
+	for (;;i++) {
+		while (i < mctx->pxs.lea.lowest_cached)
+			i = ldb_deliver(ME_A_ i, arg->buffer);
+		while (i >= mctx->pxs.lea.first_non_delivered) {
+			fbr_log_d(&mctx->fbr, "waiting for first non delivered"
+					" to change");
+			fbr_cond_wait(&mctx->fbr, cond, NULL);
+		}
+		info = get_cache_instance(ME_A_ i);
+		assert(info->iid == i);
+		fbr_log_d(&mctx->fbr, "delivering %ld from cache",
+				info->iid);
+		deliver_v(ME_A_ arg->buffer, info->iid, info->buffer);
+	}
+}
+
+static void send_relearn(ME_P_ uint64_t iid, struct buffer *buf,
+		struct me_peer *to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data;
+
+	assert(buf->size1 > 0);
+
+	data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_RELEARN;
+	data->me_paxos_msg_data_u.learn.i = iid;
+	/* ballot numbers are irrelevant for final instances */
+	data->me_paxos_msg_data_u.learn.b = 0;
+	data->me_paxos_msg_data_u.learn.v = buf;
+	data->me_paxos_msg_data_u.learn.final = 1;
+	if(NULL == to)
+		msg_send_all(ME_A_ &msg);
+	else
+		msg_send_to(ME_A_ &msg, to->index);
+}
+
+void lea_resend(ME_P_ uint64_t from, uint64_t to, struct me_peer *to_peer)
+{
+	struct lea_context *context = &mctx->pxs.lea;
+	struct ldb_read_custom_cb_arg arg;
+	int retval;
+	uint64_t x;
+	struct lea_instance_info *info;
+	uint64_t i;
+
+	if (context->cache_populated && from >= context->lowest_cached) {
+		for (i = from; i <= to; i++) {
+			info = get_cache_instance(ME_A_ i);
+			send_relearn(ME_A_ info->iid, info->buffer, to_peer);
+		}
+		return;
+	}
+
+	memset(&arg, 0x00, sizeof(arg));
+	arg.ctx = context;
+	arg.i = from;
+	arg.max = to - from + 1;
+	arg.instances = calloc(arg.max, sizeof(struct lea_instance_info));
+
+	retval = fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
+	if (retval)
+		err(EXIT_FAILURE, "ldb_read_custom_cb failed");
+
+	i = from;
+	for (x = 0; x < arg.count; x++) {
+		assert(i == arg.instances[x].iid);
+		send_relearn(ME_A_ arg.instances[x].iid,
+				arg.instances[x].buffer, to_peer);
+		sm_free(arg.instances[x].buffer);
+		i++;
+	}
+	free(arg.instances);
 }

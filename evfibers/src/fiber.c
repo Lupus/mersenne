@@ -463,7 +463,7 @@ int fbr_reclaim(FBR_P_ fbr_id_t id)
 
 	fbr_mutex_init(FBR_A_ &mutex);
 	fbr_mutex_lock(FBR_A_ &mutex);
-	while (fiber->no_reclaim) {
+	while (fiber->no_reclaim > 0) {
 		fiber->want_reclaim = 1;
 		assert("Attempt to reclaim self while no_reclaim is set would"
 				" block forever" && fiber != CURRENT_FIBER);
@@ -489,8 +489,9 @@ int fbr_set_reclaim(FBR_P_ fbr_id_t id)
 	struct fbr_fiber *fiber;
 
 	unpack_transfer_errno(-1, &fiber, id);
-	fiber->no_reclaim = 0;
-	fbr_cond_broadcast(FBR_A_ &fiber->reclaim_cond);
+	fiber->no_reclaim--;
+	if (0 == fiber->no_reclaim)
+		fbr_cond_broadcast(FBR_A_ &fiber->reclaim_cond);
 	return_success(0);
 }
 
@@ -499,7 +500,7 @@ int fbr_set_noreclaim(FBR_P_ fbr_id_t id)
 	struct fbr_fiber *fiber;
 
 	unpack_transfer_errno(-1, &fiber, id);
-	fiber->no_reclaim = 1;
+	fiber->no_reclaim++;
 	return_success(0);
 }
 
@@ -508,6 +509,9 @@ int fbr_want_reclaim(FBR_P_ fbr_id_t id)
 	struct fbr_fiber *fiber;
 
 	unpack_transfer_errno(-1, &fiber, id);
+	if (fiber->no_reclaim > 0)
+		/* If we're in noreclaim block of any depth, always return 0 */
+		return 0;
 	return_success(fiber->want_reclaim);
 }
 
@@ -771,6 +775,7 @@ int fbr_ev_wait_one_wto(FBR_P_ struct fbr_ev_base *one, ev_tstamp timeout)
 
 	if (n_events > 0 && events[0]->arrived)
 		return 0;
+	errno = ETIMEDOUT;
 	return -1;
 }
 
@@ -1255,8 +1260,10 @@ ssize_t fbr_write_all_wto(FBR_P_ int fd, const void *buf, size_t count, ev_tstam
 	while (count != done) {
 next:
 		fbr_ev_wait(FBR_A_ events);
-		if (events[1]->arrived)
+		if (events[1]->arrived) {
+			errno = ETIMEDOUT;
 			goto error;
+		}
 
 		for (;;) {
 			r = write(fd, buf + done, count - done);
@@ -1676,7 +1683,7 @@ int fbr_cond_wait(FBR_P_ struct fbr_cond_var *cond, struct fbr_mutex *mutex)
 {
 	struct fbr_ev_cond_var ev;
 
-	if (fbr_id_isnull(mutex->locked_by))
+	if (mutex && fbr_id_isnull(mutex->locked_by))
 		return_error(-1, FBR_EINVAL);
 
 	fbr_ev_cond_var_init(FBR_A_ &ev, cond, mutex);
@@ -1720,19 +1727,21 @@ void fbr_cond_signal(FBR_P_ struct fbr_cond_var *cond)
 
 int fbr_vrb_init(struct fbr_vrb *vrb, size_t size, const char *file_pattern)
 {
-	int fd;
+	int fd = -1;
 	size_t sz = get_page_size();
 	size = (size ? round_up_to_page_size(size) : sz);
-	void *ptr;
-	char *temp_name;
+	void *ptr = MAP_FAILED;
+	char *temp_name = NULL;
 
 	temp_name = strdup(file_pattern);
+	if (!temp_name)
+		return -1;
 	//fctx->__p->vrb_file_pattern);
 	vrb->mem_ptr_size = size * 2 + sz * 2;
 	vrb->mem_ptr = mmap(NULL, vrb->mem_ptr_size, PROT_NONE,
 			MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 	if (MAP_FAILED == vrb->mem_ptr)
-		return -1;
+		goto error;
 	vrb->lower_ptr = vrb->mem_ptr + sz;
 	vrb->upper_ptr = vrb->lower_ptr + size;
 	vrb->ptr_size = size;
@@ -1740,59 +1749,44 @@ int fbr_vrb_init(struct fbr_vrb *vrb, size_t size, const char *file_pattern)
 	vrb->space_ptr = vrb->lower_ptr;
 
 	fd = mkstemp(temp_name);
-	if (0 >= fd) {
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		free(temp_name);
-		return -1;
-	}
+	if (0 >= fd)
+		goto error;
 
-	if (0 > unlink(temp_name)) {
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		free(temp_name);
-		close(fd);
-		return -1;
-	}
+	if (0 > unlink(temp_name))
+		goto error;
 	free(temp_name);
+	temp_name = NULL;
 
-	if (0 > ftruncate(fd, size)) {
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		close(fd);
-		return -1;
-	}
+	if (0 > ftruncate(fd, size))
+		goto error;
 
-	ptr = mmap(vrb->lower_ptr, size, PROT_READ | PROT_WRITE,
+	ptr = mmap(vrb->lower_ptr, vrb->ptr_size, PROT_READ | PROT_WRITE,
 			MAP_FIXED | MAP_SHARED, fd, 0);
-	if (MAP_FAILED == ptr) {
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		close(fd);
-		return -1;
-	}
-	if (ptr != vrb->lower_ptr) {
-		munmap(vrb->lower_ptr, vrb->ptr_size);
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		close(fd);
-		return -1;
-	}
+	if (MAP_FAILED == ptr)
+		goto error;
+	if (ptr != vrb->lower_ptr)
+		goto error;
 
-	ptr = mmap(vrb->upper_ptr, size, PROT_READ | PROT_WRITE,
+	ptr = mmap(vrb->upper_ptr, vrb->ptr_size, PROT_READ | PROT_WRITE,
 			MAP_FIXED | MAP_SHARED, fd, 0);
-	if (MAP_FAILED == ptr) {
-		munmap(vrb->lower_ptr, vrb->ptr_size);
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		close(fd);
-		return -1;
-	}
-
-	if (ptr != vrb->upper_ptr) {
-		munmap(vrb->upper_ptr, vrb->ptr_size);
-		munmap(vrb->lower_ptr, vrb->ptr_size);
-		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
-		close(fd);
-		return -1;
-	}
+	if (MAP_FAILED == ptr)
+		goto error;
+	if (ptr != vrb->upper_ptr)
+		goto error;
 
 	close(fd);
 	return 0;
+
+error:
+	if (MAP_FAILED != ptr)
+		munmap(ptr, size);
+	if (0 < fd)
+		close(fd);
+	if (vrb->mem_ptr)
+		munmap(vrb->mem_ptr, vrb->mem_ptr_size);
+	if (temp_name)
+		free(temp_name);
+	return -1;
 }
 
 int fbr_buffer_init(FBR_P_ struct fbr_buffer *buffer, size_t size)

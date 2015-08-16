@@ -84,18 +84,14 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	case ME_PAXOS_RELEARN:
 		ldata = &pmsg->data.me_paxos_msg_data_u.learn;
 		buf = buf_sm_steal(ldata->v);
-		TAILQ_FOREACH(item, &mctx->learners, entries) {
-			fb = fbr_get_user_data(&mctx->fbr, item->id);
-			assert(NULL != fb);
-			buffer_ensure_writable(ME_A_ fb,
-					sizeof(struct msg_info));
-			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
-					sizeof(struct msg_info));
-			info->msg = sm_in_use(msg);
-			info->buf = sm_in_use(buf);
-			info->from = from;
-			fbr_buffer_alloc_commit(&mctx->fbr, fb);
-		}
+		fb = &mctx->pxs.lea.buffer;
+		buffer_ensure_writable(ME_A_ fb, sizeof(struct msg_info));
+		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+				sizeof(struct msg_info));
+		info->msg = sm_in_use(msg);
+		info->buf = sm_in_use(buf);
+		info->from = from;
+		fbr_buffer_alloc_commit(&mctx->fbr, fb);
 		sm_free(buf);
 		break;
 
@@ -138,8 +134,11 @@ void pxs_fiber_init(ME_P)
 {
 	mctx->fiber_acceptor = fbr_create(&mctx->fbr, "acceptor", acc_fiber,
 			NULL, 0);
+	mctx->fiber_learner = fbr_create(&mctx->fbr, "learner", lea_fiber,
+			NULL, 0);
 	mctx->fiber_proposer = FBR_ID_NULL;
 
+	fbr_transfer(&mctx->fbr, mctx->fiber_learner);
 	fbr_transfer(&mctx->fbr, mctx->fiber_acceptor);
 	pro_stop(ME_A);
 }
@@ -150,4 +149,5 @@ void pxs_fiber_shutdown(ME_P)
 	fbr_log_d(&mctx->fbr, "stopping acceptor...");
 	fbr_reclaim(&mctx->fbr, mctx->fiber_acceptor);
 	fbr_log_d(&mctx->fbr, "acceptor stopped");
+	fbr_reclaim(&mctx->fbr, mctx->fiber_learner);
 }

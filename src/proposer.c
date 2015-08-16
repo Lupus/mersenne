@@ -803,9 +803,7 @@ static void process_fb(ME_P_ struct fbr_buffer *fb)
 void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	fbr_id_t learner;
 	struct fbr_buffer fb, lea_fb;
-	struct lea_fiber_arg lea_arg;
 	struct fbr_ev_cond_var ev_fb;
 	struct fbr_ev_cond_var ev_lea_fb;
 	struct proposer_context *proposer_context;
@@ -819,9 +817,6 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-
-	if (mctx->me->pxs.is_acceptor)
-		starting_iid = acs_get_highest_finalized(ME_A) + 1;
 
 	proposer_context = malloc(sizeof(struct proposer_context));
 	dtor_arg.mctx = mctx;
@@ -844,6 +839,9 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_mutex_init(&mctx->fbr, &proposer_context->instance_to_mutex);
 	fbr_cond_init(&mctx->fbr, &proposer_context->instance_to_cond);
 
+	starting_iid = mctx->pxs.lea.first_non_delivered;
+	mctx->pxs.pro.lea_fb = &lea_fb;
+
 	proposer_context->instance_to_fiber_id = fbr_create(&mctx->fbr,
 			"proposer/instance_to_fiber", instance_timeout_fiber,
 			proposer_context, 0);
@@ -864,11 +862,6 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	proposer_init(ME_A_ proposer_context, starting_iid);
 
-	lea_arg.buffer = &lea_fb;
-	lea_arg.starting_iid = starting_iid;
-	learner = fbr_create(&mctx->fbr, "proposer/learner", lea_local_fiber,
-			&lea_arg, 0);
-	fbr_transfer(&mctx->fbr, learner);
 	fb_events[0] = &ev_fb.ev_base;
 	fb_events[1] = &ev_lea_fb.ev_base;
 	fb_events[2] = NULL;
@@ -913,6 +906,7 @@ void pro_start(ME_P)
 
 void pro_stop(ME_P)
 {
+	mctx->pxs.pro.lea_fb = NULL;
 	if (!fbr_id_isnull(mctx->fiber_proposer)) {
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 		mctx->fiber_proposer = FBR_ID_NULL;

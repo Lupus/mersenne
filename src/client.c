@@ -124,7 +124,7 @@ static void client_informer_tcp_loop_iter(ME_P_ struct fbr_buffer *buffer,
 	}
 }
 
-void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
+static void client_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	fbr_id_t learner;
@@ -313,6 +313,7 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 		fbr_log_i(&mctx->fbr, "picked latest iid %lu",
 				arg->starting_iid);
 	}
+	/*
 	if (arg->starting_iid < acs_get_lowest_available(ME_A)) {
 		fbr_log_i(&mctx->fbr, "requested instance is unavailable");
 		fbr_log_i(&mctx->fbr, "lowest available is %lu",
@@ -323,6 +324,7 @@ static int conn_client_hello(ME_P_ struct connection_fiber_arg *arg,
 					" the client");
 		return -1;
 	}
+	*/
 	fbr_log_i(&mctx->fbr, "starting informer fiber at instance %ld",
 			arg->starting_iid);
 	informer = fbr_create(&mctx->fbr, "client/informer",

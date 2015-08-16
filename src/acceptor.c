@@ -58,7 +58,6 @@ static void record_send_learn(ME_P_ struct acc_instance_record *r,
 {
 	struct me_message *msg;
 	struct me_paxos_msg_data *data;
-	int final;
 
 	assert(r->v->size1 > 0);
 
@@ -72,8 +71,7 @@ static void record_send_learn(ME_P_ struct acc_instance_record *r,
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->vb;
 	data->me_paxos_msg_data_u.learn.v = r->v;
-	final = (r->iid <= acs_get_highest_finalized(ME_A));
-	data->me_paxos_msg_data_u.learn.final = final;
+	data->me_paxos_msg_data_u.learn.final = 0;
 	r->msg = msg;
 	if(NULL == to)
 		r->msg_to_index = -1;
@@ -87,7 +85,6 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 {
 	struct me_message msg;
 	struct me_paxos_msg_data *data;
-	int final;
 
 	assert(r->v->size1 > 0);
 
@@ -97,8 +94,7 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 	data->me_paxos_msg_data_u.learn.i = r->iid;
 	data->me_paxos_msg_data_u.learn.b = r->vb;
 	data->me_paxos_msg_data_u.learn.v = r->v;
-	final = (r->iid <= acs_get_highest_finalized(ME_A));
-	data->me_paxos_msg_data_u.learn.final = final;
+	data->me_paxos_msg_data_u.learn.final = 0;
 	if(NULL == to)
 		msg_send_all(ME_A_ &msg);
 	else
@@ -116,7 +112,7 @@ static void send_state(ME_P)
 	iid = acs_get_highest_accepted(ME_A);
 	data->me_paxos_msg_data_u.acceptor_state.highest_accepted = iid;
 
-	iid = acs_get_highest_finalized(ME_A);
+	iid = mctx->pxs.lea.first_non_delivered - 1;
 	data->me_paxos_msg_data_u.acceptor_state.highest_finalized = iid;
 
 	iid = acs_get_lowest_available(ME_A);
@@ -143,7 +139,7 @@ static void do_prepare(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_prepare_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.prepare;
-	if (data->i <= acs_get_highest_finalized(ME_A)) {
+	if (data->i <= mctx->pxs.lea.lowest_synced) {
 		// Learner already delivered this instance and it is finalized,
 		// so we will ignore this message altogether.
 		fbr_log_d(&mctx->fbr, "Ignoring prepare for instance %lu"
@@ -178,14 +174,14 @@ static void do_accept(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 
 	data = &pmsg->data.me_paxos_msg_data_u.accept;
 	assert(data->v->size1 > 0);
-	if (data->i <= acs_get_highest_finalized(ME_A)) {
+	if (data->i <= mctx->pxs.lea.lowest_synced) {
 		// Learner already delivered this instance and it is finalized,
 		// so we will ignore this message altogether.
 		fbr_log_d(&mctx->fbr, "Ignoring accept for instance %lu"
 				" as it's finalized", data->i);
 		return;
 	}
-	assert(data->i > acs_get_highest_finalized(ME_A));
+	assert(data->i > mctx->pxs.lea.lowest_synced);
 	if (0 == acs_find_record(ME_A_ &r, data->i, ACS_FM_CREATE)) {
 		// We got an accept for an instance we know nothing about
 		// without prior prepare.
@@ -234,7 +230,13 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	struct me_paxos_retransmit_data *data;
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
-	for(iid = data->from; iid <= data->to; iid++) {
+
+	if (data->to < mctx->pxs.lea.first_non_delivered) {
+		lea_resend(ME_A_ data->from, data->to, from);
+		return;
+	}
+
+	for (iid = data->from; iid <= data->to; iid++) {
 		if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND)) {
 			fbr_log_d(&mctx->fbr, "unable to find record %lu for"
 					" a retransmit", iid);
@@ -259,54 +261,9 @@ static void repeater_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	for(;;) {
 		send_state(ME_A);
-		fbr_sleep(&mctx->fbr, mctx->args_info.acceptor_repeat_interval_arg);
+		fbr_sleep(&mctx->fbr,
+				mctx->args_info.acceptor_repeat_interval_arg);
 	}
-}
-
-static void do_delivered_value(ME_P_ uint64_t iid, uint64_t vb,
-		struct buffer *buffer)
-{
-	struct acc_instance_record *r = NULL;
-
-	if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_CREATE)) {
-		r->iid = iid;
-		r->b = vb;
-		r->v = sm_in_use(buffer);
-		r->vb = vb;
-		fbr_log_d(&mctx->fbr, "writing value for missing instance #%ld"
-				" ballot %ld", iid, vb);
-		acs_store_record(ME_A_ r);
-	} else {
-		if (NULL == r->v || 0 != buf_cmp(r->v, buffer)) {
-			if (r->v) {
-				fbr_log_n(&mctx->fbr, "overwriting value for"
-						" instance #%ld", iid);
-			} else {
-				fbr_log_d(&mctx->fbr, "writing missing value "
-						" for existing instance #%ld"
-						" ballot %ld", iid, vb);
-			}
-			r->b = vb;
-			sm_free(r->v);
-			r->vb = vb;
-			r->v = sm_in_use(buffer);
-			acs_store_record(ME_A_ r);
-		}
-	}
-	acs_free_record(ME_A_ r);
-}
-
-static int delivered_requires_changes(ME_P_ uint64_t iid, struct buffer *buffer)
-{
-	const struct acc_instance_record *r = NULL;
-
-	r = acs_find_record_ro(ME_A_ iid);
-	if (NULL == r) {
-		return 1;
-	} else if (NULL == r->v || 0 != buf_cmp(r->v, buffer)) {
-		return 1;
-	}
-	return 0;
 }
 
 static void do_acceptor_msg(ME_P_ struct msg_info *info)
@@ -332,83 +289,10 @@ static void do_acceptor_msg(ME_P_ struct msg_info *info)
 	sm_free(info->msg);
 }
 
-static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
-		size_t count)
-{
-	struct lea_instance_info *instance_info;
-	int batch_required = 0;
-	uint64_t last_iid = 0;
-	size_t i;
-	for (i = 0; i < count; i++) {
-		instance_info = &ptr[i];
-		batch_required = delivered_requires_changes(ME_A_
-				instance_info->iid, instance_info->buffer);
-		if (batch_required)
-			break;
-		sm_free(instance_info->buffer);
-		last_iid = instance_info->iid;
-		fbr_log_d(&mctx->fbr, "updating (async) finalized to #%ld",
-				last_iid);
-		acs_set_highest_finalized_async(ME_A_ last_iid);
-	}
-	if (!batch_required)
-		return;
-	mctx->delayed_stats.acceptor_lea_fast_path_failures++;
-	fbr_log_d(&mctx->fbr, "fast path failed for learner updates on #%ld",
-			instance_info->iid);
-	acs_batch_start(ME_A);
-	for (; i < count; i++) {
-		instance_info = &ptr[i];
-		do_delivered_value(ME_A_ instance_info->iid, instance_info->vb,
-				instance_info->buffer);
-		sm_free(instance_info->buffer);
-		last_iid = instance_info->iid;
-		fbr_log_d(&mctx->fbr, "updating (async) finalized to #%ld",
-				last_iid);
-		acs_set_highest_finalized_async(ME_A_ last_iid);
-	}
-	fbr_log_d(&mctx->fbr, "updating finalized to #%ld", last_iid);
-	acs_set_highest_finalized(ME_A_ last_iid);
-	acs_batch_finish(ME_A);
-}
-
-static void acc_informer_fiber(struct fbr_context *fiber_context, void *_arg)
-{
-	struct me_context *mctx;
-	fbr_id_t learner;
-	struct lea_fiber_arg lea_arg;
-	struct fbr_buffer lea_fb;
-	struct lea_instance_info *ptr;
-	const size_t lii_size = sizeof(struct lea_instance_info);
-	size_t count;
-
-	mctx = container_of(fiber_context, struct me_context, fbr);
-
-	fbr_buffer_init(&mctx->fbr, &lea_fb, 0);
-
-	lea_arg.buffer = &lea_fb;
-	lea_arg.starting_iid = acs_get_highest_finalized(ME_A) + 1;
-	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
-			&lea_arg, 0);
-	fbr_transfer(&mctx->fbr, learner);
-	fbr_log_d(&mctx->fbr, "acceptor informer started");
-loop:
-	while (fbr_buffer_wait_read(&mctx->fbr, &lea_fb, lii_size)) {
-		count = fbr_buffer_bytes(&mctx->fbr, &lea_fb) / lii_size;
-		fbr_log_d(&mctx->fbr, "reading %ld messages from fb", count);
-		ptr = fbr_buffer_read_address(&mctx->fbr, &lea_fb,
-				count * lii_size);
-		acc_informer_process(ME_A_ ptr, count);
-		fbr_buffer_read_advance(&mctx->fbr, &lea_fb);
-	}
-	goto loop;
-}
-
 void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
 	fbr_id_t repeater;
-	fbr_id_t informer;
 	struct fbr_buffer fb;
 	struct msg_info info, *ptr;
 	const size_t msg_size = sizeof(struct msg_info);
@@ -423,9 +307,6 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			NULL, 0);
 	fbr_transfer(&mctx->fbr, repeater);
 
-	informer = fbr_create(&mctx->fbr, "acceptor/informer",
-			acc_informer_fiber, NULL, 0);
-	fbr_transfer(&mctx->fbr, informer);
 
 	fbr_log_d(&mctx->fbr, "acceptor started");
 	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
@@ -449,6 +330,5 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	acs_destroy(ME_A);
 	fbr_reclaim(&mctx->fbr, repeater);
-	fbr_reclaim(&mctx->fbr, informer);
 	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }

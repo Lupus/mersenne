@@ -394,6 +394,8 @@ int main(int argc, char *argv[])
 	fbr_mutex_init(&mctx->fbr, &mctx->pxs.pro.pending_mutex);
 	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 
+	fbr_log_i(&mctx->fbr, "PID: %d", getpid());
+
 	mctx->fiber_main = fbr_create(&mctx->fbr, "main", fiber_main, NULL, 0);
 	fbr_transfer(&mctx->fbr, mctx->fiber_main);
 

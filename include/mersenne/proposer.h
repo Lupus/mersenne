@@ -60,14 +60,16 @@ struct pro_context {
 	int pending_size;
 	struct fbr_cond_var pending_cond;
 	struct fbr_mutex pending_mutex;
+	struct fbr_buffer *lea_fb;
 };
 
 #define PRO_CONTEXT_INITIALIZER { \
-	.instances = NULL, \
-	.pending = NULL, \
-	.pending_size = 0, \
-	.next_ready = 0, \
-	.last_used_ballot = 0, \
+	.instances = NULL,        \
+	.pending = NULL,          \
+	.pending_size = 0,        \
+	.next_ready = 0,          \
+	.last_used_ballot = 0,    \
+	.lea_fb = NULL,           \
 }
 
 void pro_fiber(struct fbr_context *fiber_context, void *_arg);
