@@ -307,12 +307,11 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			NULL, 0);
 	fbr_transfer(&mctx->fbr, repeater);
 
-
 	fbr_log_d(&mctx->fbr, "acceptor started");
-	fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 
 	while (fbr_buffer_wait_read(&mctx->fbr, &fb, msg_size)) {
-		fbr_log_d(&mctx->fbr, "can read something");
+		fbr_set_noreclaim(&mctx->fbr, fbr_self(&mctx->fbr));
+
 		acs_batch_start(ME_A);
 		count = fbr_buffer_bytes(&mctx->fbr, &fb) / msg_size;
 		fbr_log_d(&mctx->fbr, "reading %ld messages from fb", count);
@@ -324,11 +323,11 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 			do_acceptor_msg(ME_A_ &info);
 		}
 		acs_batch_finish(ME_A);
+
+		fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
 			break;
 	}
 
 	acs_destroy(ME_A);
-	fbr_reclaim(&mctx->fbr, repeater);
-	fbr_set_reclaim(&mctx->fbr, fbr_self(&mctx->fbr));
 }
