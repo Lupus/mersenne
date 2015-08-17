@@ -258,7 +258,6 @@ static void mersenne_stop(ME_P)
 	fbr_reclaim(&mctx->fbr, mctx->fiber_listener);
 	pxs_fiber_shutdown(ME_A);
 	destroy_peer_list(ME_A);
-	ev_break(mctx->loop, EVBREAK_ALL);
 }
 
 static void fiber_main(struct fbr_context *fiber_context, void *_arg)
@@ -338,6 +337,9 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	}
 
 	mersenne_stop(ME_A);
+	acs_destroy(ME_A);
+
+	ev_break(mctx->loop, EVBREAK_ALL);
 }
 
 static int does_file_exists(const char *filename)

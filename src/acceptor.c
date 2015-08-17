@@ -328,6 +328,4 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (fbr_want_reclaim(&mctx->fbr, fbr_self(&mctx->fbr)))
 			break;
 	}
-
-	acs_destroy(ME_A);
 }
