@@ -642,6 +642,13 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 		free(instance->acks);
 	}
 	free(lcontext->instances);
+
+	leveldb_close(lcontext->ldb);
+	leveldb_writebatch_destroy(lcontext->ldb_batch);
+	leveldb_writeoptions_destroy(lcontext->ldb_write_options_sync);
+	leveldb_writeoptions_destroy(lcontext->ldb_write_options_async);
+	leveldb_readoptions_destroy(lcontext->ldb_read_options_cache);
+	leveldb_options_destroy(lcontext->ldb_options);
 }
 
 static void init_context(ME_P)
