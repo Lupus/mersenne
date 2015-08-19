@@ -300,6 +300,11 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 	struct ie_p *p;
 	struct ie_base new_base;
 	int num;
+	ev_tstamp delay;
+	float R;
+	int N;
+	const ev_tstamp M = mctx->args_info.proposer_timeout_1_max_arg;
+	const int F = mctx->args_info.proposer_timeout_1_factor_arg;
 	switch(base->type) {
 		case IE_S:
 			instance->b = new_ballot(ME_A);
@@ -309,6 +314,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			instance->client_value = 0;
 			send_prepare(ME_A_ instance);
 			mctx->delayed_stats.proposer_p1_execs++;
+			instance->nfails = 0;
 			ev_timer_set(&instance->timer, 0., TO1);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -365,14 +371,23 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 			fbr_log_d(&mctx->fbr, "Phase 1 timeout for instance "
 					"#%lu at ballot #%lu", instance->iid,
 					instance->b);
-			if (IE_TO == base->type)
+			if (IE_TO == base->type) {
 				mctx->delayed_stats.proposer_p1_timeouts++;
+				instance->nfails++;
+			}
 			bm_clear_all(instance->p1.acks);
 			instance->p1.vb = 0;
 			instance->b = new_ballot(ME_A);
 			send_prepare(ME_A_ instance);
 			mctx->delayed_stats.proposer_p1_execs++;
-			ev_timer_set(&instance->timer, 0., TO1);
+			R = 1 + rand()/(float)(RAND_MAX);
+			N = instance->nfails;
+			delay = min(R * TO1 * (F << N), M);
+			fbr_log_d(&mctx->fbr,
+					"backof delay: "
+					"%f, R=%f, T=%f, F=%d, N=%d",
+					delay, R, TO1, F, N);
+			ev_timer_set(&instance->timer, 0., delay);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
 		default:
@@ -448,6 +463,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 		case IE_E:
 			send_accept(ME_A_ instance);
 			mctx->delayed_stats.proposer_p2_execs++;
+			instance->nfails = 0;
 			ev_timer_set(&instance->timer, 0., TO2);
 			ev_timer_again(mctx->loop, &instance->timer);
 			break;
@@ -456,6 +472,7 @@ void do_is_p2_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					" #%lu at ballot #%lu", instance->iid,
 					instance->b);
 			mctx->delayed_stats.proposer_p2_timeouts++;
+			instance->nfails++;
 			new_base.type = IE_TO21;
 			switch_instance(ME_A_ instance,
 					IS_P1_PENDING,
@@ -602,6 +619,7 @@ static void init_instance(ME_P_ struct proposer_context *proposer_context,
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = proposer_context;
 	instance->timed_out = 0;
+	instance->nfails = 0;
 	memset(instance->state_snaps, 0x00, sizeof(instance->state_snaps));
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 }
