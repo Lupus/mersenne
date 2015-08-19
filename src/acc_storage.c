@@ -58,6 +58,7 @@ struct wal_log {
 	int iov_rows;
 	struct acs_context *write_context;
 	double flush_io;
+	int flush_need_sync;
 	struct acs_iov_stat stat;
 };
 
@@ -493,12 +494,16 @@ static eio_ssize_t log_flush_custom_cb(void *data)
 	do {
 		rv = writev(log->fd, &kv_A(log->iov, 0), kv_size(log->iov));
 	} while (-1 == rv && EINTR == errno);
+	if (log->flush_need_sync) {
+		if (0 != fdatasync(log->fd))
+			err(EXIT_FAILURE, "fdatasync");
+	}
 	t2 = now();
 	log->flush_io = t2 - t1;
 	return rv;
 }
 
-void wal_log_iov_flush(ME_P_ struct wal_log *log)
+void wal_log_iov_flush(ME_P_ struct wal_log *log, int sync)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	int i;
@@ -506,13 +511,21 @@ void wal_log_iov_flush(ME_P_ struct wal_log *log)
 	size_t total = 0;
 	char *name;
 	char buf[64];
+	double t1, t2;
 	if (0 == kv_size(log->iov))
 		return;
 	for (i = 0; i < kv_size(log->iov); i++)
 		total += kv_A(log->iov, i).iov_len;
+	log->flush_need_sync = sync;
+	t1 = now();
 	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
+	t2 = now();
 	if (retval < total)
 		err(EXIT_FAILURE, "writev failed");
+	/*
+	printf("flush time: %f, thread interaction time: %f\n", log->flush_io,
+			t2 - t1);
+			*/
 	if (log->dir->kind == ALK_WAL)
 		name = "wal";
 	else
@@ -585,7 +598,7 @@ void wal_log_write(ME_P_ struct wal_log *log, void *data, size_t size)
 	log->iov_rows++;
 	if (0 == log->rows && 1 == log->iov_rows && ALK_WAL == log->dir->kind) {
 		fbr_log_d(&mctx->fbr, "flushed first row");
-		wal_log_iov_flush(ME_A_ log);
+		wal_log_iov_flush(ME_A_ log, 0);
 		in_progress_rename(log);
 	}
 }
@@ -1020,7 +1033,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 		wal_write_value_to(ME_A_ r, &snap);
 		ctx->snap_min++;
 		if (wal_log_iov_need_flush(ME_A_ &snap))
-			wal_log_iov_flush(ME_A_ &snap);
+			wal_log_iov_flush(ME_A_ &snap, 0);
 		if (0 == i % trottle_check) {
 			delta = ev_now(mctx->loop) - x;
 			if (delta < time_to_throttle)
@@ -1030,7 +1043,7 @@ static void snapshot_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 	ctx->snap_min = 0;
 	ctx->snap_max = 0;
-	wal_log_iov_flush(ME_A_ &snap);
+	wal_log_iov_flush(ME_A_ &snap, 0);
 	wal_log_iov_stop(ME_A_ &snap);
 	in_progress_rename(&snap);
 	wal_log_close(ME_A_ &snap);
@@ -1289,14 +1302,16 @@ void acs_batch_finish(ME_P)
 			free(r);
 			continue;
 		}
-		if (wal_log_iov_need_flush(ME_A_ ctx->wal))
-			wal_log_iov_flush(ME_A_ ctx->wal);
+		if (wal_log_iov_need_flush(ME_A_ ctx->wal)) {
+			printf("<overflow flush>\n");
+			wal_log_iov_flush(ME_A_ ctx->wal, 0);
+		}
 		wal_write_value(ME_A_ r);
 		r->dirty = 0;
 	}
 	if (ctx->dirty)
 		wal_write_state(ME_A_ ctx);
-	wal_log_iov_flush(ME_A_ ctx->wal);
+	wal_log_iov_flush(ME_A_ ctx->wal, 1);
 	wal_log_iov_stop(ME_A_ ctx->wal);
 
 	if (0 == ctx->writes_per_sync) {
@@ -1305,8 +1320,6 @@ void acs_batch_finish(ME_P)
 	}
 	if (ctx->wal->rows > mctx->args_info.acceptor_wal_rotate_arg)
 		wal_rotate(ME_A_ ctx->wal, &ctx->wal_dir);
-	else
-		wal_log_sync(ME_A_ ctx->wal);
 	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
 		assert(r->stored);
 		if (r->msg) {
