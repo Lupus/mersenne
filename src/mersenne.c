@@ -201,8 +201,6 @@ static void stats_report(ME_P)
 
 	statd_send_gauge(ME_A_ "acc_storage.highest_accepted",
 			acs_get_highest_accepted(ME_A));
-	statd_send_gauge(ME_A_ "acc_storage.highest_finalized",
-			acs_get_highest_finalized(ME_A));
 
 	statd_send_counter(ME_A_ "acceptor.learner_fast_path_fails",
 			mctx->delayed_stats.acceptor_lea_fast_path_failures);

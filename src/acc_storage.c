@@ -742,7 +742,6 @@ static void wal_replay_state(ME_P_ struct wal_state *w_state)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	ctx->highest_accepted = w_state->highest_accepted;
-	ctx->highest_finalized = w_state->highest_finalized;
 }
 
 static void store_record(ME_P_ struct acc_instance_record *record)
@@ -969,7 +968,6 @@ static void wal_write_state_to(ME_P_ struct acs_context *ctx,
 
 	wal_rec.w_type = WAL_REC_TYPE_STATE;
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
-	wal_rec.state.highest_finalized = ctx->highest_finalized;
 
 	msgpack_sbuffer_init(&sbuf);
 
@@ -1163,9 +1161,8 @@ static void recover(ME_P)
 	recover_snapshot(ME_A);
 	recover_remaining_wals(ME_A);
 	fbr_log_i(&mctx->fbr, "Recovered local state, highest accepted = %zd,"
-			" highest finalized = %zd, lowest available = %zd",
-			ctx->highest_accepted, ctx->highest_finalized,
-			ctx->lowest_available);
+			" lowest available = %zd",
+			ctx->highest_accepted, ctx->lowest_available);
 }
 
 struct stats_summary {
@@ -1295,9 +1292,8 @@ static void stats_fiber(struct fbr_context *fiber_context, void *_arg)
 			err(EXIT_FAILURE, "stats failed");
 		report_stats(ME_A_ &arg);
 		fbr_log_i(&mctx->fbr, "acceptor state: highest accepted = %zd,"
-			" highest finalized = %zd, lowest available = %zd",
-			ctx->highest_accepted, ctx->highest_finalized,
-			ctx->lowest_available);
+			" lowest available = %zd",
+			ctx->highest_accepted, ctx->lowest_available);
 skip:
 		kv_size(ctx->stats2) = 0;
 	}
@@ -1400,31 +1396,10 @@ void acs_set_highest_accepted(ME_P_ uint64_t iid)
 	ctx->dirty = 1;
 }
 
-uint64_t acs_get_highest_finalized(ME_P)
-{
-	return mctx->pxs.acc.acs.highest_finalized;
-}
-
 uint64_t acs_get_lowest_available(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	return ctx->lowest_available ?: 1;
-}
-
-void acs_set_highest_finalized(ME_P_ uint64_t iid)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	assert(1 == ctx->in_batch);
-	ctx->highest_finalized = iid;
-	ctx->dirty = 1;
-	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
-}
-
-void acs_set_highest_finalized_async(ME_P_ uint64_t iid)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	ctx->highest_finalized = iid;
-	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,
@@ -1452,27 +1427,26 @@ void acs_vacuum(ME_P)
 	struct acc_instance_record *r;
 	int trunc;
 	uint64_t max_truncated = ctx->lowest_available;
+	uint64_t upto;
 	unsigned n_truncated = 0;
 	uint64_t i;
 	int found;
 	trunc = mctx->args_info.acceptor_truncate_arg;
 	ev_tstamp t1, t2;
 
-	if (ctx->highest_finalized > 1)
-		assert(ctx->highest_finalized > ctx->lowest_available);
-
-	if (ctx->highest_finalized < trunc)
+	if (ctx->highest_accepted < trunc)
 		return;
 	if (0 == max_truncated)
 		max_truncated = 1;
+	upto = ctx->highest_accepted - trunc;
+	assert(upto < mctx->pxs.lea.lowest_synced);
 	ev_now_update(mctx->loop);
 	t1 = ev_now(mctx->loop);
-	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
+	for (i = max_truncated; i < upto; i++) {
 		if (i == ctx->snap_min)
 			break;
 		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
 		assert(found);
-		fbr_log_d(&mctx->fbr, "vacuuming instance %ld...", r->iid);
 		HASH_DEL(ctx->instances, r);
 		sm_free(r->v);
 		free(r);
@@ -1481,14 +1455,11 @@ void acs_vacuum(ME_P)
 	if (0 == n_truncated)
 		return;
 	ctx->lowest_available = i;
-	if (ctx->highest_finalized > 1)
-		assert(ctx->highest_finalized > ctx->lowest_available);
 	ev_now_update(mctx->loop);
 	t2 = ev_now(mctx->loop);
 	fbr_log_d(&mctx->fbr, "vacuumed the state: highest accepted = %zd,"
-			" highest finalized = %zd, lowest available = %zd",
-			ctx->highest_accepted, ctx->highest_finalized,
-			ctx->lowest_available);
+			" lowest available = %zd",
+			ctx->highest_accepted, ctx->lowest_available);
 	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
 	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
 	statd_send_timer(ME_A_ "acc_storage.vacuum_time", t2 - t1);
@@ -1518,7 +1489,7 @@ const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid)
 void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	assert(record->iid > ctx->highest_finalized);
+	assert(record->iid >= ctx->lowest_available);
 	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);

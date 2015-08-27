@@ -28,7 +28,6 @@ struct wal_promise {
 struct wal_state {
   enum wal_rec_type type;
   uint64_t highest_accepted;
-  uint64_t highest_finalized;
 };
 
 union wal_rec_any {

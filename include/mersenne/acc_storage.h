@@ -87,7 +87,6 @@ struct acs_context {
 	struct acc_instance_record_slist snap_instances;
 	struct acc_instance_record_slist dirty_instances;
 	uint64_t highest_accepted;
-	uint64_t highest_finalized;
 	uint64_t lowest_available;
 	struct fbr_cond_var highest_finalized_changed;
 	struct fbr_mutex snapshot_mutex;
@@ -124,7 +123,6 @@ struct acs_context {
 	.snapshot_fiber = FBR_ID_NULL, \
 	.instances = NULL,             \
 	.highest_accepted = 0,         \
-	.highest_finalized = 0,        \
 	.lowest_available = 0,         \
 	.dirty = 0,                    \
 	.highest_stored = 0,           \
@@ -142,10 +140,7 @@ void acs_batch_start(ME_P);
 void acs_batch_finish(ME_P);
 uint64_t acs_get_highest_accepted(ME_P);
 void acs_set_highest_accepted(ME_P_ uint64_t iid);
-uint64_t acs_get_highest_finalized(ME_P);
 uint64_t acs_get_lowest_available(ME_P);
-void acs_set_highest_finalized(ME_P_ uint64_t iid);
-void acs_set_highest_finalized_async(ME_P_ uint64_t iid);
 void acs_vacuum(ME_P);
 int acs_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
 		enum acs_find_mode mode);
