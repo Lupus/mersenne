@@ -285,7 +285,7 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 	struct client_context *cc;
 	struct client_stats last_stats;
 	int current, last;
-	ev_tstamp interval = 5.0;
+	ev_tstamp interval = 1.0;
 	double tx_per_second;
 
 	cc = fbr_container_of(fiber_context, struct client_context, fbr);
@@ -297,8 +297,8 @@ void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 		last = last_stats.other + last_stats.received;
 		//printf("[STATS] Last = %d\n", last);
 		tx_per_second = (current - last) / interval;
-		printf("[STATS] %.3f transactions per second, values received:"
-				" %d, timed out: %d, late: %d, duplicates: %d,"
+		printf("[STATS] %.3f tps, received:"
+				" %d, timed out: %d, late: %d, dups: %d,"
 				" extra: %d, other: %d\n",
 				tx_per_second,
 				cc->stats.received,
