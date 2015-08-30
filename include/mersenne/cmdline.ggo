@@ -16,12 +16,12 @@ option "proposer-queue-size" - "Size for pending value queue" int default="100" 
 option "learner-instance-window" - "Instance window size for learner" int default="5" optional
 option "learner-retransmit-age" - "Instance retransmit age" double default="0.25" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
-option "acceptor-wal-dir" - "Directory, containing acceptor WAL files" string default="/var/lib/mersenne" optional
-option "acceptor-wal-rotate" - "Number of records per WAL" int default="10000" optional
-option "acceptor-snap-dir" - "Directory, containing acceptor snapshot files" string default="/var/lib/mersenne" optional
-option "acceptor-snap-rows" - "Number of records per snapshot" int default="50000" optional
-option "acceptor-snap-throttle" - "Number of instances written after which trottling check is done" int default="100" optional
-option "acceptor-snap-throttle-time" - "Minimum amount of time spend on writing <--acceptor-snap-throttle> instances" double default="0.005" optional
+option "db-dir" - "Directory, containing state database" string default="/var/lib/mersenne" optional
+option "ldb-write-buffer" - "LevelDB write buffer" int default="64000000" optional
+option "ldb-max-open-files" - "LevelDB max open files" int default="1024" optional
+option "ldb-cache" - "LevelDB uncompressed data cache" int default="256000000" optional
+option "ldb-block-size" - "LevelDB block size" int default="131072" optional
+option "ldb-compression" - "LevelDB snappy compression" flag on
 option "acceptor-truncate" T "Maximum number of records to store" int default="100000" optional
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
 option "statd-ip" - "Send metrics to the specified statd instance" string optional

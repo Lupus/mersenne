@@ -22,6 +22,7 @@ find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 find_package(ProtoBufC REQUIRED)
 find_package(Ragel REQUIRED)
+find_package(LDB REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 if(PERFLOG)
@@ -35,6 +36,7 @@ include_directories(
 	"${CMAKE_CURRENT_BINARY_DIR}/evfibers/include"
 	"${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include"
 	"${CMAKE_CURRENT_BINARY_DIR}/msgpack-proto-ragel/include"
+	${LDB_INCLUDE_DIR}
 	)
 
 set(CMAKE_C_FLAGS "-Wall -fno-strict-aliasing")
@@ -113,6 +115,7 @@ target_link_libraries(mersenne
 	z
 	uuid
 	msgpack
+	${LDB_LIBRARIES}
 	)
 
 subdirs(testing)
