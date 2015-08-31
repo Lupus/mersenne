@@ -602,6 +602,10 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	uint64_t highest_finalized = 0;
 	struct fbr_mutex mutex;
 	struct fbr_cond_var *cond;
+	struct acc_archive_record *arecords;
+	unsigned x;
+	unsigned count;
+	const unsigned read_batch = 1000;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
@@ -609,20 +613,40 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
 
-	for (;;) {
-		for (; i <= acs_get_highest_finalized(ME_A); i++) {
-			r = acs_find_record_ro(ME_A_ i);
-			assert(r);
-			fbr_log_d(&mctx->fbr, "delivering %ld from local state",
-					r->iid);
-			deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
+archive:
+	while (i < acs_get_lowest_available(ME_A)) {
+archive_force:
+		count = read_batch;
+		arecords = acs_get_archive_records(ME_A_ i, &count);
+		fbr_log_d(&mctx->fbr, "delivering %ld:%ld from archive",
+				i, i + count);
+		for (x = 0; x < count; x++) {
+			assert(i == arecords[x].iid);
+			deliver_v(ME_A_ arg->buffer, arecords[x].iid,
+					arecords[x].vb, arecords[x].v);
+			i++;
 		}
-		highest_finalized = acs_get_highest_finalized(ME_A);
-		while (highest_finalized == acs_get_highest_finalized(ME_A)) {
-			fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
-			fbr_mutex_lock(&mctx->fbr, &mutex);
-			fbr_cond_wait(&mctx->fbr, cond, &mutex);
-			fbr_mutex_unlock(&mctx->fbr, &mutex);
-		}
+		acs_free_archive_records(ME_A_ arecords, count);
 	}
+local:
+	if (i < acs_get_lowest_available(ME_A))
+		goto archive;
+	for (; i <= acs_get_highest_finalized(ME_A); i++) {
+		r = acs_find_record_ro(ME_A_ i);
+		if (!r)
+			goto archive_force;
+		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
+				r->iid);
+		deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
+		if (i < acs_get_lowest_available(ME_A))
+			goto archive;
+	}
+	highest_finalized = acs_get_highest_finalized(ME_A);
+	while (highest_finalized == acs_get_highest_finalized(ME_A)) {
+		fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
+		fbr_mutex_lock(&mctx->fbr, &mutex);
+		fbr_cond_wait(&mctx->fbr, cond, &mutex);
+		fbr_mutex_unlock(&mctx->fbr, &mutex);
+	}
+	goto local;
 }

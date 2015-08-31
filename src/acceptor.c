@@ -105,6 +105,29 @@ static void send_relearn(ME_P_ struct acc_instance_record *r, struct me_peer *to
 		msg_send_to(ME_A_ &msg, to->index);
 }
 
+static void send_relearn_ar(ME_P_ struct acc_archive_record *ar,
+		struct me_peer *to)
+{
+	struct me_message msg;
+	struct me_paxos_msg_data *data;
+	int final;
+
+	assert(ar->v->size1 > 0);
+
+	data = &msg.me_message_u.paxos_message.data;
+	msg.super_type = ME_PAXOS;
+	data->type = ME_PAXOS_RELEARN;
+	data->me_paxos_msg_data_u.learn.i = ar->iid;
+	data->me_paxos_msg_data_u.learn.b = ar->vb;
+	data->me_paxos_msg_data_u.learn.v = ar->v;
+	final = (ar->iid <= acs_get_highest_finalized(ME_A));
+	data->me_paxos_msg_data_u.learn.final = final;
+	if(NULL == to)
+		msg_send_all(ME_A_ &msg);
+	else
+		msg_send_to(ME_A_ &msg, to->index);
+}
+
 static void send_state(ME_P)
 {
 	struct me_message msg;
@@ -232,8 +255,21 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	uint64_t iid;
 	struct acc_instance_record *r = NULL;
 	struct me_paxos_retransmit_data *data;
+	struct acc_archive_record *arecords;
+	unsigned x;
+	unsigned count;
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
+	if (data->from < acs_get_lowest_available(ME_A)) {
+		count = data->to - data->from + 2;
+		arecords = acs_get_archive_records(ME_A_ data->from, &count);
+		fbr_log_d(&mctx->fbr, "retransmitting %ld:%ld from archive",
+				data->from, data->from + count);
+		for (x = 0; x < count; x++)
+			send_relearn_ar(ME_A_ arecords + x, from);
+		acs_free_archive_records(ME_A_ arecords, count);
+		return;
+	}
 	for(iid = data->from; iid <= data->to; iid++) {
 		if (0 == acs_find_record(ME_A_ &r, iid, ACS_FM_JUST_FIND)) {
 			fbr_log_d(&mctx->fbr, "unable to find record %lu for"

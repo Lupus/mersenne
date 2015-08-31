@@ -234,7 +234,7 @@ static void ldb_write_state(ME_P_ struct acs_context *ctx)
 
 static char *record_iid_to_key(uint64_t iid)
 {
-	static char buf[256];
+	static __thread char buf[256];
 	snprintf(buf, sizeof(buf), "acc_rec/%020lld", (long long int)iid);
 	return buf;
 }
@@ -591,77 +591,24 @@ static eio_ssize_t ldb_write_custom_cb(void *data)
 	return 0;
 }
 
-struct ldb_vacuum_custom_cb_arg {
-	char *error;
-	struct acs_context *ctx;
-	uint64_t from;
-	uint64_t to;
-	double vacuum_time;
-};
-
-static eio_ssize_t ldb_vacuum_custom_cb(void *data)
-{
-	struct ldb_vacuum_custom_cb_arg *arg = data;
-	struct acs_context *ctx = arg->ctx;
-	char *key;
-	uint64_t i;
-	leveldb_writebatch_t *ldb_batch;
-	leveldb_writeoptions_t *ldb_write_options_nosync;
-	ldb_batch = leveldb_writebatch_create();
-	ldb_write_options_nosync = leveldb_writeoptions_create();
-	leveldb_writeoptions_set_sync(ldb_write_options_nosync, 0);
-
-	for (i = arg->from; i <= arg->to; i++) {
-		key = record_iid_to_key(i);
-		leveldb_writebatch_delete(ldb_batch, key, strlen(key));
-	}
-	leveldb_write(ctx->ldb, ldb_write_options_nosync, ldb_batch,
-			&arg->error);
-	leveldb_writeoptions_destroy(ldb_write_options_nosync);
-	leveldb_writebatch_destroy(ldb_batch);
-	return 0;
-}
-
-void vacuum_defer_fiber(struct fbr_context *fctx, void *_arg)
-{
-	struct me_context *mctx;
-	struct ldb_vacuum_custom_cb_arg varg;
-	int retval;
-
-	mctx = container_of(fctx, struct me_context, fbr);
-	varg = *((struct ldb_vacuum_custom_cb_arg *)_arg);
-
-	fbr_log_d(&mctx->fbr, "removing [%ld;%ld] from leveldb",
-			varg.from, varg.to);
-	retval = fbr_eio_custom(&mctx->fbr, ldb_vacuum_custom_cb,
-			&varg, 0);
-	if (retval)
-		err(EXIT_FAILURE, "ldb_vacuum_custom_cb failed");
-}
-
 static void vacuum_state(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r;
-	int trunc;
 	uint64_t max_truncated = ctx->lowest_available;
 	unsigned n_truncated = 0;
 	uint64_t i;
 	int found;
 	ev_tstamp t1, t2;
-	struct ldb_vacuum_custom_cb_arg varg;
-	fbr_id_t vacuum_id;
-	trunc = mctx->args_info.acceptor_truncate_arg;
+	const int trunc = mctx->args_info.acceptor_truncate_arg;
 
-	if (ctx->highest_accepted < trunc)
+	if (ctx->highest_finalized < trunc)
 		return;
 	if (0 == max_truncated)
 		max_truncated = 1;
-	varg.ctx = ctx;
-	varg.from = ctx->lowest_available;
 	ev_now_update(mctx->loop);
 	t1 = ev_now(mctx->loop);
-	for (i = max_truncated; i < ctx->highest_accepted - trunc; i++) {
+	for (i = max_truncated; i < ctx->highest_finalized - trunc; i++) {
 		found = find_record(ME_A_ &r, i, ACS_FM_JUST_FIND);
 		if (!found)
 			continue;
@@ -678,21 +625,14 @@ static void vacuum_state(ME_P)
 	ev_now_update(mctx->loop);
 	t2 = ev_now(mctx->loop);
 	fbr_log_d(&mctx->fbr, "vacuumed the state: highest accepted = %zd,"
-			" lowest available = %zd",
-			ctx->highest_accepted,
+			"highest finalized = %zd, lowest available = %zd",
+			ctx->highest_accepted, ctx->highest_finalized,
 			ctx->lowest_available);
 	fbr_log_d(&mctx->fbr, "vacuuming took %f seconds", t2 - t1);
 	fbr_log_d(&mctx->fbr, "%d instances disposed", n_truncated);
 	statd_send_timer(ME_A_ "acc_storage.vacuum_time", t2 - t1);
 	statd_send_gauge(ME_A_ "acc_storage.lowest_available",
 			ctx->lowest_available);
-
-	varg.to = ctx->lowest_available - 1;
-	if (varg.to > varg.from) {
-		vacuum_id = fbr_create(&mctx->fbr, "vacuum_defer",
-				vacuum_defer_fiber, &varg, 0);
-		fbr_transfer(&mctx->fbr, vacuum_id);
-	}
 }
 
 void acs_batch_finish(ME_P)
@@ -792,6 +732,108 @@ void acs_set_highest_finalized_async(ME_P_ uint64_t iid)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	ctx->highest_finalized = iid;
 	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
+}
+
+struct ldb_read_custom_cb_arg {
+	char *error;
+	struct me_context *mctx;
+	unsigned max;
+	struct iovec *buffers;
+	uint64_t i;
+	size_t count;
+};
+
+static eio_ssize_t ldb_read_custom_cb(void *data)
+{
+	struct ldb_read_custom_cb_arg *arg = data;
+	struct me_context *mctx = arg->mctx;
+	leveldb_readoptions_t *options = leveldb_readoptions_create();
+	const char *key;
+	unsigned x = 0;
+
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	char *error = NULL;
+	char *value;
+
+
+
+	arg->buffers = calloc(arg->max, sizeof(struct iovec));
+	arg->count = 0;
+	for (x = 0; x < arg->max; x++) {
+		key = record_iid_to_key(arg->i + x);
+		value = leveldb_get(ctx->ldb, options, key, strlen(key),
+				&arg->buffers[x].iov_len, &error);
+		if (error)
+			errx(EXIT_FAILURE, "leveldb_get failed: %s", error);
+		if (!value)
+			break;
+
+		arg->buffers[x].iov_base = value;
+		arg->count++;
+	}
+
+	assert(arg->count <= arg->max);
+	leveldb_readoptions_destroy(options);
+	return 0;
+}
+
+struct acc_archive_record *acs_get_archive_records(ME_P_ uint64_t iid,
+		unsigned *count)
+{
+	struct ldb_read_custom_cb_arg arg = { NULL };
+	unsigned x;
+	int retval;
+	msgpack_unpacked result;
+	union wal_rec_any wal_rec;
+	char *error = NULL;
+	struct acc_archive_record *records;
+
+	memset(&arg, 0x00, sizeof(arg));
+	arg.mctx = mctx;
+	arg.i = iid;
+	arg.max = *count;
+
+	fbr_log_d(&mctx->fbr, "ldb read starting from %lu, count %d", iid,
+			*count);
+	fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
+	*count = arg.count;
+	records = calloc(arg.count, sizeof(struct acc_archive_record));
+	for (x = 0; x < arg.count; x++) {
+
+		msgpack_unpacked_init(&result);
+
+		retval = msgpack_unpack_next(&result, arg.buffers[x].iov_base,
+				arg.buffers[x].iov_len, NULL);
+		if (!retval)
+			errx(EXIT_FAILURE, "unable to deserialize record");
+
+		retval = wal_msg_unpack(&result.data, &wal_rec, 0, &error);
+		if(retval){
+			errx(EXIT_FAILURE, "unable to unpack record: %s",
+					error);
+		}
+		assert(WAL_REC_TYPE_VALUE == wal_rec.w_type);
+
+		assert(iid + x == wal_rec.value.iid);
+		records[x].iid = wal_rec.value.iid;
+		records[x].vb = wal_rec.value.vb;
+		records[x].v = buf_sm_copy(wal_rec.value.content.data,
+				wal_rec.value.content.len);
+		msgpack_unpacked_destroy(&result);
+		leveldb_free(arg.buffers[x].iov_base);
+	}
+	free(arg.buffers);
+	return records;
+}
+
+void acs_free_archive_records(ME_P_ struct acc_archive_record *records,
+		unsigned count)
+{
+	unsigned i;
+	for (i = 0; i < count; i++) {
+		sm_free(records[i].v);
+	}
+	free(records);
 }
 
 int find_record(ME_P_ struct acc_instance_record **rptr, uint64_t iid,

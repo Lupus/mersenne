@@ -47,6 +47,12 @@ struct acc_instance_record {
 	SLIST_ENTRY(acc_instance_record) dirty_entries;
 };
 
+struct acc_archive_record {
+	uint64_t iid;
+	uint64_t vb;
+	struct buffer *v;
+};
+
 SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
 
 enum acs_log_kind {
@@ -157,6 +163,10 @@ int acs_find_record(ME_P_ struct acc_instance_record **record_ptr, uint64_t iid,
 const struct acc_instance_record *acs_find_record_ro(ME_P_ uint64_t iid);
 void acs_store_record(ME_P_ struct acc_instance_record *record);
 void acs_free_record(ME_P_ struct acc_instance_record *record);
+struct acc_archive_record *acs_get_archive_records(ME_P_ uint64_t iid,
+		unsigned *count);
+void acs_free_archive_records(ME_P_ struct acc_archive_record *records,
+		unsigned count);
 void acs_destroy(ME_P);
 
 #endif
