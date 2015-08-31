@@ -29,6 +29,7 @@ struct wal_state {
   enum wal_rec_type type;
   uint64_t highest_accepted;
   uint64_t highest_finalized;
+  uint64_t lowest_available;
 };
 
 union wal_rec_any {

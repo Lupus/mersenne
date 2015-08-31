@@ -51,20 +51,14 @@
 		}
 	}
 
-	action validate_b_value {
-		if(0 >= mp_uint(fpc)){
-			elog("b not greater than zero");
-			fbreak;
-		}
-	}
-
 	w_type = MOBJ_POS_INT;
 	iid = MOBJ_POS_INT @validate_iid_value;
-	b = MOBJ_POS_INT @validate_b_value;
+	b = MOBJ_POS_INT;
 	content = MOBJ_RAW @validate_value_length;
 	vb = b;
 	highest_accepted = MOBJ_POS_INT;
 	highest_finalized = MOBJ_POS_INT;
+	lowest_available = MOBJ_POS_INT;
 	arr_start = MOBJ_ARRAY;
 	arr_end = MOBJ_END;
 
@@ -98,6 +92,9 @@
 		} .
 		highest_finalized @{
 			r->state.highest_finalized = mp_uint(fpc);
+		}
+		lowest_available @{
+			r->state.lowest_available = mp_uint(fpc);
 		}
 		@{ fret; };
 
@@ -204,10 +201,11 @@ int wal_msg_pack(msgpack_packer *pk, union wal_rec_any *u)
 		break;
 	case WAL_REC_TYPE_STATE:
 		state = &u->state;
-		mp_array(3);
+		mp_array(4);
 		mp_uint(u->w_type);
 		mp_uint64(state->highest_accepted);
 		mp_uint64(state->highest_finalized);
+		mp_uint64(state->lowest_available);
 		break;
 	}
 

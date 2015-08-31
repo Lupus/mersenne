@@ -151,6 +151,7 @@ static void wal_replay_state(ME_P_ struct wal_state *w_state)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	ctx->highest_accepted = w_state->highest_accepted;
 	ctx->highest_finalized = w_state->highest_finalized;
+	ctx->lowest_available = w_state->lowest_available;
 }
 
 static void store_record(ME_P_ struct acc_instance_record *record)
@@ -169,7 +170,6 @@ static void store_record(ME_P_ struct acc_instance_record *record)
 
 static void wal_replay_value(ME_P_ struct wal_value *w_value)
 {
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r;
 
 	//Both return values of acs_find_record are okay in this context
@@ -189,9 +189,6 @@ static void wal_replay_value(ME_P_ struct wal_value *w_value)
 	}
 	r->vb = w_value->vb;
 	store_record(ME_A_ r);
-	if (r->iid < ctx->lowest_available || 0 == ctx->lowest_available) {
-		ctx->lowest_available = r->iid;
-	}
 }
 
 static void wal_replay_promise(ME_P_ struct wal_promise *w_promise)
@@ -219,6 +216,7 @@ static void ldb_write_state(ME_P_ struct acs_context *ctx)
 	wal_rec.w_type = WAL_REC_TYPE_STATE;
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
 	wal_rec.state.highest_finalized = ctx->highest_finalized;
+	wal_rec.state.lowest_available = ctx->lowest_available;
 
 	msgpack_sbuffer_init(&sbuf);
 
@@ -838,7 +836,6 @@ void acs_store_record(ME_P_ struct acc_instance_record *record)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(record->iid > ctx->highest_finalized);
-	assert(record->b > 0);
 	store_record(ME_A_ record);
 	assert(1 == ctx->in_batch);
 	if (!record->dirty) {
