@@ -260,11 +260,11 @@ static void do_retransmit(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	unsigned count;
 
 	data = &pmsg->data.me_paxos_msg_data_u.retransmit;
-	if (data->from < acs_get_lowest_available(ME_A)) {
-		count = data->to - data->from + 2;
+	if (data->to < acs_get_lowest_available(ME_A)) {
+		count = data->to - data->from + 1;
 		arecords = acs_get_archive_records(ME_A_ data->from, &count);
 		fbr_log_d(&mctx->fbr, "retransmitting %ld:%ld from archive",
-				data->from, data->from + count);
+				data->from, data->to);
 		for (x = 0; x < count; x++)
 			send_relearn_ar(ME_A_ arecords + x, from);
 		acs_free_archive_records(ME_A_ arecords, count);

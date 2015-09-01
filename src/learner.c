@@ -616,7 +616,7 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 archive:
 	while (i < acs_get_lowest_available(ME_A)) {
 archive_force:
-		count = read_batch;
+		count = min(read_batch, acs_get_lowest_available(ME_A) - i);
 		arecords = acs_get_archive_records(ME_A_ i, &count);
 		fbr_log_d(&mctx->fbr, "delivering %ld:%ld from archive",
 				i, i + count);
@@ -643,7 +643,8 @@ local:
 	}
 	highest_finalized = acs_get_highest_finalized(ME_A);
 	while (highest_finalized == acs_get_highest_finalized(ME_A)) {
-		fbr_log_d(&mctx->fbr, "waiting for highest finalized to change");
+		fbr_log_d(&mctx->fbr,
+				"waiting for highest finalized to change");
 		fbr_mutex_lock(&mctx->fbr, &mutex);
 		fbr_cond_wait(&mctx->fbr, cond, &mutex);
 		fbr_mutex_unlock(&mctx->fbr, &mutex);

@@ -793,6 +793,7 @@ struct acc_archive_record *acs_get_archive_records(ME_P_ uint64_t iid,
 	arg.i = iid;
 	arg.max = *count;
 
+	assert(iid + *count - 1 < acs_get_lowest_available(ME_A));
 	fbr_log_d(&mctx->fbr, "ldb read starting from %lu, count %d", iid,
 			*count);
 	fbr_eio_custom(&mctx->fbr, ldb_read_custom_cb, &arg, 0);
