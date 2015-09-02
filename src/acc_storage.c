@@ -434,7 +434,6 @@ void acs_initialize(ME_P)
 void acs_batch_start(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	//fbr_mutex_lock(&mctx->fbr, &ctx->snapshot_mutex);
 	fbr_mutex_lock(&mctx->fbr, &ctx->batch_mutex);
 	ctx->writes_per_sync = 0;
 	ctx->in_batch = 1;
@@ -777,6 +776,5 @@ void acs_destroy(ME_P)
 	}
 
 	fbr_cond_destroy(&mctx->fbr, &ctx->highest_finalized_changed);
-	fbr_mutex_destroy(&mctx->fbr, &ctx->snapshot_mutex);
 	fbr_mutex_destroy(&mctx->fbr, &ctx->batch_mutex);
 }

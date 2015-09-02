@@ -102,7 +102,6 @@ struct acs_context {
 	uint64_t highest_finalized;
 	uint64_t lowest_available;
 	struct fbr_cond_var highest_finalized_changed;
-	struct fbr_mutex snapshot_mutex;
 	struct fbr_mutex batch_mutex;
 	int dirty;
 };
