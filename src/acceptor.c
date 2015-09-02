@@ -31,6 +31,7 @@
 #include <mersenne/util.h>
 #include <mersenne/strenum.h>
 #include <mersenne/sharedmem.h>
+#include <mersenne/md5.h>
 
 static void record_send_promise(ME_P_ struct acc_instance_record *r,
 		struct me_peer *to)
@@ -368,6 +369,23 @@ static void do_acceptor_msg(ME_P_ struct msg_info *info)
 	sm_free(info->msg);
 }
 
+static void update_running_checksum(ME_P_ struct lea_instance_info *info)
+{
+	MD5_CTX md5;
+	MD5_Init(&md5);
+	MD5_Update(&md5, mctx->pxs.acc.running_checksum,
+			sizeof(mctx->pxs.acc.running_checksum));
+	MD5_Update(&md5, &info->iid, sizeof(info->iid));
+	MD5_Update(&md5, info->buffer->ptr, info->buffer->size1);
+	MD5_Final(mctx->pxs.acc.running_checksum, &md5);
+	if (0 != info->iid % 100000)
+		return;
+	fbr_log_i(&mctx->fbr, "running checksum at #%ld is %016lx%016lx",
+			info->iid,
+			*((uint64_t *)mctx->pxs.acc.running_checksum),
+			*((uint64_t *)mctx->pxs.acc.running_checksum + 1));
+}
+
 static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
 		size_t count)
 {
@@ -381,11 +399,13 @@ static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
 				instance_info->iid, instance_info->buffer);
 		if (batch_required)
 			break;
+		update_running_checksum(ME_A_ instance_info);
 		sm_free(instance_info->buffer);
 		last_iid = instance_info->iid;
 		fbr_log_d(&mctx->fbr, "updating (async) finalized to #%ld",
 				last_iid);
-		acs_set_highest_finalized_async(ME_A_ last_iid);
+		acs_set_highest_finalized_async(ME_A_ last_iid,
+				mctx->pxs.acc.running_checksum);
 	}
 	if (!batch_required)
 		return;
@@ -397,14 +417,17 @@ static void acc_informer_process(ME_P_ struct lea_instance_info *ptr,
 		instance_info = &ptr[i];
 		do_delivered_value(ME_A_ instance_info->iid, instance_info->vb,
 				instance_info->buffer);
+		update_running_checksum(ME_A_ instance_info);
 		sm_free(instance_info->buffer);
 		last_iid = instance_info->iid;
 		fbr_log_d(&mctx->fbr, "updating (async) finalized to #%ld",
 				last_iid);
-		acs_set_highest_finalized_async(ME_A_ last_iid);
+		acs_set_highest_finalized_async(ME_A_ last_iid,
+				mctx->pxs.acc.running_checksum);
 	}
 	fbr_log_d(&mctx->fbr, "updating finalized to #%ld", last_iid);
-	acs_set_highest_finalized(ME_A_ last_iid);
+	acs_set_highest_finalized(ME_A_ last_iid,
+				mctx->pxs.acc.running_checksum);
 	acs_batch_finish(ME_A);
 }
 
@@ -424,6 +447,8 @@ static void acc_informer_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	lea_arg.buffer = &lea_fb;
 	lea_arg.starting_iid = acs_get_highest_finalized(ME_A) + 1;
+	memcpy(mctx->pxs.acc.running_checksum, acs_get_running_checksum(ME_A),
+			sizeof(mctx->pxs.acc.running_checksum));
 	learner = fbr_create(&mctx->fbr, "acceptor/learner", lea_fiber,
 			&lea_arg, 0);
 	fbr_transfer(&mctx->fbr, learner);

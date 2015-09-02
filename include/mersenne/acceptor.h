@@ -34,6 +34,7 @@ struct me_message;
 
 struct acc_context {
 	struct acs_context acs;
+	unsigned char running_checksum[16];
 };
 
 #define ACC_CONTEXT_INITIALIZER {           \

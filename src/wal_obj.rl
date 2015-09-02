@@ -36,10 +36,17 @@
 	getkey fpc->id;
 
 	include mppr_common_decls "msgpack-proto-ragel/mppr_common.rl";
- 
+
 	action validate_value_length {
 		if(0 >= mp_raw(fpc).size){
 			elog("empty value encountered");
+			fbreak;
+		}
+	}
+
+	action validate_checksum_length {
+		if(16 != mp_raw(fpc).size){
+			elog("invalid checksum length encountered");
 			fbreak;
 		}
 	}
@@ -55,6 +62,7 @@
 	iid = MOBJ_POS_INT @validate_iid_value;
 	b = MOBJ_POS_INT;
 	content = MOBJ_RAW @validate_value_length;
+	running_checksum = MOBJ_RAW @validate_checksum_length;
 	vb = b;
 	highest_accepted = MOBJ_POS_INT;
 	highest_finalized = MOBJ_POS_INT;
@@ -73,7 +81,8 @@
 			r->value.vb = mp_uint(fpc);
 		} .
 		content @{
-			mp_raw_opt(fpc, r->value.content.data, r->value.content.len);
+			mp_raw_opt(fpc, r->value.content.data,
+					r->value.content.len);
 		}
 		@{ fret; };
 
@@ -95,6 +104,9 @@
 		}
 		lowest_available @{
 			r->state.lowest_available = mp_uint(fpc);
+		}
+		running_checksum @{
+			mp_raw_cpy(fpc, r->state.running_checksum);
 		}
 		@{ fret; };
 
@@ -201,11 +213,12 @@ int wal_msg_pack(msgpack_packer *pk, union wal_rec_any *u)
 		break;
 	case WAL_REC_TYPE_STATE:
 		state = &u->state;
-		mp_array(4);
+		mp_array(5);
 		mp_uint(u->w_type);
 		mp_uint64(state->highest_accepted);
 		mp_uint64(state->highest_finalized);
 		mp_uint64(state->lowest_available);
+		mp_raw_sizeof(state->running_checksum);
 		break;
 	}
 

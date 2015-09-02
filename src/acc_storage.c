@@ -58,6 +58,8 @@ static void wal_replay_state(ME_P_ struct wal_state *w_state)
 	ctx->highest_accepted = w_state->highest_accepted;
 	ctx->highest_finalized = w_state->highest_finalized;
 	ctx->lowest_available = w_state->lowest_available;
+	memcpy(ctx->running_checksum, w_state->running_checksum,
+			sizeof(ctx->running_checksum));
 }
 
 static void store_record(ME_P_ struct acc_instance_record *record)
@@ -121,6 +123,8 @@ static void ldb_write_state(ME_P_ struct acs_context *ctx)
 	wal_rec.state.highest_accepted = ctx->highest_accepted;
 	wal_rec.state.highest_finalized = ctx->highest_finalized;
 	wal_rec.state.lowest_available = ctx->lowest_available;
+	memcpy(wal_rec.state.running_checksum, ctx->running_checksum,
+			sizeof(ctx->running_checksum));
 
 	msgpack_sbuffer_init(&sbuf);
 
@@ -252,6 +256,8 @@ static void recover(ME_P)
 		ctx->highest_accepted = 0;
 		ctx->highest_finalized = 0;
 		ctx->lowest_available = 0;
+		memset(ctx->running_checksum, 0x00,
+				sizeof(ctx->running_checksum));
 	} else {
 		recover_rec(ME_A_ buf, len);
 		free(buf);
@@ -276,6 +282,10 @@ static void recover(ME_P)
 			" highest finalized = %zd, lowest available = %zd",
 			ctx->highest_accepted, ctx->highest_finalized,
 			ctx->lowest_available);
+	fbr_log_i(&mctx->fbr, "running checksum at #%ld is %016lx%016lx",
+			ctx->highest_finalized,
+			*((uint64_t *)mctx->pxs.acc.running_checksum),
+			*((uint64_t *)mctx->pxs.acc.running_checksum + 1));
 	leveldb_iter_destroy(iter);
 	leveldb_readoptions_destroy(options);
 }
@@ -487,25 +497,36 @@ uint64_t acs_get_highest_finalized(ME_P)
 	return mctx->pxs.acc.acs.highest_finalized;
 }
 
+const unsigned char *acs_get_running_checksum(ME_P)
+{
+	return mctx->pxs.acc.acs.running_checksum;
+}
+
 uint64_t acs_get_lowest_available(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	return ctx->lowest_available ?: 1;
 }
 
-void acs_set_highest_finalized(ME_P_ uint64_t iid)
+void acs_set_highest_finalized(ME_P_ uint64_t iid,
+		const unsigned char *running_checksum)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(1 == ctx->in_batch);
 	ctx->highest_finalized = iid;
+	memcpy(ctx->running_checksum, running_checksum,
+			sizeof(ctx->running_checksum));
 	ctx->dirty = 1;
 	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 
-void acs_set_highest_finalized_async(ME_P_ uint64_t iid)
+void acs_set_highest_finalized_async(ME_P_ uint64_t iid,
+		const unsigned char *running_checksum)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	ctx->highest_finalized = iid;
+	memcpy(ctx->running_checksum, running_checksum,
+			sizeof(ctx->running_checksum));
 	fbr_cond_broadcast(&mctx->fbr, &ctx->highest_finalized_changed);
 }
 

@@ -30,6 +30,7 @@ struct wal_state {
   uint64_t highest_accepted;
   uint64_t highest_finalized;
   uint64_t lowest_available;
+  unsigned char running_checksum[16];
 };
 
 union wal_rec_any {
