@@ -107,9 +107,6 @@ struct acs_context {
 	int dirty;
 	kvec_t(struct acs_iov_stat) stats;
 	kvec_t(struct acs_iov_stat) stats2;
-	uint64_t highest_stored;
-	uint64_t snap_min;
-	uint64_t snap_max;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
@@ -139,9 +136,6 @@ struct acs_context {
 	.highest_finalized = 0,        \
 	.lowest_available = 0,         \
 	.dirty = 0,                    \
-	.highest_stored = 0,           \
-	.snap_min = 0,                 \
-	.snap_max = 0,                 \
 }
 
 enum acs_find_mode {

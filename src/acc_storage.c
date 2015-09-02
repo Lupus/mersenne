@@ -163,8 +163,6 @@ static void store_record(ME_P_ struct acc_instance_record *record)
 	if (NULL == w) {
 		record->stored = 1;
 		HASH_ADD_WIID(ctx->instances, iid, record);
-		if (record->iid > ctx->highest_stored)
-			ctx->highest_stored = record->iid;
 	}
 }
 
