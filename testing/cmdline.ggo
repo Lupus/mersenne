@@ -12,3 +12,4 @@ option "log-level" l "Log level" values="error","warning","notice","info","debug
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
 option "service-id" s "Use specified service id in value header" int default="0"
 option "value-size" V "Use random buffer of specified size as avalue" int default="1350"
+option "start-iid" I "Start replay from this iid, 0 means start from the most recent one" int default="0"

@@ -557,7 +557,7 @@ int main(int argc, char *argv[]) {
 	config.peers = cc.args_info.mersenne_ip_arg;
 	config.peers_size = cc.args_info.mersenne_ip_given;
 	config.port = cc.args_info.port_arg;
-	config.starting_iid = 0;
+	config.starting_iid = cc.args_info.start_iid_arg;
 	config.foreign_func = foreign_cb;
 	config.foreign_func_arg = &cc;
 	config.service_id = cc.args_info.service_id_arg;
