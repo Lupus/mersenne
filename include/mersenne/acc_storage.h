@@ -105,8 +105,6 @@ struct acs_context {
 	struct fbr_mutex snapshot_mutex;
 	struct fbr_mutex batch_mutex;
 	int dirty;
-	kvec_t(struct acs_iov_stat) stats;
-	kvec_t(struct acs_iov_stat) stats2;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
