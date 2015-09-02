@@ -612,11 +612,11 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
 	fbr_mutex_init(&mctx->fbr, &mutex);
 
-	fbr_log_d(&mctx->fbr, "local learner starting at %ld", i);
+	fbr_log_i(&mctx->fbr, "local learner starting at %ld", i);
 
 archive:
+	fbr_log_i(&mctx->fbr, "trying archive");
 	while (i < acs_get_lowest_available(ME_A)) {
-archive_force:
 		count = min(read_batch, acs_get_lowest_available(ME_A) - i);
 		arecords = acs_get_archive_records(ME_A_ i, &count);
 		fbr_log_d(&mctx->fbr, "delivering %ld:%ld from archive",
@@ -630,20 +630,27 @@ archive_force:
 		}
 		acs_free_archive_records(ME_A_ arecords, count);
 	}
+	fbr_log_i(&mctx->fbr, "reached lowest available, trying local");
 local:
-	if (i < acs_get_lowest_available(ME_A))
+	if (i < acs_get_lowest_available(ME_A)) {
+		fbr_log_i(&mctx->fbr, "lost lowest available");
 		goto archive;
+	}
 	for (; i <= acs_get_highest_finalized(ME_A); i++) {
+		assert(i >= acs_get_lowest_available(ME_A));
 		r = acs_find_record_ro(ME_A_ i);
-		if (!r)
-			goto archive_force;
+		assert(((void)"Instance disappeared!", r));
 		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
 				r->iid);
 		assert(i == r->iid);
 		assert(i == last_i++ + 1);
 		deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
-		if (i < acs_get_lowest_available(ME_A))
+		if (i + 1 < acs_get_lowest_available(ME_A)) {
+			i++;
+			fbr_log_i(&mctx->fbr, "lost lowest available during"
+					" delivery");
 			goto archive;
+		}
 	}
 	highest_finalized = acs_get_highest_finalized(ME_A);
 	while (highest_finalized == acs_get_highest_finalized(ME_A)) {
