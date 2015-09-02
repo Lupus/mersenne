@@ -601,6 +601,9 @@ on_redirect:
 						u.arrived_value.size,
 						u.arrived_value.iid);
 				fbr_log_d(conn->fctx, "replay_value finish");
+				if (conn->last_iid > 0)
+				       assert(1 == u.arrived_value.iid -
+						       conn->last_iid);
 				conn->last_iid = u.arrived_value.iid;
 				break;
 			case ME_CMT_REDIRECT:

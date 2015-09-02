@@ -599,6 +599,7 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct lea_fiber_arg *arg = _arg;
 	const struct acc_instance_record *r;
 	uint64_t i = arg->starting_iid > 0 ? arg->starting_iid : 1;
+	uint64_t last_i = i - 1;
 	uint64_t highest_finalized = 0;
 	struct fbr_mutex mutex;
 	struct fbr_cond_var *cond;
@@ -622,6 +623,7 @@ archive_force:
 				i, i + count);
 		for (x = 0; x < count; x++) {
 			assert(i == arecords[x].iid);
+			assert(i == last_i++ + 1);
 			deliver_v(ME_A_ arg->buffer, arecords[x].iid,
 					arecords[x].vb, arecords[x].v);
 			i++;
@@ -637,6 +639,8 @@ local:
 			goto archive_force;
 		fbr_log_d(&mctx->fbr, "delivering %ld from local state",
 				r->iid);
+		assert(i == r->iid);
+		assert(i == last_i++ + 1);
 		deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
 		if (i < acs_get_lowest_available(ME_A))
 			goto archive;
