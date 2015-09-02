@@ -55,46 +55,16 @@ struct acc_archive_record {
 
 SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
 
-enum acs_log_kind {
-	ALK_WAL,
-	ALK_SNAP,
-};
-
-struct acs_log_dir {
-	char *dirname;
-	char *ext;
-	enum acs_log_kind kind;
-	uint64_t *lsn_arr;
-	size_t lsn_arr_len;
-	size_t lsn_arr_size;
-	uint64_t max_lsn;
-};
-
-struct wal_log;
-
-struct acs_iov_stat {
-	unsigned n_rows;
-	unsigned n_buffers;
-	unsigned n_bytes;
-	unsigned n_useconds;
-	unsigned n_flushes;
-	unsigned n_sync_useconds;
-};
-
 struct acs_context {
 	leveldb_t *ldb;
 	leveldb_cache_t *ldb_cache;
 	leveldb_options_t *ldb_options;
 	leveldb_writebatch_t *ldb_batch;
 	leveldb_writeoptions_t *ldb_write_options_sync;
-	struct acs_log_dir wal_dir;
-	struct acs_log_dir snap_dir;
 	uint64_t confirmed_lsn;
-	struct wal_log *wal;
 	size_t writes_per_sync;
 	int in_batch;
 	uint64_t batch_start_lsn;
-	fbr_id_t snapshot_fiber;
 	struct acc_instance_record *instances;
 	struct acc_instance_record_slist snap_instances;
 	struct acc_instance_record_slist dirty_instances;
@@ -107,27 +77,9 @@ struct acs_context {
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \
-	.wal_dir = {                   \
-		.ext = ".wal",         \
-		.kind = ALK_WAL,       \
-		.lsn_arr = NULL,       \
-		.lsn_arr_len = 0,      \
-		.lsn_arr_size = 0,     \
-		.max_lsn = 0,          \
-	},                             \
-	.snap_dir = {                  \
-		.ext = ".snap",        \
-		.kind = ALK_SNAP,      \
-		.lsn_arr = NULL,       \
-		.lsn_arr_len = 0,      \
-		.lsn_arr_size = 0,     \
-		.max_lsn = 0,          \
-	},                             \
 	.confirmed_lsn = 0,            \
-	.wal = NULL,                   \
 	.writes_per_sync = 0,          \
 	.in_batch = 0,                 \
-	.snapshot_fiber = FBR_ID_NULL, \
 	.instances = NULL,             \
 	.highest_accepted = 0,         \
 	.highest_finalized = 0,        \

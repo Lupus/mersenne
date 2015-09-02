@@ -37,41 +37,6 @@
 #include <mersenne/statd.h>
 #include <mersenne/wal_obj.h>
 
-enum wal_log_mode {
-	WLM_RO,
-	WLM_RW,
-};
-
-struct wal_log {
-	struct acs_log_dir *dir;
-	int fd;
-	char filename[PATH_MAX + 1];
-	int in_progress;
-	size_t rows;
-	enum wal_log_mode mode;
-	kvec_t(struct iovec) iov;
-	int collecting_iov;
-	int iov_rows;
-	struct acs_context *write_context;
-	double flush_io;
-	struct acs_iov_stat stat;
-};
-
-struct wal_iter {
-	struct wal_log *log;
-	size_t row_count;
-	size_t good_offt;
-	int eof;
-};
-
-struct wal_rec_header {
-	uint32_t header_checksum;
-	uint64_t lsn;
-	ev_tstamp tstamp;
-	uint16_t size;
-	uint32_t checksum;
-} __attribute__((packed));
-
 #define HASH_FIND_WIID(head,findiid,out) \
 	HASH_FIND(hh,head,findiid,sizeof(uint64_t),out)
 #define HASH_ADD_WIID(head,iidfield,add) \
@@ -85,65 +50,6 @@ static double now()
 	if (retval)
 		err(EXIT_FAILURE, "gettimeofday");
 	return t.tv_sec + t.tv_usec * 1e-6;
-}
-
-static eio_ssize_t log_flush_custom_cb(void *data)
-{
-	struct wal_log *log = data;
-	ssize_t rv;
-	double t1, t2;
-	t1 = now();
-	do {
-		rv = writev(log->fd, &kv_A(log->iov, 0), kv_size(log->iov));
-	} while (-1 == rv && EINTR == errno);
-	t2 = now();
-	log->flush_io = t2 - t1;
-	return rv;
-}
-
-void wal_log_iov_flush(ME_P_ struct wal_log *log)
-{
-	struct acs_context *ctx = &mctx->pxs.acc.acs;
-	int i;
-	ssize_t retval;
-	size_t total = 0;
-	char *name;
-	char buf[64];
-	if (0 == kv_size(log->iov))
-		return;
-	for (i = 0; i < kv_size(log->iov); i++)
-		total += kv_A(log->iov, i).iov_len;
-	retval = fbr_eio_custom(&mctx->fbr, log_flush_custom_cb, log, 0);
-	if (retval < total)
-		err(EXIT_FAILURE, "writev failed");
-	if (log->dir->kind == ALK_WAL)
-		name = "wal";
-	else
-		name = "snap";
-	snprintf(buf, sizeof(buf), "acc_storage.%s.rows", name);
-	statd_send_counter(ME_A_ buf, log->iov_rows);
-	log->stat.n_rows += log->iov_rows;
-	snprintf(buf, sizeof(buf), "acc_storage.%s.buffers", name);
-	statd_send_counter(ME_A_ buf, kv_size(log->iov));
-	log->stat.n_buffers += kv_size(log->iov);
-	snprintf(buf, sizeof(buf), "acc_storage.%s.bytes", name);
-	statd_send_counter(ME_A_ buf, total);
-	log->stat.n_bytes += total;
-	snprintf(buf, sizeof(buf), "acc_storage.%s.flush_time", name);
-	statd_send_timer(ME_A_ buf, log->flush_io);
-	log->stat.n_useconds += (unsigned)(log->flush_io * 1e6);
-	log->stat.n_flushes++;
-	fbr_log_d(&mctx->fbr, "wrotev %d rows containing %zd buffers with %zd"
-			" bytes in %f", log->iov_rows, kv_size(log->iov),
-			total, log->flush_io);
-	log->rows += log->iov_rows;
-	for (i = 0; i < kv_size(log->iov); i++)
-		free(kv_A(log->iov, i).iov_base);
-	kv_size(log->iov) = 0;
-	if (ALK_WAL == log->dir->kind) {
-		ctx->confirmed_lsn += log->iov_rows;
-	}
-	log->iov_rows = 0;
 }
 
 static void wal_replay_state(ME_P_ struct wal_state *w_state)
