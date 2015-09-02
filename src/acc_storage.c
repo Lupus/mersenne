@@ -264,7 +264,7 @@ static void recover(ME_P)
 	}
 
 	iter = leveldb_create_iterator(ctx->ldb, options);
-	key = record_iid_to_key(ctx->highest_finalized + 1);
+	key = record_iid_to_key(ctx->lowest_available);
 	leveldb_iter_seek(iter, key, strlen(key));
 	while (0 != leveldb_iter_valid(iter)) {
 		key = leveldb_iter_key(iter, &klen);
