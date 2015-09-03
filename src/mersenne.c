@@ -127,6 +127,7 @@ static void setup_logging(ME_P)
 		case log_level__NULL:
 			errx(EXIT_FAILURE, "invalid log level");
 	}
+	mctx->default_log_level = log_level;
 	fbr_set_log_level(&mctx->fbr, log_level);
 }
 
@@ -267,13 +268,17 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	ev_signal sigint_watcher;
 	ev_signal sigterm_watcher;
 	ev_signal sighup_watcher;
+	ev_signal sigusr1_watcher;
 	struct fbr_ev_watcher evw_sigint;
 	struct fbr_ev_watcher evw_sigterm;
 	struct fbr_ev_watcher evw_sighup;
+	struct fbr_ev_watcher evw_sigusr1;
 	struct fbr_destructor sigint_dtor = FBR_DESTRUCTOR_INITIALIZER;
 	struct fbr_destructor sigterm_dtor = FBR_DESTRUCTOR_INITIALIZER;
 	struct fbr_destructor sighup_dtor = FBR_DESTRUCTOR_INITIALIZER;
-	struct fbr_ev_base *fb_events[4];
+	struct fbr_destructor sigusr1_dtor = FBR_DESTRUCTOR_INITIALIZER;
+	struct fbr_ev_base *fb_events[5];
+	int log_debug = 0;
 	int n_events;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
@@ -281,28 +286,35 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 	ev_signal_init(&sigint_watcher, NULL, SIGINT);
 	ev_signal_init(&sigterm_watcher, NULL, SIGTERM);
 	ev_signal_init(&sighup_watcher, NULL, SIGHUP);
+	ev_signal_init(&sigusr1_watcher, NULL, SIGUSR1);
 	fbr_ev_watcher_init(&mctx->fbr, &evw_sigint,
 			(struct ev_watcher *)&sigint_watcher);
 	fbr_ev_watcher_init(&mctx->fbr, &evw_sigterm,
 			(struct ev_watcher *)&sigterm_watcher);
 	fbr_ev_watcher_init(&mctx->fbr, &evw_sighup,
 			(struct ev_watcher *)&sighup_watcher);
+	fbr_ev_watcher_init(&mctx->fbr, &evw_sigusr1,
+			(struct ev_watcher *)&sigusr1_watcher);
 	sigint_dtor.func = ev_signal_dtor;
 	sigint_dtor.arg = &sigint_watcher;
 	sigterm_dtor.func = ev_signal_dtor;
 	sigterm_dtor.arg = &sigterm_watcher;
 	sighup_dtor.func = ev_signal_dtor;
 	sighup_dtor.arg = &sighup_watcher;
+	sigusr1_dtor.func = ev_signal_dtor;
+	sigusr1_dtor.arg = &sigusr1_watcher;
 
 	if (!RUNNING_ON_VALGRIND) {
 		fb_events[0] = &evw_sigint.ev_base;
 		fb_events[1] = &evw_sigterm.ev_base;
 		fb_events[2] = &evw_sighup.ev_base;
-		fb_events[3] = NULL;
+		fb_events[3] = &evw_sigusr1.ev_base;
+		fb_events[4] = NULL;
 	} else {
 		fb_events[0] = &evw_sigterm.ev_base;
 		fb_events[1] = &evw_sighup.ev_base;
-		fb_events[2] = NULL;
+		fb_events[2] = &evw_sigusr1.ev_base;
+		fb_events[3] = NULL;
 	}
 
 	fbr_log_i(&mctx->fbr, "Initializing acceptor storage");
@@ -314,9 +326,11 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 			ev_signal_start(mctx->loop, &sigint_watcher);
 		ev_signal_start(mctx->loop, &sigterm_watcher);
 		ev_signal_start(mctx->loop, &sighup_watcher);
+		ev_signal_start(mctx->loop, &sigusr1_watcher);
 		fbr_destructor_add(&mctx->fbr, &sigint_dtor);
 		fbr_destructor_add(&mctx->fbr, &sigterm_dtor);
 		fbr_destructor_add(&mctx->fbr, &sighup_dtor);
+		fbr_destructor_add(&mctx->fbr, &sigusr1_dtor);
 		n_events = fbr_ev_wait(&mctx->fbr, fb_events);
 		assert(n_events >= 0);
 		if (!n_events)
@@ -324,6 +338,7 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		fbr_destructor_remove(&mctx->fbr, &sigint_dtor, 1 /* Call? */);
 		fbr_destructor_remove(&mctx->fbr, &sigterm_dtor, 1 /* Call? */);
 		fbr_destructor_remove(&mctx->fbr, &sighup_dtor, 1 /* Call? */);
+		fbr_destructor_remove(&mctx->fbr, &sigusr1_dtor, 1 /* Call? */);
 		if (evw_sigint.ev_base.arrived) {
 			fbr_log_d(&mctx->fbr, "got SIGINT");
 			break;
@@ -334,6 +349,16 @@ static void fiber_main(struct fbr_context *fiber_context, void *_arg)
 		}
 		if (evw_sighup.ev_base.arrived) {
 			/* Nothing here for now */
+		}
+		if (evw_sigusr1.ev_base.arrived) {
+			if (log_debug) {
+				fbr_set_log_level(&mctx->fbr,
+						mctx->default_log_level);
+				log_debug = 0;
+			} else {
+				fbr_set_log_level(&mctx->fbr, FBR_LOG_DEBUG);
+				log_debug = 1;
+			}
 		}
 	}
 

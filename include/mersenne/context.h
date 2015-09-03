@@ -79,6 +79,7 @@ struct me_context {
 		unsigned learner_broadcast_requests;
 		unsigned acceptor_lea_fast_path_failures;
 	} delayed_stats ;
+	enum fbr_log_level default_log_level;
 };
 
 #define ME_CONTEXT_INITIALIZER { \
