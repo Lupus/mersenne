@@ -57,6 +57,71 @@ set_source_files_properties("include/mersenne/me_protocol.c"
 set(GENGETOPT_SOURCES "include/mersenne/cmdline.ggo")
 ADD_GENGETOPT_FILES(${GENGETOPT_SOURCES} GGO_GEN_SOURCES)
 
+add_executable(embedfile "util/embedfile.c")
+
+set(MIME_FOR_EXT_CSS "text/css")
+set(MIME_FOR_EXT_HTML "text/html")
+set(MIME_FOR_EXT_JS "application/javascript")
+set(MIME_FOR_EXT_PNG "image/png")
+set(MIME_FOR_EXT_GIF "image/gif")
+set(MIME_FOR_EXT_SWP "application/octet-stream")
+
+set(ASSET_REGISTRY "${CMAKE_CURRENT_BINARY_DIR}/include/asset_registry.h")
+
+file(WRITE ${ASSET_REGISTRY} "struct asset {\n")
+file(APPEND ${ASSET_REGISTRY} "\tconst char *content_ptr;\n")
+file(APPEND ${ASSET_REGISTRY} "\tconst size_t *length_ptr;\n")
+file(APPEND ${ASSET_REGISTRY} "\tconst char *orig_filename;\n")
+file(APPEND ${ASSET_REGISTRY} "\tconst char *mime_type;\n")
+file(APPEND ${ASSET_REGISTRY} "};\n\n")
+
+set(ASSETS_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+file(GLOB_RECURSE ASSETS RELATIVE ${ASSETS_BASE_DIR} "${ASSETS_BASE_DIR}/*.*")
+
+set(IDX 1)
+foreach(ASSET ${ASSETS})
+	get_filename_component(ASSET_NAME ${ASSET} NAME)
+	string(REGEX REPLACE "[.-]" "_" ASSET_VAR_NAME ${ASSET_NAME})
+	set(ASSET_VAR_NAME "asset_${IDX}_${ASSET_VAR_NAME}")
+	file(APPEND ${ASSET_REGISTRY} "extern const char ${ASSET_VAR_NAME}[];\n")
+	file(APPEND ${ASSET_REGISTRY} "extern const size_t ${ASSET_VAR_NAME}_len;\n")
+	math(EXPR IDX "${IDX} + 1")
+endforeach()
+
+file(APPEND ${ASSET_REGISTRY} "static const struct asset assets[] = {\n")
+
+set(ASSET_SOURCES)
+set(IDX 1)
+foreach(ASSET ${ASSETS})
+	get_filename_component(ASSET_NAME ${ASSET} NAME)
+	string(REGEX REPLACE "[.-]" "_" ASSET_VAR_NAME ${ASSET_NAME})
+	set(ASSET_VAR_NAME "asset_${IDX}_${ASSET_VAR_NAME}")
+	set(ASSET_FILENAME "${ASSET_VAR_NAME}.c")
+	string(REGEX MATCH "([^.]*)$" ASSET_EXT ${ASSET})
+	string(TOUPPER ${ASSET_EXT} ASSET_EXT)
+	set(ASSET_MIME ${MIME_FOR_EXT_${ASSET_EXT}})
+	if("${ASSET_MIME}" STREQUAL "")
+		message(FATAL_ERROR "no mime registered for ${ASSET_EXT}")
+	endif()
+
+	file(APPEND ${ASSET_REGISTRY} "\t{\n")
+	file(APPEND ${ASSET_REGISTRY} "\t\t${ASSET_VAR_NAME},\n")
+	file(APPEND ${ASSET_REGISTRY} "\t\t&${ASSET_VAR_NAME}_len,\n")
+	file(APPEND ${ASSET_REGISTRY} "\t\t\"/${ASSET}\",\n")
+	file(APPEND ${ASSET_REGISTRY} "\t\t\"${ASSET_MIME}\"\n")
+	file(APPEND ${ASSET_REGISTRY} "\t},\n")
+
+	add_custom_command(
+		OUTPUT ${ASSET_FILENAME}
+		COMMAND embedfile ${ASSET_VAR_NAME} "${ASSETS_BASE_DIR}/${ASSET}"
+		DEPENDS "${ASSETS_BASE_DIR}/${ASSET}")
+	list(APPEND ASSET_SOURCES ${ASSET_FILENAME})
+	math(EXPR IDX "${IDX} + 1")
+endforeach()
+file(APPEND ${ASSET_REGISTRY} "};\n\n")
+file(APPEND ${ASSET_REGISTRY} "static const size_t assets_len = sizeof(assets) / sizeof(assets[0]);\n")
+
+
 aux_source_directory("${CMAKE_CURRENT_SOURCE_DIR}/include/mersenne" MERSENNE_HEADERS)
 set(MERSENNE_SOURCES
 	"src/context.c"
@@ -77,6 +142,11 @@ set(MERSENNE_SOURCES
 	"src/acceptor.c"
 	"src/statd.c"
 	"src/mersenne.c"
+	"src/http_parser.c"
+	"src/htstatus.c"
+	"src/kstring.c"
+	"src/ccan-json.c"
+	${ASSET_SOURCES}
 	)
 ragel_add_include("${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include")
 ragel_gen("src/proto.rl" RAGEL_CLI_GEN_SOURCES)

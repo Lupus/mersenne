@@ -1,0 +1,104 @@
+<!doctype html>
+<!-- vim: set sw=2 et: -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+
+<title>Mersenne control panel</title>
+
+<link rel="stylesheet" href="pure-min.css">
+<link rel="stylesheet" href="side-menu.css">
+<link href="jquery-ui.css" rel="stylesheet">
+<script src="jquery-2.1.4.min.js"></script>
+<script src="jquery-ui.js"></script>
+<script src="jsrender.min.js"></script>
+<script src="main.js"></script>
+
+
+</head>
+<body class="pure-skin-mersenne">
+
+<div id="layout">
+  <!-- Menu toggle -->
+  <a href="#menu" id="menuLink" class="menu-link">
+    <!-- Hamburger icon -->
+    <span>XXX</span>
+  </a>
+
+  <div id="menu">
+    <div class="pure-menu">
+      <a class="pure-menu-heading" href="#">Mersenne</a>
+
+      <ul class="pure-menu-list">
+        <li class="pure-menu-item" id="li_overall_status"
+        onclick="me.open_status()">
+        <a href="#" class="pure-menu-link">Status</a>
+        </li>
+        <li class="pure-menu-item" id="li_config"
+        onclick="me.open_config()">
+        <a href="#" class="pure-menu-link">Config</a>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="main">
+    <div class="header">
+      <h1 id="main_header">Mersenne control panel</h1>
+      <h2 id="main_header_descr">Welcome to mersenne control panel</h2>
+    </div>
+
+    <div id="content" class="content">
+    </div>
+  </div>
+</div>
+
+<script id="overall_status_template" type="text/x-jsrender">
+  <div class="pure-g">
+    <div class="pure-u-1-3" style="text-align: left;">IP address</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:ip}}</div>
+
+    <div class="pure-u-1-3" style="text-align: left;">Peer index</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:peer_num}}</div>
+  </div>
+</script>
+
+<script id="config_template" type="text/x-jsrender">
+  <table class="pure-table">
+    <thead>
+      <tr>
+          <th>Option</th>
+          <th>Value</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {{for options}}
+        <tr>
+            <td>{{:name}}</td>
+            <td>{{:value}}</td>
+        </tr>
+      {{/for}}
+    </tbody>
+  </table>
+</script>
+
+<script id="error_template" type="text/x-jsrender">
+  <div class="ui-widget">
+    <div class="ui-state-error ui-corner-all" style="padding: 0 .7em;">
+      <p><span class="ui-icon ui-icon-alert" style="float: left; margin-right: .3em;"></span>
+      <strong>Error:</strong> {{:message}}</p>
+    </div>
+  </div>
+</script>
+
+<script id="loading_template" type="text/x-jsrender">
+  <div id="loader" style="line-height: 115px; text-align: center;">
+    <img alt="activity indicator" src="images/loading.gif">
+  </div>
+</script>
+
+</body>
+</html>

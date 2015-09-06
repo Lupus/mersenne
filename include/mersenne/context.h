@@ -48,6 +48,7 @@ struct me_context {
 	int fd;
 	int client_fd;
 	int client_tcp_fd;
+	int htstatus_fd;
 	struct me_peer *peers;
 	struct me_peer *me;
 	struct ldr_context ldr;

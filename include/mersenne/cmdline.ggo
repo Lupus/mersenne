@@ -4,6 +4,7 @@ version "1.0.0"
 # Options
 option "peer-number" p "Index of current instance in peers config" int required
 option "client-port" c "Port of a client tcp socket" int default="6328" optional
+option "htstatus-port" - "Port of the htstatus tcp socket" int optional
 option "port-num" P "UDP port number" int default="6377" optional
 option "log-level" l "Log level" values="error","warning","notice","info","debug" enum default="info" optional
 option "max-instances" - "Max mersenne instances (should be power of 10)" int default="100" optional

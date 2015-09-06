@@ -47,6 +47,7 @@
 #include <mersenne/sharedmem.h>
 #include <mersenne/statd.h>
 #include <mersenne/cmdline.h>
+#include <mersenne/htstatus.h>
 
 #define LISTEN_BACKLOG 50
 
@@ -103,6 +104,41 @@ static void set_up_client_tcp_socket(ME_P)
 	retval = listen(mctx->client_tcp_fd, LISTEN_BACKLOG);
 	if (retval)
                err(EXIT_FAILURE, "client tcp socket listen failed");
+}
+
+static void set_up_htstatus_tcp_socket(ME_P)
+{
+	static const int yes = 1;
+	struct sockaddr_in addr;
+	int retval;
+	int port;
+
+	mctx->htstatus_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (0 > mctx->htstatus_fd)
+		err(EXIT_FAILURE, "failed to create a htstatus socket");
+
+	make_socket_non_blocking(mctx->htstatus_fd);
+
+	retval = setsockopt(mctx->htstatus_fd, SOL_SOCKET, SO_REUSEADDR,
+			&yes, sizeof(yes));
+	if (-1 == retval)
+		err(EXIT_FAILURE, "failed to set SO_REUSEADDR");
+
+	memset(&addr, 0, sizeof(addr));
+	memcpy(&addr, &mctx->me->addr, sizeof(mctx->me->addr));
+	port = mctx->args_info.htstatus_port_arg;
+	if (port <= 0 || port >= 0xffff)
+		errx(EXIT_FAILURE, "invalid htstatus port number");
+	addr.sin_port = htons(port);
+
+	retval = bind(mctx->htstatus_fd, (struct sockaddr *)&addr,
+			sizeof(addr));
+	if (retval)
+		err(EXIT_FAILURE, "htstatus tcp socket bind failed");
+
+	retval = listen(mctx->htstatus_fd, LISTEN_BACKLOG);
+	if (retval)
+               err(EXIT_FAILURE, "htstatus tcp socket listen failed");
 }
 
 static void setup_logging(ME_P)
@@ -230,11 +266,17 @@ static void mersenne_start(ME_P)
 
 	set_up_udp_socket(ME_A);
 	set_up_client_tcp_socket(ME_A);
+	if (mctx->args_info.htstatus_port_given) {
+		set_up_htstatus_tcp_socket(ME_A);
+		id = fbr_create(&mctx->fbr, "htstatus", me_htstatus_fiber,
+				NULL, 0);
+		fbr_transfer(&mctx->fbr, id);
+	}
 
 	if (mctx->args_info.statd_ip_given) {
 		statd_init(ME_A_ mctx->args_info.statd_ip_arg,
 				mctx->args_info.statd_port_arg);
-		id = fbr_create(&mctx->fbr, "main", fiber_stats, NULL, 0);
+		id = fbr_create(&mctx->fbr, "stats", fiber_stats, NULL, 0);
 		fbr_transfer(&mctx->fbr, id);
 	}
 	pxs_fiber_init(ME_A);
