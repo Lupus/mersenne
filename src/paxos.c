@@ -57,7 +57,6 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	struct buffer *buf;
 	struct msg_info *info;
 	struct fbr_buffer *fb;
-	struct fiber_tailq_i *item;
 	struct pro_msg_me_message *pro_msg;
 
 	pmsg = &msg->me_message_u.paxos_message;
@@ -84,33 +83,25 @@ void pxs_do_message(ME_P_ struct me_message *msg, struct me_peer *from)
 	case ME_PAXOS_RELEARN:
 		ldata = &pmsg->data.me_paxos_msg_data_u.learn;
 		buf = buf_sm_steal(ldata->v);
-		TAILQ_FOREACH(item, &mctx->learners, entries) {
-			fb = fbr_get_user_data(&mctx->fbr, item->id);
-			assert(NULL != fb);
-			buffer_ensure_writable(ME_A_ fb,
-					sizeof(struct msg_info));
-			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
-					sizeof(struct msg_info));
-			info->msg = sm_in_use(msg);
-			info->buf = sm_in_use(buf);
-			info->from = from;
-			fbr_buffer_alloc_commit(&mctx->fbr, fb);
-		}
+		fb = &mctx->pxs.lea.buffer;
+		buffer_ensure_writable(ME_A_ fb, sizeof(struct msg_info));
+		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+				sizeof(struct msg_info));
+		info->msg = sm_in_use(msg);
+		info->buf = sm_in_use(buf);
+		info->from = from;
+		fbr_buffer_alloc_commit(&mctx->fbr, fb);
 		sm_free(buf);
 		break;
 
 	case ME_PAXOS_ACCEPTOR_STATE:
-		TAILQ_FOREACH(item, &mctx->learners, entries) {
-			fb = fbr_get_user_data(&mctx->fbr, item->id);
-			assert(NULL != fb);
-			buffer_ensure_writable(ME_A_ fb,
-					sizeof(struct msg_info));
-			info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
-					sizeof(struct msg_info));
-			info->msg = sm_in_use(msg);
-			info->from = from;
-			fbr_buffer_alloc_commit(&mctx->fbr, fb);
-		}
+		fb = &mctx->pxs.lea.buffer;
+		buffer_ensure_writable(ME_A_ fb, sizeof(struct msg_info));
+		info = fbr_buffer_alloc_prepare(&mctx->fbr, fb,
+				sizeof(struct msg_info));
+		info->msg = sm_in_use(msg);
+		info->from = from;
+		fbr_buffer_alloc_commit(&mctx->fbr, fb);
 		break;
 
 	case ME_PAXOS_CLIENT_VALUE:

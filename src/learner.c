@@ -55,23 +55,9 @@ struct lea_instance {
 	ev_tstamp modified;
 };
 
-struct learner_context {
-	uint64_t first_non_delivered;
-	uint64_t highest_seen;
-	uint64_t next_retransmit;
-	struct lea_instance *instances;
-	struct me_context *mctx;
-	struct lea_fiber_arg *arg;
-	struct fbr_buffer buffer;
-	struct fiber_tailq_i item;
-	struct lea_acc_state *acc_states;
-	struct fbr_cond_var delivered;
-};
-
-static inline struct lea_instance * get_instance(struct learner_context
-		*context, uint64_t iid)
+static inline struct lea_instance * get_instance(ME_P_ uint64_t iid)
 {
-	struct me_context *mctx = context->mctx;
+	struct lea_context *context = &mctx->pxs.lea;
 	return context->instances + (iid % LEA_INSTANCE_WINDOW);
 }
 
@@ -131,9 +117,9 @@ static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 	fbr_buffer_alloc_commit(&mctx->fbr, buffer);
 }
 
-static inline void do_deliver(ME_P_ struct learner_context *context,
-		struct lea_instance *instance)
+static inline void do_deliver(ME_P_ struct lea_instance *instance)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	deliver_v(ME_A_ context->arg->buffer, instance->iid,
 			instance->chosen->b, instance->chosen->v);
 }
@@ -153,9 +139,9 @@ void shuffle(struct lea_acc_state **array, size_t n)
 	}
 }
 
-static void send_retransmit(ME_P_ struct learner_context *context,
-		uint64_t from, uint64_t to)
+static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i;
 	struct me_message msg;
 	struct me_paxos_msg_data *data = &msg.me_message_u.paxos_message.data;
@@ -184,7 +170,7 @@ static void send_retransmit(ME_P_ struct learner_context *context,
 		mctx->delayed_stats.learner_broadcast_requests++;
 	}
 	for (i = from; i < to; i++) {
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		instance->modified = ev_now(mctx->loop);
 	}
 	mctx->delayed_stats.learner_retransmits += to - from + 1;
@@ -201,8 +187,9 @@ static ev_tstamp age(ME_P_ struct lea_instance *instance)
 	return 1;
 }
 
-static void retransmit_window(ME_P_ struct learner_context *context)
+static void retransmit_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	uint64_t start = context->first_non_delivered;
 	uint64_t from = 0;
@@ -211,13 +198,13 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
 		if (i > context->highest_seen) {
 			if (collecting_gap)
-				send_retransmit(ME_A_ context, from, i - 1);
+				send_retransmit(ME_A_ from, i - 1);
 			break;
 		}
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		if (collecting_gap) {
 			if (instance->closed || !age(ME_A_ instance)) {
-				send_retransmit(ME_A_ context, from, i - 1);
+				send_retransmit(ME_A_ from, i - 1);
 				collecting_gap = 0;
 			}
 		} else if (!instance->closed && age(ME_A_ instance)) {
@@ -227,29 +214,31 @@ static void retransmit_window(ME_P_ struct learner_context *context)
 	}
 }
 
-static void retransmit_next_window(ME_P_ struct learner_context *context)
+static void retransmit_next_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	context->next_retransmit = min(
 			context->first_non_delivered + LEA_INSTANCE_WINDOW,
 			context->highest_seen);
-	send_retransmit(ME_A_ context, context->first_non_delivered,
+	send_retransmit(ME_A_ context->first_non_delivered,
 			min(context->highest_seen, context->next_retransmit));
 	fbr_log_d(&mctx->fbr, "requesting retransmits from %lu to %lu, highest seen is %lu",
 			context->first_non_delivered, context->next_retransmit,
 			context->highest_seen);
 }
 
-static void try_deliver(ME_P_ struct learner_context *context)
+static void try_deliver(ME_P)
 {
 	int i, j;
 	int k;
+	struct lea_context *context = &mctx->pxs.lea;
 	int start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		if (!instance->closed)
 			break;
-		do_deliver(ME_A_ context, instance);
+		do_deliver(ME_A_ instance);
 		context->first_non_delivered = i + 1;
 
 		instance->closed = 0;
@@ -281,10 +270,10 @@ static int ack_eq(void *_a, void *_b) {
 	return 1;
 }
 
-static void do_learn(ME_P_ struct learner_context *context, struct
-		me_paxos_message *pmsg, struct buffer *buf, struct me_peer
-		*from)
+static void do_learn(ME_P_ struct me_paxos_message *pmsg, struct buffer *buf,
+		struct me_peer *from)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	struct lea_instance *instance;
 	struct me_paxos_learn_data *data;
 	int num;
@@ -309,7 +298,7 @@ static void do_learn(ME_P_ struct learner_context *context, struct
 		return;
 	}
 
-	instance = get_instance(context, data->i);
+	instance = get_instance(ME_A_ data->i);
 	assert(instance->iid == data->i);
 	if (instance->closed) {
 		fbr_log_d(&mctx->fbr, "instance %lu is already closed,"
@@ -370,12 +359,13 @@ close_instance:
 			instance->chosen->b,
 			(unsigned)instance->chosen->v->size1,
 			instance->chosen->v->ptr, instance->chosen->v->size1);
-	try_deliver(ME_A_ context);
+	try_deliver(ME_A);
 }
 
-static void do_acceptor_state(ME_P_ struct learner_context *context,
-		struct me_paxos_message *pmsg, struct me_peer *from)
+static void do_acceptor_state(ME_P_ struct me_paxos_message *pmsg,
+		struct me_peer *from)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	struct me_paxos_acceptor_state *data;
 	struct lea_acc_state *acc_state;
 	data = &pmsg->data.me_paxos_msg_data_u.acceptor_state;
@@ -390,8 +380,9 @@ static void do_acceptor_state(ME_P_ struct learner_context *context,
 	acc_state->lowest_available = data->lowest_available;
 }
 
-static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
+static ev_tstamp min_window_age(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	uint64_t start = context->first_non_delivered;
 	struct lea_instance *instance;
@@ -400,7 +391,7 @@ static ev_tstamp min_window_age(ME_P_ struct learner_context *context)
 	for (i = start, j = 0; j < LEA_INSTANCE_WINDOW; i++, j++) {
 		if (i == context->highest_seen)
 			break;
-		instance = get_instance(context, i);
+		instance = get_instance(ME_A_ i);
 		instance_age = age(ME_A_ instance);
 		if (instance_age < m)
 			m = instance_age;
@@ -412,18 +403,19 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 		void *_arg)
 {
 	struct me_context *mctx;
-	struct learner_context *context = _arg;
+	struct lea_context *context;
 	ev_tstamp next_aged;
 	struct fbr_ev_cond_var ev;
 	struct fbr_ev_base *events[] = {NULL, NULL};
 	int retval;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
+	context = &mctx->pxs.lea;
 
 	fbr_ev_cond_var_init(&mctx->fbr, &ev, &context->delivered, NULL);
 	events[0] = &ev.ev_base;
 	for (;;) {
-		next_aged = min_window_age(ME_A_ context);
+		next_aged = min_window_age(ME_A);
 		retval = fbr_ev_wait_to(&mctx->fbr, events, next_aged);
 		assert(retval >= 0);
 		if (context->highest_seen >= context->first_non_delivered +
@@ -433,20 +425,21 @@ static void lea_hole_checker_fiber(struct fbr_context *fiber_context,
 					" delivered: %zu",
 					context->highest_seen,
 					context->first_non_delivered);
-			retransmit_window(ME_A_ context);
-			retransmit_next_window(ME_A_ context);
+			retransmit_window(ME_A);
+			retransmit_next_window(ME_A);
 		} else if(context->highest_seen >= context->first_non_delivered) {
 			fbr_log_d(&mctx->fbr, "learner is out of sync, highest"
 					" seen: %zu, first non delivered: %zu",
 					context->highest_seen,
 					context->first_non_delivered);
-			retransmit_window(ME_A_ context);
+			retransmit_window(ME_A);
 		}
 	}
 }
 
-static void try_local_delivery(ME_P_ struct learner_context *context)
+static void try_local_delivery(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i;
 	const struct acc_instance_record *r;
 	uint64_t start = context->first_non_delivered;
@@ -472,18 +465,18 @@ static void try_local_delivery(ME_P_ struct learner_context *context)
 
 struct lea_context_destructor_arg {
 	struct me_context *mctx;
-	struct learner_context *lcontext;
+	struct lea_context *lcontext;
 };
 
 void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 {
 	struct lea_context_destructor_arg *arg = _arg;
 	struct me_context *mctx = arg->mctx;
-	struct learner_context *lcontext = arg->lcontext;
+	struct lea_context *lcontext = arg->lcontext;
 	uint64_t j;
 	struct lea_instance *instance;
 
-	TAILQ_REMOVE(&mctx->learners, &lcontext->item, entries);
+	fbr_buffer_destroy(&mctx->fbr, lcontext->arg->buffer);
 	fbr_buffer_destroy(&mctx->fbr, &lcontext->buffer);
 	for (j = 0; j < LEA_INSTANCE_WINDOW; j++) {
 		instance = lcontext->instances + j;
@@ -492,20 +485,16 @@ void lea_context_destructor(struct fbr_context *fiber_context, void *_arg)
 	free(lcontext->instances);
 }
 
-static void init_context(ME_P_	struct learner_context *context,
-		struct lea_fiber_arg *arg)
+static void init_context(ME_P_ struct lea_fiber_arg *arg)
 {
 	unsigned i;
+	struct lea_context *context = &mctx->pxs.lea;
 	context->first_non_delivered = arg->starting_iid;
 	context->mctx = mctx;
 	context->arg = arg;
 	fbr_cond_init(&mctx->fbr, &context->delivered);
-
 	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
-	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &context->buffer);
 
-	context->item.id = fbr_self(&mctx->fbr);
-	TAILQ_INSERT_TAIL(&mctx->learners, &context->item, entries);
 	context->next_retransmit = ~0ULL; // "infinity"
 	context->instances = calloc(LEA_INSTANCE_WINDOW,
 			sizeof(struct lea_instance));
@@ -519,8 +508,9 @@ static void init_context(ME_P_	struct learner_context *context,
 		context->acc_states[i].peer = find_peer_by_acc_index(ME_A_ i);
 }
 
-static void init_window(ME_P_ struct learner_context *context)
+static void init_window(ME_P)
 {
+	struct lea_context *context = &mctx->pxs.lea;
 	uint64_t i, j;
 	struct lea_instance *instance;
 	uint64_t start;
@@ -547,23 +537,25 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_id_t hole_checker;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 	struct lea_context_destructor_arg dtor_arg;
-	struct learner_context context;
+	struct lea_context *context;
+	struct lea_fiber_arg *arg = _arg;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	memset(&context, 0x00, sizeof(context));
-	init_context(ME_A_ &context, _arg);
+	context = &mctx->pxs.lea;
+	memset(context, 0x00, sizeof(*context));
+	init_context(ME_A_ arg);
 	dtor_arg.mctx = mctx;
-	dtor_arg.lcontext = &context;
+	dtor_arg.lcontext = context;
 	dtor.func = lea_context_destructor;
 	dtor.arg = &dtor_arg;
 	fbr_destructor_add(&mctx->fbr, &dtor);
-	fb = &context.buffer;
+	fb = &context->buffer;
 
-	try_local_delivery(ME_A_ &context);
-	init_window(ME_A_ &context);
+	try_local_delivery(ME_A);
+	init_window(ME_A);
 
 	hole_checker = fbr_create(&mctx->fbr, "learner/hole_checker",
-			lea_hole_checker_fiber, &context, 0);
+			lea_hole_checker_fiber, NULL, 0);
 	fbr_transfer(&mctx->fbr, hole_checker);
 
 	for (;;) {
@@ -577,11 +569,11 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 		case ME_PAXOS_LEARN:
 		case ME_PAXOS_RELEARN:
 			buf = info.buf;
-			do_learn(ME_A_ &context, pmsg, buf, info.from);
+			do_learn(ME_A_ pmsg, buf, info.from);
 			sm_free(info.buf);
 			break;
 		case ME_PAXOS_ACCEPTOR_STATE:
-			do_acceptor_state(ME_A_ &context, pmsg, info.from);
+			do_acceptor_state(ME_A_ pmsg, info.from);
 			break;
 		default:
 			errx(EXIT_FAILURE,

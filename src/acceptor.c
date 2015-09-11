@@ -480,13 +480,14 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_buffer_init(&mctx->fbr, &fb, 0);
 	fbr_set_user_data(&mctx->fbr, fbr_self(&mctx->fbr), &fb);
 
-	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
-			NULL, 0);
-	fbr_transfer(&mctx->fbr, repeater);
-
 	informer = fbr_create(&mctx->fbr, "acceptor/informer",
 			acc_informer_fiber, NULL, 0);
 	fbr_transfer(&mctx->fbr, informer);
+
+
+	repeater = fbr_create(&mctx->fbr, "acceptor/repeater", repeater_fiber,
+			NULL, 0);
+	fbr_transfer(&mctx->fbr, repeater);
 
 	fbr_log_d(&mctx->fbr, "acceptor started");
 

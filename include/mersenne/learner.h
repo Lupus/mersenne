@@ -38,6 +38,26 @@ struct lea_instance_info {
 	struct buffer *buffer;
 };
 
+struct lea_context {
+	uint64_t first_non_delivered;
+	uint64_t highest_seen;
+	uint64_t next_retransmit;
+	struct lea_instance *instances;
+	struct me_context *mctx;
+	struct lea_acc_state *acc_states;
+	struct fbr_cond_var delivered;
+	struct lea_fiber_arg *arg;
+	struct fbr_buffer buffer;
+};
+
+#define LEA_CONTEXT_INITIALIZER {              \
+	.first_non_delivered = 0,              \
+	.highest_seen = 0,                     \
+	.next_retransmit = 0,                  \
+	.instances = NULL,                     \
+	.acc_states = NULL,                    \
+}
+
 void lea_fiber(struct fbr_context *fiber_context, void *_arg);
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg);
 

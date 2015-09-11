@@ -260,7 +260,6 @@ static void fiber_stats(struct fbr_context *fiber_context, void *_arg)
 static void mersenne_start(ME_P)
 {
 	fbr_id_t id;
-	TAILQ_INIT(&mctx->learners);
 
 	load_peer_list(ME_A_ mctx->args_info.peer_number_arg);
 

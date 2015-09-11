@@ -33,14 +33,6 @@
 
 struct me_peer;
 
-struct fiber_tailq_i {
-	fbr_id_t id;
-	TAILQ_ENTRY(fiber_tailq_i) entries;
-};
-
-TAILQ_HEAD(fiber_tailq, fiber_tailq_i);
-
-
 struct me_context {
 	struct gengetopt_args_info args_info;
 	struct ev_loop *loop;
@@ -60,7 +52,6 @@ struct me_context {
 	fbr_id_t fiber_acceptor;
 	fbr_id_t fiber_proposer;
 	fbr_id_t fiber_tcp_client;
-	struct fiber_tailq learners;
 	struct sockaddr_in statd_addr;
 	int use_statd;
 	int statd_sock;
