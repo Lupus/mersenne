@@ -38,6 +38,10 @@
         onclick="me.open_config()">
         <a href="#" class="pure-menu-link">Config</a>
         </li>
+        <li class="pure-menu-item" id="li_learner"
+        onclick="me.open_learner()">
+        <a href="#" class="pure-menu-link">Learner</a>
+        </li>
       </ul>
     </div>
   </div>
@@ -83,6 +87,96 @@
       {{/for}}
     </tbody>
   </table>
+</script>
+
+<script id="learner_template" type="text/x-jsrender">
+  <h3>State numbers</h3>
+  <div class="pure-g">
+    <div class="pure-u-1-3" style="text-align: left;">first_non_delivered</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:first_non_delivered}}</div>
+
+    <div class="pure-u-1-3" style="text-align: left;">highest_seen</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:highest_seen}}</div>
+
+    <div class="pure-u-1-3" style="text-align: left;">next_retransmit</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:next_retransmit}}</div>
+
+    <div class="pure-u-1-3" style="text-align: left;">acs_highest_finalized</div>
+    <div class="pure-u-1-3" style="text-align: center;">:</div>
+    <div class="pure-u-1-3" style="text-align: right;">{{:acs_highest_finalized}}</div>
+  </div>
+
+  <h3>Window</h3>
+  <table class="pure-table">
+    <thead>
+      <tr>
+          <th>#</th>
+          <th>iid</th>
+          <th>Closed?</th>
+          <th>Acks</th>
+          <th>#Acks</th>
+          <th>Majority?</th>
+          <th>Modified</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {{for window}}
+        <tr>
+            <td>{{:index}}</td>
+            <td>{{:iid}}</td>
+            <td>{{:closed}}</td>
+            <td>
+              {{for acks}}
+                {{if has_value}}
+                  <span class="ui-icon ui-icon-circle-check"
+                    style="float: left;"
+                    title="index: {{:index}}, ballot: {{:ballot}}"></span>
+                {{else}}
+                  <span class="ui-icon ui-icon-circle-close"
+                    style="float: left;"
+                    title="index: {{:index}}"></span>
+                {{/if}}
+              {{/for}}
+            </td>
+            <td>{{:n_acks}}</td>
+            <td>{{:is_majority}}</td>
+            <td>
+              {{if aged}}
+                <span style="color: red;">{{:modified}}</span>
+              {{else}}
+                <span style="color: green;">{{:modified}}</span>
+              {{/if}}
+            </td>
+        </tr>
+      {{/for}}
+    </tbody>
+  </table>
+
+  <h3>Local learners</h3>
+  <div id="tabs">
+    <ul>
+      {{for local_learners}}
+        <li><a href="#tabs-{{:index}}">{{:fiber_name}}</a></li>
+      {{/for}}
+    </ul>
+    {{for local_learners}}
+      <div id="tabs-{{:index}}">
+        <div class="pure-g">
+          <div class="pure-u-1-3" style="text-align: left;">Current iid</div>
+          <div class="pure-u-1-3" style="text-align: center;">:</div>
+          <div class="pure-u-1-3" style="text-align: right;">{{:iid}}</div>
+
+          <div class="pure-u-1-3" style="text-align: left;">Status</div>
+          <div class="pure-u-1-3" style="text-align: center;">:</div>
+          <div class="pure-u-1-3" style="text-align: right;">{{:state}}</div>
+        </div>
+      </div>
+    {{/for}}
+  </div>
 </script>
 
 <script id="error_template" type="text/x-jsrender">

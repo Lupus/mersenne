@@ -83,5 +83,32 @@ me_t.prototype.open_config = function()
 	return false;
 }
 
+me_t.prototype.open_learner = function()
+{
+	$('#main_header').html("Learner state");
+	$('#main_header_descr').html("Dump of learner internal state")
+	me.set_menu_selected('li_learner');
+	me.make_loading('#content');
+	var complete_cb = function(response) {
+		console.log(response);
+		var html = $('#learner_template').render(response);
+		$('#content').html(html);
+		$('#tabs').tabs();
+	};
+	var error_cb = function(xhr, ajaxOptions, thrownError) {
+		alert(xhr.status);
+		me.make_error('#content', "AJAX Request failed with code " +
+				xhr.status + ": " + thrownError);
+	};
+	$.ajax({
+		url: "api/learner",
+		cache: false,
+		success: complete_cb,
+		error: error_cb,
+	});
+
+	return false;
+}
+
 me = new me_t();
 $(function() { me.on_ready(); });

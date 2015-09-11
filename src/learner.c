@@ -21,6 +21,8 @@
 #include <assert.h>
 #include <err.h>
 
+#include "ccan-json.h"
+
 #include <mersenne/learner.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
@@ -70,35 +72,99 @@ static inline int count_acks(ME_P_ struct lea_ack *acks)
 	return count;
 }
 
-#ifdef WINDOW_DUMP
-static void print_window(ME_P_ struct learner_context *context)
+static ev_tstamp age(ME_P_ struct lea_instance *instance)
 {
+	ev_tstamp old_age = mctx->args_info.learner_retransmit_age_arg;
+	ev_tstamp age = ev_now(mctx->loop) - instance->modified + old_age;
+	if (age < 0)
+		return 0;
+	return 1;
+}
+
+
+JsonNode *lea_get_state_dump(ME_P)
+{
+	struct lea_context *context = &mctx->pxs.lea;
 	int j;
 	struct lea_instance *instance;
-	char buf[LEA_INSTANCE_WINDOW + 1];
-	char *ptr = buf;
+	char buf[256];
 	int num;
+	int i;
+	int is_majority;
+	JsonNode *obj = json_mkobject();
+	JsonNode *obj2;
+	JsonNode *obj3;
+	JsonNode *arr = json_mkarray();
+	JsonNode *arr2;
+	struct lea_local_state_i *local_state;
+
+	snprintf(buf, sizeof(buf), "%lu", context->first_non_delivered);
+	json_append_member(obj, "first_non_delivered", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", context->highest_seen);
+	json_append_member(obj, "highest_seen", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", context->next_retransmit);
+	json_append_member(obj, "next_retransmit", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", acs_get_highest_finalized(ME_A));
+	json_append_member(obj, "acs_highest_finalized", json_mkstring(buf));
+
 	for (j = 0; j < LEA_INSTANCE_WINDOW; j++) {
-		instance = context->instances +j;
-		if(instance->closed) {
-			*ptr++ = 'X';
-		} else {
-			num = count_acks(ME_A_ instance->acks);
-			if (!pxs_is_acc_majority(ME_A_ num)) {
-				if (num) {
-					snprintf(ptr++, 2, "%d", num);
-				} else {
-					*ptr++ = '.';
-				}
-			} else {
-				*ptr++ = '.';
+		instance = context->instances + j;
+		obj2 = json_mkobject();
+		json_append_member(obj2, "index", json_mknumber(j));
+		snprintf(buf, sizeof(buf), "%lu", instance->iid);
+		json_append_member(obj2, "iid", json_mkstring(buf));
+		json_append_member(obj2, "closed",
+				json_mkbool(instance->closed));
+		json_append_member(obj2, "modified",
+				json_mknumber(instance->modified));
+		json_append_member(obj2, "aged",
+				json_mkbool(age(ME_A_ instance)));
+		if (!instance->closed) {
+			arr2 = json_mkarray();
+			for (i = 0; i < pxs_acceptors_count(ME_A); i++) {
+				obj3 = json_mkobject();
+				json_append_member(obj3, "index",
+						json_mknumber(i));
+				json_append_member(obj3, "has_value",
+						json_mkbool(NULL !=
+							instance->acks[i].v));
+				snprintf(buf, sizeof(buf), "%lu",
+						instance->acks[i].b);
+				json_append_member(obj3, "ballot",
+						json_mkstring(buf));
+				json_append_element(arr2, obj3);
 			}
+			json_append_member(obj2, "acks", arr2);
+			num = count_acks(ME_A_ instance->acks);
+			json_append_member(obj2, "n_acks", json_mknumber(num));
+			is_majority = pxs_is_acc_majority(ME_A_ num);
+			json_append_member(obj2, "is_majority",
+					json_mkbool(is_majority));
 		}
+		json_append_element(arr, obj2);
 	}
-	*ptr++ = '\0';
-	fbr_log_d(&mctx->fbr, "%lu\t%s", context->first_non_delivered, buf);
+	json_append_member(obj, "window", arr);
+
+	arr = json_mkarray();
+	i = 0;
+	TAILQ_FOREACH(local_state, &mctx->pxs.lea.local_states, entries) {
+		obj2 = json_mkobject();
+		json_append_member(obj2, "index", json_mknumber(i));
+		json_append_member(obj2, "fiber_name",
+				json_mkstring(local_state->name));
+		snprintf(buf, sizeof(buf), "%lu", local_state->i);
+		json_append_member(obj2, "iid", json_mkstring(buf));
+		json_append_member(obj2, "state",
+				json_mkstring(local_state->state));
+		json_append_element(arr, obj2);
+		i++;
+	}
+	json_append_member(obj, "local_learners", arr);
+	return obj;
 }
-#endif
 
 static void deliver_v(ME_P_ struct fbr_buffer *buffer, uint64_t iid,
 		uint64_t b, struct buffer *v)
@@ -176,15 +242,6 @@ static void send_retransmit(ME_P_ uint64_t from, uint64_t to)
 	mctx->delayed_stats.learner_retransmits += to - from + 1;
 	fbr_log_d(&mctx->fbr, "requested retransmits from %ld to %ld",
 			from, to);
-}
-
-static ev_tstamp age(ME_P_ struct lea_instance *instance)
-{
-	ev_tstamp old_age = mctx->args_info.learner_retransmit_age_arg;
-	ev_tstamp age = ev_now(mctx->loop) - instance->modified + old_age;
-	if (age < 0)
-		return 0;
-	return 1;
 }
 
 static void retransmit_window(ME_P)
@@ -494,6 +551,7 @@ static void init_context(ME_P_ struct lea_fiber_arg *arg)
 	context->arg = arg;
 	fbr_cond_init(&mctx->fbr, &context->delivered);
 	fbr_buffer_init(&mctx->fbr, &context->buffer, 0);
+	TAILQ_INIT(&context->local_states);
 
 	context->next_retransmit = ~0ULL; // "infinity"
 	context->instances = calloc(LEA_INSTANCE_WINDOW,
@@ -585,6 +643,15 @@ void lea_fiber(struct fbr_context *fiber_context, void *_arg)
 	}
 }
 
+void lea_local_state_destructor(struct fbr_context *fiber_context, void *_arg)
+{
+	struct lea_local_state_i *local_state = _arg;
+	struct me_context *mctx;
+
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	TAILQ_REMOVE(&mctx->pxs.lea.local_states, local_state, entries);
+}
+
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
@@ -599,23 +666,35 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	unsigned x;
 	unsigned count;
 	const unsigned read_batch = 1000;
+	struct lea_local_state_i local_state;
+	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
 	fbr_mutex_init(&mctx->fbr, &mutex);
 
+	TAILQ_INSERT_HEAD(&mctx->pxs.lea.local_states, &local_state, entries);
+	dtor.func = lea_local_state_destructor;
+	dtor.arg = &local_state;
+	fbr_destructor_add(&mctx->fbr, &dtor);
+
 	fbr_log_i(&mctx->fbr, "local learner starting at %ld", i);
+	local_state.i = i;
+	local_state.name = fbr_get_name(&mctx->fbr, fbr_self(&mctx->fbr));
 
 archive:
+	local_state.state = "initial";
 	fbr_log_i(&mctx->fbr, "trying archive");
 	while (i < acs_get_lowest_available(ME_A)) {
 		count = min(read_batch, acs_get_lowest_available(ME_A) - i);
 		arecords = acs_get_archive_records(ME_A_ i, &count);
 		fbr_log_d(&mctx->fbr, "delivering %ld:%ld from archive",
 				i, i + count);
+		local_state.state = "archive delivery";
 		for (x = 0; x < count; x++) {
 			assert(i == arecords[x].iid);
 			assert(i == last_i++ + 1);
+			local_state.i = i;
 			deliver_v(ME_A_ arg->buffer, arecords[x].iid,
 					arecords[x].vb, arecords[x].v);
 			i++;
@@ -629,6 +708,7 @@ local:
 		goto archive;
 	}
 	for (; i <= acs_get_highest_finalized(ME_A); i++) {
+		local_state.state = "local delivery";
 		assert(i >= acs_get_lowest_available(ME_A));
 		r = acs_find_record_ro(ME_A_ i);
 		assert(((void)"Instance disappeared!", r));
@@ -636,6 +716,7 @@ local:
 				r->iid);
 		assert(i == r->iid);
 		assert(i == last_i++ + 1);
+		local_state.i = i;
 		deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
 		if (i + 1 < acs_get_lowest_available(ME_A)) {
 			i++;
@@ -648,6 +729,7 @@ local:
 	while (highest_finalized == acs_get_highest_finalized(ME_A)) {
 		fbr_log_d(&mctx->fbr,
 				"waiting for highest finalized to change");
+		local_state.state = "waiting for highest finalized to change";
 		fbr_mutex_lock(&mctx->fbr, &mutex);
 		fbr_cond_wait(&mctx->fbr, cond, &mutex);
 		fbr_mutex_unlock(&mctx->fbr, &mutex);

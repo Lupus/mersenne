@@ -38,6 +38,15 @@ struct lea_instance_info {
 	struct buffer *buffer;
 };
 
+struct lea_local_state_i {
+	const char *name;
+	uint64_t i;
+	const char *state;
+	TAILQ_ENTRY(lea_local_state_i) entries;
+};
+
+TAILQ_HEAD(lea_local_state_tailq, lea_local_state_i);
+
 struct lea_context {
 	uint64_t first_non_delivered;
 	uint64_t highest_seen;
@@ -48,6 +57,7 @@ struct lea_context {
 	struct fbr_cond_var delivered;
 	struct lea_fiber_arg *arg;
 	struct fbr_buffer buffer;
+	struct lea_local_state_tailq local_states;
 };
 
 #define LEA_CONTEXT_INITIALIZER {              \
@@ -58,7 +68,11 @@ struct lea_context {
 	.acc_states = NULL,                    \
 }
 
+struct JsonNode;
+
 void lea_fiber(struct fbr_context *fiber_context, void *_arg);
 void lea_local_fiber(struct fbr_context *fiber_context, void *_arg);
+
+struct JsonNode *lea_get_state_dump(ME_P);
 
 #endif
