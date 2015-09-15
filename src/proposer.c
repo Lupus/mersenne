@@ -160,7 +160,7 @@ static void print_window(ME_P)
 	struct pro_instance *instance;
 	char buf[PRO_INSTANCE_WINDOW + 1];
 	char *ptr = buf;
-	for(j = 0; j < PRO_INSTANCE_WINDOW; j++) {
+	for (j = 0; j < PRO_INSTANCE_WINDOW; j++) {
 		instance = mctx->pxs.pro.instances +j;
 		switch(instance->state) {
 			case IS_DELIVERED:
@@ -668,9 +668,8 @@ static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_cond_var *cond;
 	struct pro_instance *instance;
 	struct ie_nv nv;
-	uint64_t i, j;
+	uint64_t i;
 	uint64_t start;
-	uint64_t next_ready;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	m = &mctx->pxs.pro.pending_mutex;
@@ -682,10 +681,7 @@ static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 		if (0 == mctx->pxs.pro.pending_size)
 			continue;
 		start = mctx->pxs.pro.lowest_non_closed;
-		next_ready = mctx->pxs.pro.next_ready;
-		if (next_ready > start)
-			start = next_ready;
-		for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+		for (i = start; i < start + PRO_INSTANCE_WINDOW; i++) {
 			instance = mctx->pxs.pro.instances +
 				(i % PRO_INSTANCE_WINDOW);
 			if (IS_P1_READY_NO_VALUE == instance->state) {
@@ -693,7 +689,6 @@ static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 				if (!pending_shift(ME_A_ &nv.buffer))
 					break;
 				run_instance(ME_A_ instance, &nv.b);
-				mctx->pxs.pro.next_ready = i + 1;
 			}
 		}
 	}

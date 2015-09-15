@@ -54,7 +54,6 @@ struct pending_value {
 struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
-	uint64_t next_ready;
 	uint64_t last_used_ballot;
 	struct pending_value *pending;
 	int pending_size;
@@ -66,7 +65,6 @@ struct pro_context {
 	.instances = NULL, \
 	.pending = NULL, \
 	.pending_size = 0, \
-	.next_ready = 0, \
 	.last_used_ballot = 0, \
 }
 
