@@ -116,4 +116,8 @@ void acs_free_archive_records(ME_P_ struct acc_archive_record *records,
 		unsigned count);
 void acs_destroy(ME_P);
 
+struct JsonNode;
+
+struct JsonNode *acs_get_state_dump(ME_P);
+
 #endif

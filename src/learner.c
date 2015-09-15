@@ -35,7 +35,6 @@
 #include <mersenne/acc_storage.h>
 
 #define LEA_INSTANCE_WINDOW mctx->args_info.learner_instance_window_arg
-//#define WINDOW_DUMP
 
 struct lea_ack {
 	uint64_t b;
@@ -80,7 +79,6 @@ static ev_tstamp age(ME_P_ struct lea_instance *instance)
 		return 0;
 	return 1;
 }
-
 
 JsonNode *lea_get_state_dump(ME_P)
 {

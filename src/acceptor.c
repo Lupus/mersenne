@@ -23,6 +23,8 @@
 #include <dlfcn.h>
 #include <wordexp.h>
 
+#include "ccan-json.h"
+
 #include <mersenne/acceptor.h>
 #include <mersenne/paxos.h>
 #include <mersenne/context.h>
@@ -513,3 +515,14 @@ void acc_fiber(struct fbr_context *fiber_context, void *_arg)
 
 	acs_destroy(ME_A);
 }
+
+JsonNode *acc_get_state_dump(ME_P)
+{
+	JsonNode *obj = json_mkobject();
+
+	json_append_member(obj, "acs",
+			acs_get_state_dump(ME_A));
+
+	return obj;
+}
+

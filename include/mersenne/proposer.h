@@ -70,9 +70,12 @@ struct pro_context {
 	.last_used_ballot = 0, \
 }
 
+struct JsonNode;
+
 void pro_fiber(struct fbr_context *fiber_context, void *_arg);
 void pro_start(ME_P);
 void pro_stop(ME_P);
 int pro_push_value(ME_P_ struct buffer *value);
+struct JsonNode *pro_get_state_dump(ME_P);
 
 #endif

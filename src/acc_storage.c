@@ -28,6 +28,8 @@
 #include <zlib.h>
 #include <evfibers/eio.h>
 
+#include "ccan-json.h"
+
 #include <mersenne/kvec.h>
 #include <mersenne/acc_storage.h>
 #include <mersenne/sharedmem.h>
@@ -705,3 +707,22 @@ void acs_destroy(ME_P)
 	fbr_cond_destroy(&mctx->fbr, &ctx->highest_finalized_changed);
 	fbr_mutex_destroy(&mctx->fbr, &ctx->batch_mutex);
 }
+
+JsonNode *acs_get_state_dump(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	char buf[256];
+	JsonNode *obj = json_mkobject();
+
+	snprintf(buf, sizeof(buf), "%lu", ctx->highest_accepted);
+	json_append_member(obj, "highest_accepted", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", ctx->highest_finalized);
+	json_append_member(obj, "highest_finalized", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", ctx->lowest_available);
+	json_append_member(obj, "lowest_available", json_mkstring(buf));
+
+	return obj;
+}
+

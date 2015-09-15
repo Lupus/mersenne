@@ -110,5 +110,62 @@ me_t.prototype.open_learner = function()
 	return false;
 }
 
+me_t.prototype.open_proposer = function()
+{
+	$('#main_header').html("Proposer state");
+	$('#main_header_descr').html("Dump of proposer internal state")
+	me.set_menu_selected('li_proposer');
+	me.make_loading('#content');
+	var complete_cb = function(response) {
+		console.log(response);
+		if (response) {
+			var html = $('#proposer_template').render(response);
+			$('#content').html(html);
+		} else {
+			me.make_error('#content',
+					"This instance is not a leader");
+		}
+	};
+	var error_cb = function(xhr, ajaxOptions, thrownError) {
+		alert(xhr.status);
+		me.make_error('#content', "AJAX Request failed with code " +
+				xhr.status + ": " + thrownError);
+	};
+	$.ajax({
+		url: "api/proposer",
+		cache: false,
+		success: complete_cb,
+		error: error_cb,
+	});
+
+	return false;
+}
+
+me_t.prototype.open_acceptor = function()
+{
+	$('#main_header').html("Acceptor state");
+	$('#main_header_descr').html("Dump of acceptor internal state")
+	me.set_menu_selected('li_acceptor');
+	me.make_loading('#content');
+	var complete_cb = function(response) {
+		console.log(response);
+		var html = $('#acceptor_template').render(response);
+		$('#content').html(html);
+	};
+	var error_cb = function(xhr, ajaxOptions, thrownError) {
+		alert(xhr.status);
+		me.make_error('#content', "AJAX Request failed with code " +
+				xhr.status + ": " + thrownError);
+	};
+	$.ajax({
+		url: "api/acceptor",
+		cache: false,
+		success: complete_cb,
+		error: error_cb,
+	});
+
+	return false;
+}
+
 me = new me_t();
 $(function() { me.on_ready(); });

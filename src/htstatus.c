@@ -151,6 +151,20 @@ static void api_learner_hfunc(ME_P_ struct request_info *r)
 	json_delete(obj);
 }
 
+static void api_proposer_hfunc(ME_P_ struct request_info *r)
+{
+	JsonNode *obj = pro_get_state_dump(ME_A);
+	fprintf(r->ms, "%s", json_encode(obj));
+	json_delete(obj);
+}
+
+static void api_acceptor_hfunc(ME_P_ struct request_info *r)
+{
+	JsonNode *obj = acc_get_state_dump(ME_A);
+	fprintf(r->ms, "%s", json_encode(obj));
+	json_delete(obj);
+}
+
 int on_headers_complete(http_parser *parser)
 {
 	struct parser_arg *arg = parser->data;
@@ -380,6 +394,8 @@ void me_htstatus_fiber(struct fbr_context *fiber_context, void *_arg)
 	api_handler("/api/status", api_status_hfunc);
 	api_handler("/api/config", api_config_hfunc);
 	api_handler("/api/learner", api_learner_hfunc);
+	api_handler("/api/proposer", api_proposer_hfunc);
+	api_handler("/api/acceptor", api_acceptor_hfunc);
 
 	arg.handlers = handlers;
 

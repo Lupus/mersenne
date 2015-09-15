@@ -25,6 +25,8 @@
 #include <assert.h>
 #include <utlist.h>
 
+#include "ccan-json.h"
+
 #include <mersenne/proposer.h>
 #include <mersenne/proposer_prv.h>
 #include <mersenne/strenum.h>
@@ -918,3 +920,39 @@ void pro_stop(ME_P)
 		mctx->fiber_proposer = FBR_ID_NULL;
 	}
 }
+
+JsonNode *pro_get_state_dump(ME_P)
+{
+	struct pro_context *context = &mctx->pxs.pro;
+	int j;
+	struct pro_instance *instance;
+	char buf[256];
+	JsonNode *obj = json_mkobject();
+	JsonNode *obj2;
+	JsonNode *obj3;
+	JsonNode *arr = json_mkarray();
+
+	if (fbr_id_isnull(mctx->fiber_proposer))
+		return json_mknull();
+
+	snprintf(buf, sizeof(buf), "%lu", context->lowest_non_closed);
+	json_append_member(obj, "lowest_non_closed", json_mkstring(buf));
+
+	json_append_member(obj, "pending_size",
+			json_mknumber(context->pending_size));
+
+	for (j = 0; j < PRO_INSTANCE_WINDOW; j++) {
+		instance = mctx->pxs.pro.instances +j;
+		obj2 = json_mkobject();
+		json_append_member(obj2, "index", json_mknumber(j));
+		snprintf(buf, sizeof(buf), "%lu", instance->iid);
+		json_append_member(obj2, "iid", json_mkstring(buf));
+		obj3 = json_mkstring(strval_instance_state(instance->state));
+		json_append_member(obj2, "state", obj3);
+		json_append_element(arr, obj2);
+	}
+	json_append_member(obj, "window", arr);
+
+	return obj;
+}
+

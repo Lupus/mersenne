@@ -41,6 +41,9 @@ struct acc_context {
 	.acs = ACS_CONTEXT_INITIALIZER,     \
 }
 
+struct JsonNode;
+
 void acc_fiber(struct fbr_context *fiber_context, void *_arg);
+struct JsonNode *acc_get_state_dump(ME_P);
 
 #endif
