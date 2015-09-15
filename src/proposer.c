@@ -210,6 +210,9 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 			strval_instance_state(instance->state),
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
+	if (IS_P1_READY_NO_VALUE == instance->state) {
+		mctx->pxs.pro.ready_no_value_count--;
+	}
 	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
 	instance->state = state;
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
@@ -217,6 +220,10 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 	print_window(ME_A);
 #endif
 	run_instance(ME_A_ instance, base);
+	if (IS_P1_READY_NO_VALUE == state) {
+		mctx->pxs.pro.ready_no_value_count++;
+		fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.ready_no_value_cond);
+	}
 }
 
 static void reclaim_instance(ME_P_ struct pro_instance *instance)
@@ -355,6 +362,7 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 							" value found for"
 							" instance %lu", num,
 							p->data->i);
+					assert(NULL == instance->p2.v);
 					new_base.type = IE_R0;
 					switch_instance(ME_A_ instance,
 							IS_P1_READY_NO_VALUE,
@@ -391,10 +399,7 @@ void do_is_p1_ready_no_value(ME_P_ struct pro_instance *instance, struct ie_base
 	struct ie_nv *nv;
 	switch(base->type) {
 		case IE_R0:
-			if(NULL == instance->p2.v)
-				fbr_cond_signal(&mctx->fbr,
-						&mctx->pxs.pro.pending_cond);
-
+			assert(NULL == instance->p2.v);
 			break;
 		case IE_NV:
 			nv = container_of(base, struct ie_nv, b);
@@ -661,33 +666,46 @@ static void proposer_init(ME_P_ struct proposer_context *proposer_context,
 	}
 }
 
+static void vqueue_wait_for_pending(ME_P)
+{
+	struct fbr_cond_var *pending_cond = &mctx->pxs.pro.pending_cond;
+	struct fbr_mutex m;
+	fbr_mutex_init(&mctx->fbr, &m);
+	while (0 == mctx->pxs.pro.pending_size) {
+		fbr_mutex_lock(&mctx->fbr, &m);
+		fbr_cond_wait(&mctx->fbr, pending_cond, &m);
+		fbr_mutex_unlock(&mctx->fbr, &m);
+	}
+	fbr_mutex_destroy(&mctx->fbr, &m);
+}
+
 static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 {
 	struct me_context *mctx;
-	struct fbr_mutex *m;
-	struct fbr_cond_var *cond;
+	struct fbr_cond_var *ready_nv_cond;
 	struct pro_instance *instance;
 	struct ie_nv nv;
 	uint64_t i;
 	uint64_t start;
+	struct fbr_mutex m;
 
 	mctx = container_of(fiber_context, struct me_context, fbr);
-	m = &mctx->pxs.pro.pending_mutex;
-	cond = &mctx->pxs.pro.pending_cond;
+	fbr_mutex_init(&mctx->fbr, &m);
+	ready_nv_cond = &mctx->pxs.pro.ready_no_value_cond;
 	for (;;) {
-		fbr_mutex_lock(&mctx->fbr, m);
-		fbr_cond_wait(&mctx->fbr, cond, m);
-		fbr_mutex_unlock(&mctx->fbr, m);
-		if (0 == mctx->pxs.pro.pending_size)
-			continue;
+		while (0 == mctx->pxs.pro.ready_no_value_count) {
+			fbr_mutex_lock(&mctx->fbr, &m);
+			fbr_cond_wait(&mctx->fbr, ready_nv_cond, &m);
+			fbr_mutex_unlock(&mctx->fbr, &m);
+		}
 		start = mctx->pxs.pro.lowest_non_closed;
 		for (i = start; i < start + PRO_INSTANCE_WINDOW; i++) {
 			instance = mctx->pxs.pro.instances +
 				(i % PRO_INSTANCE_WINDOW);
 			if (IS_P1_READY_NO_VALUE == instance->state) {
 				nv.b.type = IE_NV;
-				if (!pending_shift(ME_A_ &nv.buffer))
-					break;
+				while (!pending_shift(ME_A_ &nv.buffer))
+					vqueue_wait_for_pending(ME_A);
 				run_instance(ME_A_ instance, &nv.b);
 			}
 		}
@@ -840,6 +858,8 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	proposer_context->lea_fb_mutex = &lea_fb_mutex;
 	fbr_mutex_init(&mctx->fbr, &proposer_context->instance_to_mutex);
 	fbr_cond_init(&mctx->fbr, &proposer_context->instance_to_cond);
+	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.pending_cond);
+	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.ready_no_value_cond);
 
 	proposer_context->instance_to_fiber_id = fbr_create(&mctx->fbr,
 			"proposer/instance_to_fiber", instance_timeout_fiber,

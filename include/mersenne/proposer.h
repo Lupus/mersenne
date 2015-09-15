@@ -55,9 +55,11 @@ struct pro_context {
 	struct pro_instance *instances;
 	uint64_t lowest_non_closed;
 	uint64_t last_used_ballot;
+	unsigned ready_no_value_count;
 	struct pending_value *pending;
 	int pending_size;
 	struct fbr_cond_var pending_cond;
+	struct fbr_cond_var ready_no_value_cond;
 	struct fbr_mutex pending_mutex;
 };
 
@@ -66,6 +68,7 @@ struct pro_context {
 	.pending = NULL, \
 	.pending_size = 0, \
 	.last_used_ballot = 0, \
+	.ready_no_value_count = 0, \
 }
 
 struct JsonNode;
