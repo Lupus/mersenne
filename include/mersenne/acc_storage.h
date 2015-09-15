@@ -26,7 +26,7 @@
 #include <sys/queue.h>
 #include <uthash.h>
 #include <evfibers/fiber.h>
-#include <leveldb/c.h>
+#include <hyperleveldb/c.h>
 
 #include <stdint.h>
 #include <mersenne/kvec.h>
