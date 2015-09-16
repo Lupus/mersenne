@@ -19,6 +19,7 @@
 
  ********************************************************************/
 #include <stdio.h>
+#include <unistd.h>
 #include <assert.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -137,7 +138,7 @@ static void ldb_write_state(ME_P_ struct acs_context *ctx)
 	}
 	tmp_size = sbuf.size;
 	tmp_data = sbuf.data;
-	leveldb_writebatch_put(ctx->ldb_batch, key, klen, tmp_data, tmp_size);
+	rocksdb_writebatch_put(ctx->ldb_batch, key, klen, tmp_data, tmp_size);
 	msgpack_sbuffer_destroy(&sbuf);
 	ctx->writes_per_sync++;
 }
@@ -184,7 +185,7 @@ static void ldb_write_value(ME_P_ struct acc_instance_record *r)
 	tmp_size = sbuf.size;
 	tmp_data = sbuf.data;
 	key = record_iid_to_key(r->iid);
-	leveldb_writebatch_put(ctx->ldb_batch, key, strlen(key), tmp_data,
+	rocksdb_writebatch_put(ctx->ldb_batch, key, strlen(key), tmp_data,
 			tmp_size);
 
 	msgpack_sbuffer_destroy(&sbuf);
@@ -236,8 +237,8 @@ static void recover(ME_P)
 	char *buf;
 	size_t len;
 	char *error = NULL;
-	leveldb_readoptions_t *options = leveldb_readoptions_create();
-	leveldb_iterator_t* iter;
+	rocksdb_readoptions_t *options = rocksdb_readoptions_create();
+	rocksdb_iterator_t* iter;
 	const char *key;
 	size_t klen;
 	const char *value;
@@ -246,14 +247,14 @@ static void recover(ME_P)
 	ev_now_update(mctx->loop);
 	fbr_log_i(&mctx->fbr, "Starting recovery of acceptor state");
 
-	leveldb_readoptions_set_verify_checksums(options, 1);
-	leveldb_readoptions_set_fill_cache(options, 0);
+	rocksdb_readoptions_set_verify_checksums(options, 1);
+	rocksdb_readoptions_set_fill_cache(options, 0);
 
 	key = "acc_state";
 	klen = strlen(key);
-	buf = leveldb_get(ctx->ldb, options, key, klen, &len, &error);
+	buf = rocksdb_get(ctx->ldb, options, key, klen, &len, &error);
 	if (error)
-		errx(EXIT_FAILURE, "leveldb_get() failed: %s", error);
+		errx(EXIT_FAILURE, "rocksdb_get() failed: %s", error);
 	if (NULL == buf) {
 		ctx->highest_accepted = 0;
 		ctx->highest_finalized = 0;
@@ -265,18 +266,18 @@ static void recover(ME_P)
 		free(buf);
 	}
 
-	iter = leveldb_create_iterator(ctx->ldb, options);
+	iter = rocksdb_create_iterator(ctx->ldb, options);
 	key = record_iid_to_key(ctx->lowest_available);
-	leveldb_iter_seek(iter, key, strlen(key));
-	while (0 != leveldb_iter_valid(iter)) {
-		key = leveldb_iter_key(iter, &klen);
+	rocksdb_iter_seek(iter, key, strlen(key));
+	while (0 != rocksdb_iter_valid(iter)) {
+		key = rocksdb_iter_key(iter, &klen);
 		if (klen < 8 || memcmp(key, "acc_rec/", 8))
 			break;
-		value = leveldb_iter_value(iter, &vlen);
+		value = rocksdb_iter_value(iter, &vlen);
 		fbr_log_d(&mctx->fbr, "recovering record %.*s, len %zd",
 				(unsigned)klen, key, vlen);
 		recover_rec(ME_A_ value, vlen);
-		leveldb_iter_next(iter);
+		rocksdb_iter_next(iter);
 	}
 
 	ev_now_update(mctx->loop);
@@ -288,8 +289,8 @@ static void recover(ME_P)
 			ctx->highest_finalized,
 			*((uint64_t *)mctx->pxs.acc.running_checksum),
 			*((uint64_t *)mctx->pxs.acc.running_checksum + 1));
-	leveldb_iter_destroy(iter);
-	leveldb_readoptions_destroy(options);
+	rocksdb_iter_destroy(iter);
+	rocksdb_readoptions_destroy(options);
 }
 
 struct stats_summary {
@@ -316,33 +317,42 @@ void acs_initialize(ME_P)
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	char *error = NULL;
 	char path[PATH_MAX];
-	ctx->ldb_options = leveldb_options_create();
-	leveldb_options_set_create_if_missing(ctx->ldb_options, 1);
-	leveldb_options_set_write_buffer_size(ctx->ldb_options,
+	ctx->ldb_options = rocksdb_options_create();
+	rocksdb_options_set_create_if_missing(ctx->ldb_options, 1);
+	rocksdb_options_set_write_buffer_size(ctx->ldb_options,
 			mctx->args_info.ldb_write_buffer_arg);
-	leveldb_options_set_max_open_files(ctx->ldb_options,
+	rocksdb_options_set_max_open_files(ctx->ldb_options,
 			mctx->args_info.ldb_max_open_files_arg);
 	ctx->ldb_cache =
-		leveldb_cache_create_lru(mctx->args_info.ldb_cache_arg);
-	leveldb_options_set_cache(ctx->ldb_options, ctx->ldb_cache);
-	leveldb_options_set_block_size(ctx->ldb_options,
+		rocksdb_cache_create_lru(mctx->args_info.ldb_cache_arg);
+	/*
+	rocksdb_options_set_cache(ctx->ldb_options, ctx->ldb_cache);
+	rocksdb_options_set_block_size(ctx->ldb_options,
 			mctx->args_info.ldb_block_size_arg);
+			*/
+
+	// Optimize RocksDB. This is the easiest way to
+	// get RocksDB to perform well
+	long cpus = sysconf(_SC_NPROCESSORS_ONLN);  // get # of online cores
+	rocksdb_options_increase_parallelism(ctx->ldb_options, (int)(cpus));
+	rocksdb_options_optimize_level_style_compaction(ctx->ldb_options, 0);
+
 	if (mctx->args_info.ldb_compression_flag) {
-		leveldb_options_set_compression(ctx->ldb_options,
-				leveldb_snappy_compression);
+		rocksdb_options_set_compression(ctx->ldb_options,
+				rocksdb_snappy_compression);
 	} else {
-		leveldb_options_set_compression(ctx->ldb_options,
-				leveldb_no_compression);
+		rocksdb_options_set_compression(ctx->ldb_options,
+				rocksdb_no_compression);
 	}
 	snprintf(path, sizeof(path), "%s/acceptor", mctx->args_info.db_dir_arg);
-	ctx->ldb = leveldb_open(ctx->ldb_options, path, &error);
+	ctx->ldb = rocksdb_open(ctx->ldb_options, path, &error);
 	if (error) {
-		fbr_log_e(&mctx->fbr, "leveldb error: %s", error);
+		fbr_log_e(&mctx->fbr, "rocksdb error: %s", error);
 		exit(EXIT_FAILURE);
 	}
-	ctx->ldb_batch = leveldb_writebatch_create();
-	ctx->ldb_write_options_sync = leveldb_writeoptions_create();
-	leveldb_writeoptions_set_sync(ctx->ldb_write_options_sync, 1);
+	ctx->ldb_batch = rocksdb_writebatch_create();
+	ctx->ldb_write_options_sync = rocksdb_writeoptions_create();
+	rocksdb_writeoptions_set_sync(ctx->ldb_write_options_sync, 1);
 	fbr_mutex_init(&mctx->fbr, &ctx->batch_mutex);
 	fbr_cond_init(&mctx->fbr, &ctx->highest_finalized_changed);
 
@@ -371,7 +381,7 @@ static eio_ssize_t ldb_write_custom_cb(void *data)
 	struct acs_context *ctx = arg->ctx;
 	double t1, t2;
 	t1 = now();
-	leveldb_write(ctx->ldb, ctx->ldb_write_options_sync, ctx->ldb_batch,
+	rocksdb_write(ctx->ldb, ctx->ldb_write_options_sync, ctx->ldb_batch,
 			&arg->error);
 	t2 = now();
 	arg->write_time = t2 - t1;
@@ -458,8 +468,8 @@ void acs_batch_finish(ME_P)
 	if (retval)
 		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
 
-	fbr_log_d(&mctx->fbr, "leveldb_write() finished in %f", arg.write_time);
-	leveldb_writebatch_clear(ctx->ldb_batch);
+	fbr_log_d(&mctx->fbr, "rocksdb_write() finished in %f", arg.write_time);
+	rocksdb_writebatch_clear(ctx->ldb_batch);
 
 	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
 		assert(r->stored);
@@ -545,7 +555,7 @@ static eio_ssize_t ldb_read_custom_cb(void *data)
 {
 	struct ldb_read_custom_cb_arg *arg = data;
 	struct me_context *mctx = arg->mctx;
-	leveldb_readoptions_t *options = leveldb_readoptions_create();
+	rocksdb_readoptions_t *options = rocksdb_readoptions_create();
 	const char *key;
 	unsigned x = 0;
 
@@ -559,10 +569,10 @@ static eio_ssize_t ldb_read_custom_cb(void *data)
 	arg->count = 0;
 	for (x = 0; x < arg->max; x++) {
 		key = record_iid_to_key(arg->i + x);
-		value = leveldb_get(ctx->ldb, options, key, strlen(key),
+		value = rocksdb_get(ctx->ldb, options, key, strlen(key),
 				&arg->buffers[x].iov_len, &error);
 		if (error)
-			errx(EXIT_FAILURE, "leveldb_get failed: %s", error);
+			errx(EXIT_FAILURE, "rocksdb_get failed: %s", error);
 		if (!value)
 			break;
 
@@ -571,7 +581,7 @@ static eio_ssize_t ldb_read_custom_cb(void *data)
 	}
 
 	assert(arg->count <= arg->max);
-	leveldb_readoptions_destroy(options);
+	rocksdb_readoptions_destroy(options);
 	return 0;
 }
 
@@ -619,7 +629,7 @@ struct acc_archive_record *acs_get_archive_records(ME_P_ uint64_t iid,
 		records[x].v = buf_sm_copy(wal_rec.value.content.data,
 				wal_rec.value.content.len);
 		msgpack_unpacked_destroy(&result);
-		leveldb_free(arg.buffers[x].iov_base);
+		rocksdb_free(arg.buffers[x].iov_base);
 	}
 	free(arg.buffers);
 	return records;
@@ -694,10 +704,10 @@ void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r, *x;
-	leveldb_writeoptions_destroy(ctx->ldb_write_options_sync);
-	leveldb_writebatch_destroy(ctx->ldb_batch);
-	leveldb_options_destroy(ctx->ldb_options);
-	leveldb_close(ctx->ldb);
+	rocksdb_writeoptions_destroy(ctx->ldb_write_options_sync);
+	rocksdb_writebatch_destroy(ctx->ldb_batch);
+	rocksdb_options_destroy(ctx->ldb_options);
+	rocksdb_close(ctx->ldb);
 	HASH_ITER(hh, ctx->instances, r, x) {
 		HASH_DEL(ctx->instances, r);
 		sm_free(r->v);

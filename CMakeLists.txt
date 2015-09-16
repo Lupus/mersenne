@@ -1,9 +1,10 @@
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 cmake_minimum_required(VERSION 2.6)
-project(mersenne C)
+project(mersenne C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+set(CMAKE_C_LINK_EXECUTABLE ${CMAKE_CXX_LINK_EXECUTABLE})
 
 option(USE_LTO "Use Link-Time Optimization" FALSE)
 option(USE_ASAN "Use AddressSanitizer" FALSE)
@@ -22,7 +23,7 @@ find_package(RpcGen REQUIRED)
 find_package(GenGetOpt REQUIRED)
 find_package(ProtoBufC REQUIRED)
 find_package(Ragel REQUIRED)
-find_package(LDB REQUIRED)
+#find_package(LDB REQUIRED)
 
 add_definitions(-D_GNU_SOURCE)
 if(PERFLOG)
@@ -36,7 +37,7 @@ include_directories(
 	"${CMAKE_CURRENT_BINARY_DIR}/evfibers/include"
 	"${CMAKE_CURRENT_SOURCE_DIR}/msgpack-proto-ragel/include"
 	"${CMAKE_CURRENT_BINARY_DIR}/msgpack-proto-ragel/include"
-	${LDB_INCLUDE_DIR}
+	${ROCKSDB_INCLUDE_DIR}
 	)
 
 set(CMAKE_C_FLAGS "-Wall -fno-strict-aliasing")
@@ -142,6 +143,7 @@ set(MERSENNE_SOURCES
 	"src/acceptor.c"
 	"src/statd.c"
 	"src/mersenne.c"
+	"src/dummy.cpp" # Convince CMAKE to link using g++
 	"src/http_parser.c"
 	"src/htstatus.c"
 	"src/kstring.c"
@@ -175,6 +177,7 @@ add_executable(mersenne
 	${MERSENNE_GEN_SOURCES}
 	${GGO_GEN_SOURCES}
 	)
+add_dependencies(mersenne sophia)
 target_link_libraries(mersenne
 	mersenne_cli
 	mersenne_md5
@@ -185,7 +188,7 @@ target_link_libraries(mersenne
 	z
 	uuid
 	msgpack
-	${LDB_LIBRARIES}
+	rocksdb
 	)
 
 subdirs(testing)

@@ -26,7 +26,7 @@
 #include <sys/queue.h>
 #include <uthash.h>
 #include <evfibers/fiber.h>
-#include <leveldb/c.h>
+#include <rocksdb/c.h>
 
 #include <stdint.h>
 #include <mersenne/kvec.h>
@@ -56,11 +56,11 @@ struct acc_archive_record {
 SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
 
 struct acs_context {
-	leveldb_t *ldb;
-	leveldb_cache_t *ldb_cache;
-	leveldb_options_t *ldb_options;
-	leveldb_writebatch_t *ldb_batch;
-	leveldb_writeoptions_t *ldb_write_options_sync;
+	rocksdb_t *ldb;
+	rocksdb_cache_t *ldb_cache;
+	rocksdb_options_t *ldb_options;
+	rocksdb_writebatch_t *ldb_batch;
+	rocksdb_writeoptions_t *ldb_write_options_sync;
 	uint64_t confirmed_lsn;
 	size_t writes_per_sync;
 	int in_batch;
