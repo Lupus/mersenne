@@ -466,9 +466,13 @@ void acs_batch_finish(ME_P)
 	}
 	retval = fbr_eio_custom(&mctx->fbr, ldb_write_custom_cb, &arg, 0);
 	if (retval)
-		err(EXIT_FAILURE, "ldb_write_custom_cb failed");
+		errx(EXIT_FAILURE, "ldb_write_custom_cb failed");
+	if (arg.error)
+		errx(EXIT_FAILURE, "ldb_write_custom_cb failed: %s", arg.error);
 
 	fbr_log_d(&mctx->fbr, "rocksdb_write() finished in %f", arg.write_time);
+	fbr_log_d(&mctx->fbr, "batch size was %d",
+			rocksdb_writebatch_count(ctx->ldb_batch));
 	rocksdb_writebatch_clear(ctx->ldb_batch);
 
 	SLIST_FOREACH(r, &ctx->dirty_instances, dirty_entries) {
