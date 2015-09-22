@@ -210,20 +210,21 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 			strval_instance_state(instance->state),
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
+	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
 	if (IS_P1_READY_NO_VALUE == instance->state) {
+		assert(mctx->pxs.pro.ready_no_value_count >= 1);
 		mctx->pxs.pro.ready_no_value_count--;
 	}
-	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
 	instance->state = state;
+	if (IS_P1_READY_NO_VALUE == state) {
+		mctx->pxs.pro.ready_no_value_count++;
+		fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.ready_no_value_cond);
+	}
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 #ifdef WINDOW_DUMP
 	print_window(ME_A);
 #endif
 	run_instance(ME_A_ instance, base);
-	if (IS_P1_READY_NO_VALUE == state) {
-		mctx->pxs.pro.ready_no_value_count++;
-		fbr_cond_signal(&mctx->fbr, &mctx->pxs.pro.ready_no_value_cond);
-	}
 }
 
 static void reclaim_instance(ME_P_ struct pro_instance *instance)
@@ -702,14 +703,17 @@ static void vqueue_fiber(struct fbr_context *fiber_context, void *_arg)
 			fbr_cond_wait(&mctx->fbr, ready_nv_cond, &m);
 			fbr_mutex_unlock(&mctx->fbr, &m);
 		}
+window_restart:
 		start = mctx->pxs.pro.lowest_non_closed;
 		for (i = start; i < start + PRO_INSTANCE_WINDOW; i++) {
 			instance = mctx->pxs.pro.instances +
 				(i % PRO_INSTANCE_WINDOW);
 			if (IS_P1_READY_NO_VALUE == instance->state) {
 				nv.b.type = IE_NV;
-				while (!pending_shift(ME_A_ &nv.buffer))
+				if (!pending_shift(ME_A_ &nv.buffer)) {
 					vqueue_wait_for_pending(ME_A);
+					goto window_restart;
+				}
 				run_instance(ME_A_ instance, &nv.b);
 			}
 		}
@@ -865,6 +869,15 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.pending_cond);
 	fbr_cond_init(&mctx->fbr, &mctx->pxs.pro.ready_no_value_cond);
 
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
+			fbr_buffer_cond_read(&mctx->fbr, &fb),
+			&fb_mutex);
+	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
+			fbr_buffer_cond_read(&mctx->fbr, &lea_fb),
+			&lea_fb_mutex);
+
+	proposer_init(ME_A_ proposer_context, starting_iid);
+
 	proposer_context->instance_to_fiber_id = fbr_create(&mctx->fbr,
 			"proposer/instance_to_fiber", instance_timeout_fiber,
 			proposer_context, 0);
@@ -876,14 +889,6 @@ void pro_fiber(struct fbr_context *fiber_context, void *_arg)
 	assert(!fbr_id_isnull(proposer_context->vqueue_fiber_id));
 	fbr_transfer(&mctx->fbr, proposer_context->vqueue_fiber_id);
 
-	fbr_ev_cond_var_init(&mctx->fbr, &ev_fb,
-			fbr_buffer_cond_read(&mctx->fbr, &fb),
-			&fb_mutex);
-	fbr_ev_cond_var_init(&mctx->fbr, &ev_lea_fb,
-			fbr_buffer_cond_read(&mctx->fbr, &lea_fb),
-			&lea_fb_mutex);
-
-	proposer_init(ME_A_ proposer_context, starting_iid);
 
 	lea_arg.buffer = &lea_fb;
 	lea_arg.starting_iid = starting_iid;
