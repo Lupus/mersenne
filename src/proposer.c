@@ -262,9 +262,9 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 static void adjust_window(ME_P)
 {
 	struct pro_instance *instance;
-	int i, j;
-	int start = mctx->pxs.pro.lowest_non_closed;
-	for (j = 0, i = start; j < PRO_INSTANCE_WINDOW; j++, i++) {
+	uint64_t i;
+	uint64_t start = mctx->pxs.pro.lowest_non_closed;
+	for (i = start; i < start + PRO_INSTANCE_WINDOW; i++) {
 		instance = mctx->pxs.pro.instances + (i % PRO_INSTANCE_WINDOW);
 		if (IS_DELIVERED != instance->state)
 			return;
