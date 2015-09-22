@@ -312,40 +312,118 @@ struct stats_calc_arg {
 	unsigned count;
 };
 
+struct rdb_cleanup_custom_cb_arg {
+	char *error;
+	struct acs_context *ctx;
+	uint64_t upto;
+};
+
+static eio_ssize_t rdb_cleanup_custom_cb(void *data)
+{
+	struct rdb_cleanup_custom_cb_arg *arg = data;
+	struct acs_context *ctx = arg->ctx;
+	rocksdb_readoptions_t *options;
+	rocksdb_writeoptions_t *woptions;
+	rocksdb_iterator_t* iter;
+	const char *key;
+	size_t klen;
+	const char *upto_key;
+	rocksdb_writebatch_t *batch;
+
+	options = rocksdb_readoptions_create();
+	batch = rocksdb_writebatch_create();
+	woptions = rocksdb_writeoptions_create();
+
+	rocksdb_readoptions_set_verify_checksums(options, 0);
+	rocksdb_readoptions_set_fill_cache(options, 0);
+
+	rocksdb_writeoptions_set_sync(woptions, 0);
+	rocksdb_writeoptions_disable_WAL(woptions, 1);
+
+	iter = rocksdb_create_iterator(ctx->ldb, options);
+	key = record_iid_to_key(0ULL);
+	rocksdb_iter_seek(iter, key, strlen(key));
+	upto_key = record_iid_to_key(arg->upto);
+	while (0 != rocksdb_iter_valid(iter)) {
+		key = rocksdb_iter_key(iter, &klen);
+		if (klen < 8 || memcmp(key, "acc_rec/", 8))
+			break;
+		if (0 <= memcmp(key, upto_key, strlen(upto_key)))
+			break;
+		rocksdb_writebatch_delete(batch, key, klen);
+		rocksdb_iter_next(iter);
+	}
+
+	rocksdb_write(ctx->ldb, woptions, batch, &arg->error);
+
+	rocksdb_iter_destroy(iter);
+	rocksdb_readoptions_destroy(options);
+	rocksdb_writeoptions_destroy(woptions);
+	rocksdb_writebatch_destroy(batch);
+
+	return 0;
+}
+
+static void run_cleanup(ME_P)
+{
+	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	int retval;
+	struct rdb_cleanup_custom_cb_arg arg;
+	unsigned max_instances = mctx->args_info.rocksdb_max_instances_arg;
+
+	if (ctx->lowest_available < max_instances)
+		return;
+
+	arg.ctx = ctx;
+	arg.error = NULL;
+	arg.upto = ctx->lowest_available - max_instances;
+	retval = fbr_eio_custom(&mctx->fbr, rdb_cleanup_custom_cb, &arg, 0);
+	if (retval)
+		errx(EXIT_FAILURE, "rdb_cleanup_custom_cb failed");
+	if (arg.error)
+		errx(EXIT_FAILURE, "rdb_cleanup_custom_cb failed: %s",
+				arg.error);
+}
+
+static void rdb_cleanup(struct fbr_context *fiber_context, void *_arg)
+{
+	struct me_context *mctx;
+	mctx = container_of(fiber_context, struct me_context, fbr);
+	ev_tstamp interval = mctx->args_info.rocksdb_cleanup_interval_arg;
+
+	for (;;) {
+		fbr_sleep(&mctx->fbr, interval);
+		fbr_log_i(&mctx->fbr, "running cleanup");
+		run_cleanup(ME_A);
+	}
+}
+
 void acs_initialize(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	char *error = NULL;
-	char path[PATH_MAX];
-	ctx->ldb_options = rocksdb_options_create();
-	rocksdb_options_set_create_if_missing(ctx->ldb_options, 1);
-	rocksdb_options_set_write_buffer_size(ctx->ldb_options,
-			mctx->args_info.ldb_write_buffer_arg);
-	rocksdb_options_set_max_open_files(ctx->ldb_options,
-			mctx->args_info.ldb_max_open_files_arg);
-	ctx->ldb_cache =
-		rocksdb_cache_create_lru(mctx->args_info.ldb_cache_arg);
-	/*
-	rocksdb_options_set_cache(ctx->ldb_options, ctx->ldb_cache);
-	rocksdb_options_set_block_size(ctx->ldb_options,
-			mctx->args_info.ldb_block_size_arg);
-			*/
+	rocksdb_options_t *base_options = NULL;
 
-	// Optimize RocksDB. This is the easiest way to
-	// get RocksDB to perform well
+	ctx->ldb_options = rocksdb_options_create();
 	long cpus = sysconf(_SC_NPROCESSORS_ONLN);  // get # of online cores
 	rocksdb_options_increase_parallelism(ctx->ldb_options, (int)(cpus));
-	rocksdb_options_optimize_level_style_compaction(ctx->ldb_options, 0);
-
-	if (mctx->args_info.ldb_compression_flag) {
-		rocksdb_options_set_compression(ctx->ldb_options,
-				rocksdb_snappy_compression);
-	} else {
-		rocksdb_options_set_compression(ctx->ldb_options,
-				rocksdb_no_compression);
+	if (mctx->rocksdb_options) {
+		base_options = rocksdb_options_create();
+		rocksdb_get_options_from_string(base_options,
+				mctx->rocksdb_options, ctx->ldb_options,
+				&error);
+		if (error)
+			errx(EXIT_FAILURE, "RocksDB failed to load options: %s",
+					error);
+		rocksdb_options_destroy(base_options);
 	}
-	snprintf(path, sizeof(path), "%s/acceptor", mctx->args_info.db_dir_arg);
-	ctx->ldb = rocksdb_open(ctx->ldb_options, path, &error);
+	rocksdb_options_set_create_if_missing(ctx->ldb_options, 1);
+	rocksdb_options_enable_statistics(ctx->ldb_options);
+	rocksdb_options_set_wal_dir(ctx->ldb_options,
+			mctx->args_info.wal_dir_arg);
+
+	ctx->ldb = rocksdb_open(ctx->ldb_options, mctx->args_info.db_dir_arg,
+			&error);
 	if (error) {
 		fbr_log_e(&mctx->fbr, "rocksdb error: %s", error);
 		exit(EXIT_FAILURE);
@@ -357,6 +435,10 @@ void acs_initialize(ME_P)
 	fbr_cond_init(&mctx->fbr, &ctx->highest_finalized_changed);
 
 	recover(ME_A);
+
+	ctx->rdb_cleanup_fiber = fbr_create(&mctx->fbr, "acceptor/rdb_cleanup",
+			rdb_cleanup, NULL, 0);
+	fbr_transfer(&mctx->fbr, ctx->rdb_cleanup_fiber);
 }
 
 void acs_batch_start(ME_P)

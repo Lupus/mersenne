@@ -419,6 +419,27 @@ static int does_file_exists(const char *filename)
 	return 1;
 }
 
+static char *read_content(const char *filename)
+{
+	char *fcontent = NULL;
+	size_t fsize = 0;
+	FILE *fp;
+
+	fp = fopen(filename, "r");
+	if (fp) {
+		fseek(fp, 0, SEEK_END);
+		fsize = ftell(fp);
+		rewind(fp);
+
+		fcontent = calloc(fsize + 1, sizeof(char));
+		fread(fcontent, 1, fsize, fp);
+
+		fclose(fp);
+	}
+	return fcontent;
+}
+
+
 int main(int argc, char *argv[])
 {
 	struct me_context context = ME_CONTEXT_INITIALIZER;
@@ -451,6 +472,13 @@ int main(int argc, char *argv[])
 	setenv("TZ", "UTC", 1); // We're operating in UTC
 
 	wait_for_debugger = mctx->args_info.wait_for_debugger_flag;
+
+	if (mctx->args_info.rocksdb_options_given) {
+		if (!does_file_exists(mctx->args_info.rocksdb_options_arg))
+			errx(EXIT_FAILURE, "invalid rocksdb-options file");
+		mctx->rocksdb_options = read_content(
+				mctx->args_info.rocksdb_options_arg);
+	}
 
 	// use the default event loop unless you have special needs
 	mctx->loop = EV_DEFAULT;

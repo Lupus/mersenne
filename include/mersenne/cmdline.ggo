@@ -17,7 +17,8 @@ option "proposer-queue-size" - "Size for pending value queue" int default="100" 
 option "learner-instance-window" - "Instance window size for learner" int default="5" optional
 option "learner-retransmit-age" - "Instance retransmit age" double default="0.25" optional
 option "acceptor-repeat-interval" - "Repeat interval for highest accepted instance" double default="1.0" optional
-option "db-dir" - "Directory, containing state database" string default="/var/lib/mersenne" optional
+option "db-dir" - "Directory, containing RocksDB ENV" string default="/var/lib/mersenne/db" optional
+option "wal-dir" - "Directory, containing RockDB WAL" string default="/var/lib/mersenne/wal" optional
 option "ldb-write-buffer" - "LevelDB write buffer" int default="64000000" optional
 option "ldb-max-open-files" - "LevelDB max open files" int default="1024" optional
 option "ldb-cache" - "LevelDB uncompressed data cache" int default="256000000" optional
@@ -27,3 +28,6 @@ option "acceptor-truncate" T "Maximum number of records to store" int default="1
 option "wait-for-debugger" g "Upon segfault, print pid and wait for the debugger to attach" flag off
 option "statd-ip" - "Send metrics to the specified statd instance" string optional
 option "statd-port" - "Use specified statd port" int default="8125" optional
+option "rocksdb-options" - "RocksDB options file" string optional
+option "rocksdb-max-instances" - "Maximum number of instances in the log" int default="1000000" optional
+option "rocksdb-cleanup-interval" - "Interval between purging of old records from RocksDB" int default="300" optional

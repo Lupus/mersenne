@@ -75,6 +75,7 @@ struct acs_context {
 	struct fbr_mutex batch_mutex;
 	int dirty;
 	unsigned char running_checksum[16];
+	fbr_id_t rdb_cleanup_fiber;
 };
 
 #define ACS_CONTEXT_INITIALIZER {      \

@@ -667,6 +667,7 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct lea_local_state_i local_state;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 
+	(void)last_i;
 	mctx = container_of(fiber_context, struct me_context, fbr);
 	cond = &mctx->pxs.acc.acs.highest_finalized_changed;
 	fbr_mutex_init(&mctx->fbr, &mutex);

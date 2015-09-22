@@ -56,6 +56,7 @@ struct me_context {
 	int use_statd;
 	int statd_sock;
 	char statd_prefix[128];
+	char *rocksdb_options;
 	struct {
 		unsigned msg_sent;
 		unsigned msg_recv;
@@ -86,6 +87,7 @@ struct me_context {
 	.fiber_listener = FBR_ID_NULL, \
 	.fiber_proposer = FBR_ID_NULL, \
 	.fiber_tcp_client = FBR_ID_NULL, \
+	.rocksdb_options = NULL, \
 }
 
 #define ME_P struct me_context *mctx
