@@ -241,6 +241,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 				instance->state_snaps[i].encounters,
 				instance->state_snaps[i].total);
 #endif
+	assert(IS_DELIVERED == instance->state);
 	base.type = IE_I;
 	ev_timer timer = instance->timer;
 	if(instance->p1.v)
@@ -249,6 +250,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 		sm_free(instance->p2.v);
 	iid = instance->iid + PRO_INSTANCE_WINDOW;
 	memset(instance, 0x00, sizeof(struct pro_instance));
+	instance->state = IS_EMPTY;
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 	bm_init(mask, peer_count(ME_A));
 	instance->p1.acks = mask;
@@ -609,6 +611,7 @@ static void init_instance(ME_P_ struct proposer_context *proposer_context,
 	ev_timer_init(&instance->timer, instance_timeout_cb, 0., 0.);
 	instance->timer.data = proposer_context;
 	instance->timed_out = 0;
+	instance->state = IS_EMPTY;
 	memset(instance->state_snaps, 0x00, sizeof(instance->state_snaps));
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 }
@@ -649,6 +652,7 @@ static void proposer_init(ME_P_ struct proposer_context *proposer_context,
 	mctx->pxs.pro.instances = malloc(size);
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;
+	mctx->pxs.pro.ready_no_value_count = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
 	for (i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ proposer_context,
