@@ -211,6 +211,8 @@ static void switch_instance(ME_P_ struct pro_instance *instance, enum
 			strval_instance_state(state),
 			strval_instance_event_type(base->type));
 	perf_snap_finish(ME_A_ &instance->state_snaps[instance->state]);
+	/* We can't switch instance from IS_DELIVERED state */
+	assert(IS_DELIVERED != instance->state);
 	if (IS_P1_READY_NO_VALUE == instance->state) {
 		assert(mctx->pxs.pro.ready_no_value_count >= 1);
 		mctx->pxs.pro.ready_no_value_count--;
@@ -654,6 +656,7 @@ static void proposer_init(ME_P_ struct proposer_context *proposer_context,
 	mctx->pxs.pro.pending = NULL;
 	mctx->pxs.pro.pending_size = 0;
 	mctx->pxs.pro.ready_no_value_count = 0;
+	mctx->pxs.pro.lowest_delivered = 0;
 	memset(mctx->pxs.pro.instances, 0, size);
 	for (i = 0; i < PRO_INSTANCE_WINDOW; i++) {
 		init_instance(ME_A_ proposer_context,
@@ -747,6 +750,8 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	d.b.type = IE_D;
 	d.buffer = buffer;
 	instance = mctx->pxs.pro.instances + (iid % PRO_INSTANCE_WINDOW);
+	assert(instance->iid == iid);
+	mctx->pxs.pro.lowest_delivered = iid;
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
 }
 
@@ -961,6 +966,9 @@ JsonNode *pro_get_state_dump(ME_P)
 
 	snprintf(buf, sizeof(buf), "%lu", context->lowest_non_closed);
 	json_append_member(obj, "lowest_non_closed", json_mkstring(buf));
+
+	snprintf(buf, sizeof(buf), "%lu", context->lowest_delivered);
+	json_append_member(obj, "lowest_delivered", json_mkstring(buf));
 
 	json_append_member(obj, "pending_size",
 			json_mknumber(context->pending_size));
