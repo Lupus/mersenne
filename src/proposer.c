@@ -233,6 +233,7 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 {
 	struct ie_base base;
 	struct bm_mask *mask = instance->p1.acks;
+	struct fbr_mutex mutex_copy;
 	uint64_t iid;
 #ifdef ME_WANT_PERFLOG
 	int i;
@@ -252,7 +253,11 @@ static void reclaim_instance(ME_P_ struct pro_instance *instance)
 	if(instance->p2.v && instance->p2.v != instance->p1.v)
 		sm_free(instance->p2.v);
 	iid = instance->iid + PRO_INSTANCE_WINDOW;
+	memcpy(&mutex_copy, &instance->mutex, sizeof(instance->mutex));
+
 	memset(instance, 0x00, sizeof(struct pro_instance));
+
+	memcpy(&instance->mutex, &mutex_copy, sizeof(instance->mutex));
 	instance->state = IS_EMPTY;
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
 	bm_init(mask, peer_count(ME_A));
@@ -273,6 +278,7 @@ static void adjust_window(ME_P)
 			return;
 		mctx->pxs.pro.lowest_non_closed = i + 1;
 		reclaim_instance(ME_A_ instance);
+		fbr_mutex_unlock(&mctx->fbr, &instance->mutex);
 	}
 }
 
@@ -544,10 +550,17 @@ static void do_promise(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 				PRO_INSTANCE_WINDOW);
 		abort();
 	}
-	if(IS_P1_PENDING != instance->state)
-		return;
-	if(instance->b == data->b)
+
+	fbr_mutex_lock(&mctx->fbr, &instance->mutex);
+
+	if (IS_P1_PENDING != instance->state)
+		goto ret;
+
+	if (instance->b == data->b)
 		run_instance(ME_A_ instance, &p.b);
+
+ret:
+	fbr_mutex_unlock(&mctx->fbr, &instance->mutex);
 }
 
 static void instance_timeout_cb (EV_P_ ev_timer *w, int revents)
@@ -597,8 +610,12 @@ static void instance_timeout_fiber(struct fbr_context *fiber_context,
 			if (IS_P1_PENDING != instance->state &&
 					IS_P2_PENDING != instance->state)
 				continue;
+			fbr_mutex_lock(&mctx->fbr, &instance->mutex);
+			assert(IS_P1_PENDING == instance->state ||
+					IS_P2_PENDING == instance->state);
 			instance->timed_out = 0;
 			run_instance(ME_A_ instance, &base);
+			fbr_mutex_unlock(&mctx->fbr, &instance->mutex);
 		}
 	}
 }
@@ -617,6 +634,7 @@ static void init_instance(ME_P_ struct proposer_context *proposer_context,
 	instance->state = IS_EMPTY;
 	memset(instance->state_snaps, 0x00, sizeof(instance->state_snaps));
 	perf_snap_start(ME_A_ &instance->state_snaps[instance->state]);
+	fbr_mutex_init(&mctx->fbr, &instance->mutex);
 }
 
 static void free_instance(ME_P_ struct pro_instance *instance)
@@ -636,10 +654,13 @@ static void do_reject(ME_P_ struct me_paxos_message *pmsg, struct me_peer
 	if(data->i < mctx->pxs.pro.lowest_non_closed)
 		return;
 	instance = mctx->pxs.pro.instances + (data->i % PRO_INSTANCE_WINDOW);
+
+	fbr_mutex_lock(&mctx->fbr, &instance->mutex);
 	if(IS_P1_PENDING == instance->state || IS_P2_PENDING == instance->state) {
 		instance->b = data->b;
 		run_instance(ME_A_ instance, &base);
 	}
+	fbr_mutex_unlock(&mctx->fbr, &instance->mutex);
 }
 
 static void proposer_init(ME_P_ struct proposer_context *proposer_context,
@@ -751,8 +772,10 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	d.buffer = buffer;
 	instance = mctx->pxs.pro.instances + (iid % PRO_INSTANCE_WINDOW);
 	assert(instance->iid == iid);
+	fbr_mutex_lock(&mctx->fbr, &instance->mutex);
 	mctx->pxs.pro.lowest_delivered = iid;
 	switch_instance(ME_A_ instance, IS_DELIVERED, &d.b);
+	/* mutex will be unlocked by adjust_window() */
 }
 
 struct context_destructor_arg {

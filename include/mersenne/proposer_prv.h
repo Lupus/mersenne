@@ -60,6 +60,7 @@ struct pro_instance {
 	ev_timer timer;
 	int timed_out;
 	struct perf_snap state_snaps[IS_MAX];
+	struct fbr_mutex mutex;
 };
 
 enum instance_event_type {
