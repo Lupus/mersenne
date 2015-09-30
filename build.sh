@@ -28,6 +28,12 @@ case $1 in
 		export CC=/usr/bin/gcc
 		cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
 		;;
+	clang-analyze)
+		scan-build -o ./scan-build-report-cmake cmake -DCMAKE_BUILD_TYPE=Debug ..
+		scan-build -o ./scan-build-report make
+		popd
+		exit 0
+		;;
 	*)
 		echo "Please enter valid build type"
 		;;
