@@ -716,6 +716,9 @@ local:
 		assert(i == r->iid);
 		assert(i == last_i++ + 1);
 		local_state.i = i;
+		assert(r->v);
+		assert(r->v->size1 > 0);
+		assert(r->v->ptr);
 		deliver_v(ME_A_ arg->buffer, r->iid, r->vb, r->v);
 		if (i + 1 < acs_get_lowest_available(ME_A)) {
 			i++;
