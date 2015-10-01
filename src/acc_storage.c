@@ -479,9 +479,9 @@ static void vacuum_state(ME_P)
 	uint64_t i;
 	int found;
 	ev_tstamp t1, t2;
-	const int trunc = mctx->args_info.acceptor_truncate_arg;
+	const uint64_t trunc = mctx->args_info.acceptor_truncate_arg;
 
-	if (ctx->highest_finalized < trunc)
+	if (ctx->highest_finalized <= trunc)
 		return;
 	if (0 == max_truncated)
 		max_truncated = 1;
