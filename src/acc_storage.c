@@ -586,6 +586,7 @@ void acs_set_highest_accepted(ME_P_ uint64_t iid)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(1 == ctx->in_batch);
+	assert(iid > ctx->highest_accepted);
 	ctx->highest_accepted = iid;
 	ctx->dirty = 1;
 }
@@ -611,6 +612,7 @@ void acs_set_highest_finalized(ME_P_ uint64_t iid,
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(1 == ctx->in_batch);
+	assert(iid > ctx->highest_finalized);
 	ctx->highest_finalized = iid;
 	memcpy(ctx->running_checksum, running_checksum,
 			sizeof(ctx->running_checksum));
@@ -622,6 +624,7 @@ void acs_set_highest_finalized_async(ME_P_ uint64_t iid,
 		const unsigned char *running_checksum)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
+	assert(iid > ctx->highest_finalized);
 	ctx->highest_finalized = iid;
 	memcpy(ctx->running_checksum, running_checksum,
 			sizeof(ctx->running_checksum));
