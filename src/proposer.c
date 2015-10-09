@@ -584,8 +584,8 @@ static void instance_timeout_fiber(struct fbr_context *fiber_context,
 	struct fbr_mutex *m;
 	struct fbr_cond_var *cond;
 	struct pro_instance *instance;
-	int i, j;
-	int start;
+	uint64_t i, j;
+	uint64_t start;
 	struct ie_base base;
 	struct proposer_context *proposer_context = _arg;
 
