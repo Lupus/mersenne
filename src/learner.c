@@ -284,10 +284,10 @@ static void retransmit_next_window(ME_P)
 
 static void try_deliver(ME_P)
 {
-	int i, j;
+	uint64_t i, j;
 	int k;
 	struct lea_context *context = &mctx->pxs.lea;
-	int start = context->first_non_delivered;
+	uint64_t start = context->first_non_delivered;
 	struct lea_instance *instance;
 	for (j = 0, i = start; j < LEA_INSTANCE_WINDOW; j++, i++) {
 		instance = get_instance(ME_A_ i);
