@@ -1,10 +1,9 @@
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 cmake_minimum_required(VERSION 2.6)
-project(mersenne C CXX)
+project(mersenne C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
-set(CMAKE_C_LINK_EXECUTABLE ${CMAKE_CXX_LINK_EXECUTABLE})
 
 option(USE_LTO "Use Link-Time Optimization" FALSE)
 option(USE_ASAN "Use AddressSanitizer" FALSE)
@@ -115,7 +114,7 @@ foreach(ASSET ${ASSETS})
 	add_custom_command(
 		OUTPUT ${ASSET_FILENAME}
 		COMMAND embedfile ${ASSET_VAR_NAME} "${ASSETS_BASE_DIR}/${ASSET}"
-		DEPENDS "${ASSETS_BASE_DIR}/${ASSET}")
+		DEPENDS "${ASSETS_BASE_DIR}/${ASSET}" embedfile)
 	list(APPEND ASSET_SOURCES ${ASSET_FILENAME})
 	math(EXPR IDX "${IDX} + 1")
 endforeach()
@@ -143,7 +142,6 @@ set(MERSENNE_SOURCES
 	"src/acceptor.c"
 	"src/statd.c"
 	"src/mersenne.c"
-	"src/dummy.cpp" # Convince CMAKE to link using g++
 	"src/http_parser.c"
 	"src/htstatus.c"
 	"src/kstring.c"
