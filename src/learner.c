@@ -662,8 +662,8 @@ void lea_local_fiber(struct fbr_context *fiber_context, void *_arg)
 	struct fbr_cond_var *cond;
 	struct acc_archive_record *arecords;
 	uint64_t x;
-	uint64_t count;
-	const uint64_t read_batch = 1000;
+	unsigned count;
+	const unsigned read_batch = 1000;
 	struct lea_local_state_i local_state;
 	struct fbr_destructor dtor = FBR_DESTRUCTOR_INITIALIZER;
 
