@@ -175,7 +175,13 @@ static void sigsegv_handler(int signum)
 
 	size = backtrace(array, bt_size);
 	fprintf(stderr, "--------------------------------------------------------------\n");
-	fprintf(stderr, "Program received signal SIGSEGV, Segmentation fault.\n");
+	if (SIGSEGV == signum) {
+		fprintf(stderr, "Program received signal SIGSEGV, Segmentation fault.\n");
+	} else if (SIGABRT == signum) {
+		fprintf(stderr, "Program received signal SIGABRT, Aborted.\n");
+	} else {
+		fprintf(stderr, "Program received signal %d\n", signum);
+	}
 	backtrace_symbols_fd(array, size, STDERR_FILENO);
 	fprintf(stderr, "--------------------------------------------------------------\n");
 	if(wait_for_debugger) {
@@ -446,8 +452,10 @@ int main(int argc, char *argv[])
 	struct me_context *mctx = &context;
 	struct cmdline_parser_params *params;
 
-	if (!RUNNING_ON_VALGRIND)
+	if (!RUNNING_ON_VALGRIND) {
 		signal(SIGSEGV, sigsegv_handler);
+		signal(SIGABRT, sigsegv_handler);
+	}
 	signal(SIGPIPE, SIG_IGN);
 
 	srand(time(NULL) ^ getpid());
