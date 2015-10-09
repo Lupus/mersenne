@@ -612,7 +612,7 @@ void acs_set_highest_finalized(ME_P_ uint64_t iid,
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	assert(1 == ctx->in_batch);
-	assert(iid > ctx->highest_finalized);
+	assert(iid >= ctx->highest_finalized);
 	ctx->highest_finalized = iid;
 	memcpy(ctx->running_checksum, running_checksum,
 			sizeof(ctx->running_checksum));
