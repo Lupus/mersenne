@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <sys/queue.h>
 #include <uthash.h>
+#include <pthread.h>
 #include <evfibers/fiber.h>
 #include <rocksdb/c.h>
 
@@ -57,10 +58,12 @@ SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
 
 struct acs_context {
 	rocksdb_t *ldb;
+	rocksdb_env_t *ldb_env;
 	rocksdb_cache_t *ldb_cache;
 	rocksdb_options_t *ldb_options;
 	rocksdb_writebatch_t *ldb_batch;
 	rocksdb_writeoptions_t *ldb_write_options_sync;
+	rocksdb_compactionfilterfactory_t *ldb_cff;
 	uint64_t confirmed_lsn;
 	size_t writes_per_sync;
 	int in_batch;
@@ -71,6 +74,7 @@ struct acs_context {
 	uint64_t highest_accepted;
 	uint64_t highest_finalized;
 	uint64_t lowest_available;
+	pthread_mutex_t lowest_available_m;
 	struct fbr_cond_var highest_finalized_changed;
 	struct fbr_mutex batch_mutex;
 	int dirty;
@@ -78,15 +82,16 @@ struct acs_context {
 	fbr_id_t rdb_cleanup_fiber;
 };
 
-#define ACS_CONTEXT_INITIALIZER {      \
-	.confirmed_lsn = 0,            \
-	.writes_per_sync = 0,          \
-	.in_batch = 0,                 \
-	.instances = NULL,             \
-	.highest_accepted = 0,         \
-	.highest_finalized = 0,        \
-	.lowest_available = 0,         \
-	.dirty = 0,                    \
+#define ACS_CONTEXT_INITIALIZER {                        \
+	.confirmed_lsn = 0,                              \
+	.writes_per_sync = 0,                            \
+	.in_batch = 0,                                   \
+	.instances = NULL,                               \
+	.highest_accepted = 0,                           \
+	.highest_finalized = 0,                          \
+	.lowest_available = 0,                           \
+	.lowest_available_m = PTHREAD_MUTEX_INITIALIZER, \
+	.dirty = 0,                                      \
 }
 
 enum acs_find_mode {
