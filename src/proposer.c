@@ -376,13 +376,10 @@ void do_is_p1_pending(ME_P_ struct pro_instance *instance, struct ie_base *base)
 					if (NULL != instance->p2.v) {
 						/* We had some value from Phase
 						 * 2, which timed out. Push it
-						 * back to the queue. CAVEAT:
-						 * Phase 2 might have succedded,
-						 * so we can introduce a
-						 * duplicate by pushing the
-						 * value back into the queue */
+						 * back to the queue */
 						pending_unshift(ME_A_ instance->p2.v);
 						sm_free(instance->p2.v);
+						instance->client_value = 0;
 						instance->p2.v = NULL;
 					}
 					new_base.type = IE_R0;

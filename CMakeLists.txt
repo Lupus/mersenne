@@ -39,6 +39,8 @@ include_directories(
 	${ROCKSDB_INCLUDE_DIR}
 	)
 
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -ggdb")
+
 set(CMAKE_C_FLAGS "-Wall -fno-strict-aliasing")
 if(USE_LTO)
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -flto -fwhole-program")
