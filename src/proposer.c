@@ -786,10 +786,50 @@ static void do_delivered_value(ME_P_ uint64_t iid, struct buffer *buffer)
 	/* mutex will be unlocked by adjust_window() */
 }
 
+static void cleanup_fb(ME_P_ struct fbr_buffer *fb)
+{
+	const size_t x = sizeof(struct pro_msg_me_message);
+
+	struct pro_msg_me_message pro_msg, *pro_msg_ptr;
+	struct msg_info *msg_info;
+
+	while (fbr_buffer_can_read(&mctx->fbr, fb, x)) {
+		pro_msg_ptr = fbr_buffer_read_address(&mctx->fbr, fb, x);
+		memcpy(&pro_msg, pro_msg_ptr, x);
+		fbr_buffer_read_advance(&mctx->fbr, fb);
+		msg_info = &pro_msg.info;
+		sm_free(msg_info->msg);
+	}
+}
+
+static void cleanup_lea_fb(ME_P_ struct fbr_buffer *lea_fb)
+{
+	struct lea_instance_info instance_info, *ptr;
+	const size_t x = sizeof(struct lea_instance_info);
+
+	while (fbr_buffer_can_read(&mctx->fbr, lea_fb, x)) {
+		ptr = fbr_buffer_read_address(&mctx->fbr, lea_fb, x);
+		memcpy(&instance_info, ptr, x);
+		fbr_buffer_read_advance(&mctx->fbr, lea_fb);
+		sm_free(instance_info.buffer);
+	}
+}
+
 struct context_destructor_arg {
 	struct me_context *mctx;
 	struct proposer_context *proposer_context;
 };
+
+static void cleanup_pending(ME_P)
+{
+	struct pending_value *pv, *x;
+	DL_FOREACH_SAFE(mctx->pxs.pro.pending, pv, x) {
+		DL_DELETE(mctx->pxs.pro.pending, pv);
+		sm_free(pv->v);
+		free(pv);
+	}
+	mctx->pxs.pro.pending_size = 0;
+}
 
 static void context_destructor(struct fbr_context *fiber_context, void *_arg)
 {
@@ -800,6 +840,8 @@ static void context_destructor(struct fbr_context *fiber_context, void *_arg)
 	for (i = 0; i < PRO_INSTANCE_WINDOW; i++)
 		free_instance(ME_A_ mctx->pxs.pro.instances + i);
 	free(mctx->pxs.pro.instances);
+	cleanup_fb(ME_A_ proposer_context->fb);
+	cleanup_lea_fb(ME_A_ proposer_context->lea_fb);
 	fbr_buffer_destroy(&mctx->fbr, proposer_context->fb);
 	if (proposer_context->lea_fb)
 		fbr_buffer_destroy(&mctx->fbr, proposer_context->lea_fb);
@@ -967,6 +1009,7 @@ void pro_start(ME_P)
 		ev_now_update(mctx->loop);
 		mctx->pxs.pro.last_used_ballot = ev_now(mctx->loop) * 1e6;
 	}
+	cleanup_pending(ME_A);
 	mctx->fiber_proposer = fbr_create(&mctx->fbr, "proposer", pro_fiber,
 			NULL, 0);
 	assert(!fbr_id_isnull(mctx->fiber_proposer));
@@ -978,6 +1021,7 @@ void pro_stop(ME_P)
 	if (!fbr_id_isnull(mctx->fiber_proposer)) {
 		fbr_reclaim(&mctx->fbr, mctx->fiber_proposer);
 		mctx->fiber_proposer = FBR_ID_NULL;
+		cleanup_pending(ME_A);
 	}
 }
 
