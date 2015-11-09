@@ -56,6 +56,7 @@ struct acc_archive_record {
 SLIST_HEAD(acc_instance_record_slist, acc_instance_record);
 
 struct acs_context {
+	rocksdb_env_t *ldb_env;
 	rocksdb_t *ldb;
 	rocksdb_cache_t *ldb_cache;
 	rocksdb_options_t *ldb_options;

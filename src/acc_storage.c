@@ -404,7 +404,9 @@ void acs_initialize(ME_P)
 	char *error = NULL;
 	rocksdb_options_t *base_options = NULL;
 
+	ctx->ldb_env = rocksdb_create_default_env();
 	ctx->ldb_options = rocksdb_options_create();
+	rocksdb_options_set_env(ctx->ldb_options, ctx->ldb_env);
 	long cpus = sysconf(_SC_NPROCESSORS_ONLN);  // get # of online cores
 	rocksdb_options_increase_parallelism(ctx->ldb_options, (int)(cpus));
 	if (mctx->rocksdb_options) {
@@ -793,10 +795,15 @@ void acs_destroy(ME_P)
 {
 	struct acs_context *ctx = &mctx->pxs.acc.acs;
 	struct acc_instance_record *r, *x;
+	rocksdb_close(ctx->ldb);
+	rocksdb_env_join_all_threads(ctx->ldb_env);
+
 	rocksdb_writeoptions_destroy(ctx->ldb_write_options_sync);
 	rocksdb_writebatch_destroy(ctx->ldb_batch);
 	rocksdb_options_destroy(ctx->ldb_options);
-	rocksdb_close(ctx->ldb);
+
+	rocksdb_env_destroy(ctx->ldb_env);
+
 	HASH_ITER(hh, ctx->instances, r, x) {
 		HASH_DEL(ctx->instances, r);
 		sm_free(r->v);
@@ -824,4 +831,3 @@ JsonNode *acs_get_state_dump(ME_P)
 
 	return obj;
 }
-
